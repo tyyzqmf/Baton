@@ -456,11 +456,17 @@ export function prepareWsPayload(data, recoveryTurns, frameLimit = WS_FRAME_LIMI
   return outgoing;
 }
 
+export function shouldCacheClientTurnAck(data) {
+  return data?.action === 'send_message_result'
+    && !!data.turnId
+    && !data.queued
+    && data.errorCode !== 'previous_turn_missing'
+    && data.errorCode !== 'codex_active_writer';
+}
+
 export function wsSend(data) {
   assertTurnEventEnvelope(data);
-  if (data?.action === 'send_message_result'
-    && data.turnId && !data.queued
-    && data.errorCode !== 'previous_turn_missing') {
+  if (shouldCacheClientTurnAck(data)) {
     _clientTurnAcks.delete(data.turnId);
     _clientTurnAcks.set(data.turnId, { ...data });
     while (_clientTurnAcks.size > CLIENT_TURN_ACK_LIMIT) {
