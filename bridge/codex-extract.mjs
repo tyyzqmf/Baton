@@ -17,6 +17,7 @@ import {
   codexResponseUserText,
   isCodexInternalUserContext,
 } from './codex-session.mjs';
+import { normalizeCodexPlanInput } from './codex-plan.mjs';
 
 const TOOL_NAMES = new Map([
   ['exec_command', 'Bash'],
@@ -67,12 +68,7 @@ function mapToolInput(name, raw) {
     };
   }
   if (name === 'update_plan') {
-    return {
-      todos: Array.isArray(input.plan)
-        ? input.plan.map((item) => ({ content: item.step || item.content || '', status: item.status || 'pending' }))
-        : [],
-      ...(input.explanation ? { explanation: input.explanation } : {}),
-    };
+    return normalizeCodexPlanInput(input);
   }
   return input;
 }

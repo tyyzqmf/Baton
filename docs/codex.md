@@ -388,6 +388,8 @@ Parcel 原生目录订阅发现 rollout
 | `event_msg/task_complete` | 不可见的 `assistant/end_turn` lifecycle，用于结束当前 spinner |
 | `exec_command` | `Bash` |
 | `update_plan` | `TodoWrite` |
+| app-server `turn/plan/updated` | 实时 `TodoWrite`，`inProgress` 归一化为 `in_progress` |
+| app-server `item/plan/delta` | 旧版/实验性计划文本流，不与结构化 checklist 拼接 |
 | `apply_patch` | 一个或多个 `Edit`；无 `FileChange/PatchApply` lifecycle 的预校验失败不显示 |
 | `write_stdin` | `WriteStdin` |
 | `item_completed/CommandExecution` | 更新原 `Bash` 的权威输出、退出状态、命令分类和完成时间 |

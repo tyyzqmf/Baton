@@ -845,3 +845,82 @@ test('strict no-op Edit input does not render an empty diff body', () => {
   assert.equal(edit.querySelector('.diff-container'), null);
   assert.equal(edit.querySelector('.tool-body'), null);
 });
+
+test('structured Codex plan updates render immediately as one TodoWrite checklist', () => {
+  reset();
+  const turnId = 'turn-plan-update';
+  const input = {
+    todos: [
+      { content: 'Inspect', status: 'completed' },
+      { content: 'Implement', status: 'in_progress' },
+      { content: 'Verify', status: 'pending' },
+    ],
+    explanation: 'Keep the plan current',
+  };
+  const toolMessage = {
+    uuid: 'plan-tool-message',
+    nativeId: 'codex:item:plan-update:tool-use',
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'plan-tool',
+      name: 'TodoWrite',
+      input,
+    }],
+    timestamp: '2026-08-27T12:00:00.000Z',
+    stopReason: 'tool_use',
+  };
+  const resultMessage = {
+    uuid: 'plan-result-message',
+    nativeId: 'codex:item:plan-update:tool-result',
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'plan-tool',
+      content: 'Plan updated',
+      is_error: false,
+    }],
+    timestamp: '2026-08-27T12:00:00.000Z',
+  };
+  const events = [
+    { action: 'stream_turn_start', seq: 0 },
+    {
+      action: 'stream_block_start',
+      seq: 1,
+      kind: 'tool_use',
+      name: 'TodoWrite',
+    },
+    {
+      action: 'stream_tool_input',
+      seq: 2,
+      chunk: JSON.stringify(input),
+    },
+    { action: 'stream_block_stop', seq: 3 },
+    { action: 'messages', seq: 4, messages: [toolMessage] },
+    { action: 'messages', seq: 5, messages: [resultMessage] },
+    {
+      action: 'stream_end',
+      seq: 6,
+      messages: [toolMessage, resultMessage],
+    },
+  ];
+  for (const event of events) {
+    window.__wsTest.handleWsMessage({
+      ...event,
+      sessionId: state.wsSessionId,
+      turnId,
+    });
+  }
+
+  const plan = document.querySelector('[data-tool-id="plan-tool"]');
+  assert.ok(plan);
+  assert.equal(document.querySelectorAll('[data-tool-id="plan-tool"]').length, 1);
+  assert.match(plan.textContent, /Plan noteKeep the plan current/);
+  assert.deepEqual(
+    Array.from(plan.querySelectorAll('.plan-item')).map((item) => item.textContent.trim()),
+    ['Inspect', 'Implement', 'Verify'],
+  );
+  assert.ok(plan.querySelector('.plan-item-completed'));
+  assert.ok(plan.querySelector('.plan-item-in_progress'));
+  assert.ok(plan.querySelector('.plan-item-pending'));
+});

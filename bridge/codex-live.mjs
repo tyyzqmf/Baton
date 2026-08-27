@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { isCodexInternalUserContext } from './codex-session.mjs';
+import { normalizeCodexPlanInput } from './codex-plan.mjs';
 
 export const CODEX_LIVE_SOURCE = Symbol('codexLiveSource');
 
@@ -108,6 +109,7 @@ const CODEX_TOOL_ITEM_TYPES = new Set([
   'commandExecution',
   'fileChange',
   'mcpToolCall',
+  'planUpdate',
   'webSearch',
 ]);
 
@@ -127,6 +129,9 @@ function completedToolResult(item) {
   }
   if (item.type === 'mcpToolCall') {
     return valueText(item.error || item.result || item.status);
+  }
+  if (item.type === 'planUpdate') {
+    return valueText(item.explanation) || 'Plan updated';
   }
   if (item.type === 'webSearch') {
     return valueText(item.result)
@@ -374,6 +379,13 @@ export function codexPreviewBlocks(item) {
   }
   if (item.type === 'reasoning') return [{ kind: 'thinking' }];
   if (item.type === 'plan') return [{ kind: 'text' }];
+  if (item.type === 'planUpdate') {
+    return [{
+      kind: 'tool_use',
+      name: 'TodoWrite',
+      input: normalizeCodexPlanInput(item),
+    }];
+  }
   if (item.type === 'commandExecution') {
     return [{
       kind: 'tool_use',

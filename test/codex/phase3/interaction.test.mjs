@@ -381,6 +381,123 @@ test('existing Codex session releases after completion and reuses CC stream fram
   assert.equal(client.requests.filter((request) => request.method === 'thread/resume').length, 2);
 });
 
+test('structured plan updates render as TodoWrite while duplicate snapshots are ignored', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-plan',
+    nativeSessionId: 'thread-plan',
+    streamId: 'stream-plan',
+    text: 'make a plan',
+    callbacks: cb.value,
+  });
+  notify(client, 'turn/started', {
+    threadId: 'thread-plan',
+    turn: { id: 'turn-plan', status: 'inProgress' },
+  });
+
+  const first = {
+    threadId: 'thread-plan',
+    turnId: 'turn-plan',
+    explanation: 'Initial plan',
+    plan: [
+      { step: 'Inspect', status: 'completed' },
+      { step: 'Implement', status: 'inProgress' },
+      { step: 'Verify', status: 'pending' },
+    ],
+  };
+  notify(client, 'turn/plan/updated', first);
+
+  assert.deepEqual(cb.frames.map((frame) => frame.t), [
+    'start',
+    'input',
+    'stop',
+  ]);
+  assert.equal(cb.frames[0].kind, 'tool_use');
+  assert.equal(cb.frames[0].name, 'TodoWrite');
+  assert.deepEqual(JSON.parse(cb.frames[1].chunk), {
+    todos: [
+      { content: 'Inspect', status: 'completed' },
+      { content: 'Implement', status: 'in_progress' },
+      { content: 'Verify', status: 'pending' },
+    ],
+    explanation: 'Initial plan',
+  });
+  assert.equal(cb.messages.length, 2);
+  const toolUse = cb.messages[0].message.content[0];
+  const toolResult = cb.messages[1].message.content[0];
+  assert.equal(toolUse.name, 'TodoWrite');
+  assert.equal(toolResult.tool_use_id, toolUse.id);
+  assert.equal(cb.messages[0].meta.liveKey, 'runtime-turn:turn-plan');
+
+  notify(client, 'turn/plan/updated', first);
+  assert.equal(cb.frames.length, 3);
+  assert.equal(cb.messages.length, 2);
+
+  notify(client, 'turn/plan/updated', {
+    ...first,
+    explanation: null,
+    plan: first.plan.map((step) => ({
+      ...step,
+      status: 'completed',
+    })),
+  });
+  assert.equal(cb.frames.filter((frame) => frame.t === 'start').length, 2);
+  assert.equal(cb.messages.length, 4);
+});
+
+test('legacy plan item deltas remain streamed plan text', async () => {
+  const client = new FakeClient();
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  await interaction.sendExisting({
+    sessionId: 'codex:thread-plan-legacy',
+    nativeSessionId: 'thread-plan-legacy',
+    streamId: 'stream-plan-legacy',
+    text: 'propose a plan',
+    callbacks: cb.value,
+  });
+  notify(client, 'turn/started', {
+    threadId: 'thread-plan-legacy',
+    turn: { id: 'turn-plan-legacy', status: 'inProgress' },
+  });
+  notify(client, 'item/started', {
+    threadId: 'thread-plan-legacy',
+    turnId: 'turn-plan-legacy',
+    item: { id: 'plan-item', type: 'plan', text: '' },
+  });
+  notify(client, 'item/plan/delta', {
+    threadId: 'thread-plan-legacy',
+    turnId: 'turn-plan-legacy',
+    itemId: 'plan-item',
+    delta: '1. Inspect\n2. Implement',
+  });
+  notify(client, 'item/completed', {
+    threadId: 'thread-plan-legacy',
+    turnId: 'turn-plan-legacy',
+    item: {
+      id: 'plan-item',
+      type: 'plan',
+      text: '1. Inspect\n2. Implement',
+    },
+  });
+
+  assert.equal(cb.frames[0].kind, 'text');
+  assert.equal(
+    cb.frames.filter((frame) => frame.t === 'delta')
+      .map((frame) => frame.chunk).join(''),
+    '1. Inspect\n2. Implement',
+  );
+  assert.equal(cb.messages.length, 1);
+  assert.equal(
+    cb.messages[0].message.content[0].text,
+    '1. Inspect\n2. Implement',
+  );
+});
+
 test('a failed turn/start never reports the turn as accepted', async () => {
   const client = new FakeClient();
   const request = client.request.bind(client);

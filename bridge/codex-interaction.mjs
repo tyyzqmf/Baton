@@ -13,6 +13,10 @@ import {
 } from './codex-writer.mjs';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
 import { registerRuntimeOwnedMessage } from './live-message-registry.mjs';
+import {
+  codexPlanSignature,
+  normalizeCodexPlanInput,
+} from './codex-plan.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 
@@ -1529,6 +1533,8 @@ export class CodexInteraction {
     turn.accepted = false;
     turn.userTurnConfirmed = false;
     turn.nextBlockId = 0;
+    turn.planUpdateCount = 0;
+    turn.lastPlanSignature = '';
     turn.items = new Map();
     turn.framer = new StreamFramer((frame) => this.#emitFrame(turn, frame));
     return turn;
@@ -1727,6 +1733,23 @@ export class CodexInteraction {
 
     if (method === 'error') {
       if (!params.willRetry) turn.error = params.error;
+      return;
+    }
+
+    if (method === 'turn/plan/updated') {
+      const signature = codexPlanSignature(params);
+      if (signature === turn.lastPlanSignature) return;
+      turn.lastPlanSignature = signature;
+      const input = normalizeCodexPlanInput(params);
+      const item = {
+        id: `plan-update-${turn.turnId}-${++turn.planUpdateCount}`,
+        type: 'planUpdate',
+        plan: input.todos,
+        explanation: input.explanation || '',
+        status: 'completed',
+      };
+      this.#itemState(turn, item);
+      this.#completeItem(turn, item, Date.now());
       return;
     }
 

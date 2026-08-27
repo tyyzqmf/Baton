@@ -532,16 +532,20 @@ barrier 期间，strict lifecycle 状态立即生效；strict authority 历史�
 - snapshot 只有旧历史：不能错误结束仍缺 authority 的 recovery task。
 - 实时显示顺序与重新进入后的 DDB 顺序一致。
 
-## 14. 相关独立问题：Codex Updated Plan
+## 14. Codex Updated Plan
 
-Codex 新协议使用结构化 `turn/plan/updated` 通知，而当前 interaction adapter 只处理
-`item/plan/delta`。历史 JSONL 的 `update_plan` 已能转换为 `TodoWrite`，因此会出现实时不显示、
-重新进入后显示的问题。
+已兼容两种 app-server 计划协议：
 
-修复要求：
+- `item/plan/delta`
+  - 保留为旧版/实验性计划文本流；
+  - 官方协议明确不保证拼接 delta 等于最终结构化计划，因此不转换为 checklist。
+- `turn/plan/updated`
+  - 归一化为与 JSONL `update_plan` 相同的 `TodoWrite` 模型；
+  - `inProgress` 转换为前端状态 `in_progress`；
+  - 相同的连续 snapshot 去重；
+  - 通过 strict turn 的 tool block 和 authority messages 实时渲染，不进入 historyBuffer。
 
-- 同时兼容旧 `item/plan/delta` 和新 `turn/plan/updated`；
-- 在 Bridge adapter 中统一转换为内部 Plan/TodoWrite 模型；
-- 映射 `inProgress` 为前端使用的 `in_progress`；
-- 新结构化 plan 进入 strict turn seq，不进入 historyBuffer；
-- 未知 `turn/*` 和 `item/*` 通知不能继续静默丢弃，应记录一次诊断。
+本机 Codex 0.150.1 的 schema 与实际 app-server turn 均验证了
+`turn/plan/updated { threadId, turnId, explanation, plan }`。真实 turn 不再发送
+`item/plan/delta`，修改后的 Bridge 能输出一个完整 `TodoWrite` 节点，并在 reload 后继续与
+JSONL `update_plan` 使用相同 UI。
