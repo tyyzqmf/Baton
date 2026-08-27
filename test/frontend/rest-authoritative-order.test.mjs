@@ -51,7 +51,7 @@ function toolPair(suffix, output) {
   }];
 }
 
-test('completed REST recovery replaces the overlapping tail in response order', async () => {
+test('completed REST recovery inserts missing rows without deleting local history', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:rest-authoritative-order';
   resetSession(h, { sessionId });
@@ -96,13 +96,13 @@ test('completed REST recovery replaces the overlapping tail in response order', 
   assert.equal(result.authoritative, true);
   assert.deepEqual(
     h.state.wsAllMessages.map((message) => message.uuid),
-    ['older', 'overlap', 'middle', 'final'],
+    ['older', 'overlap', 'middle', 'final', 'misplaced'],
   );
   const rendered = h.document.querySelector('.messages').textContent;
   assert.ok(rendered.indexOf('older') < rendered.indexOf('overlap'));
   assert.ok(rendered.indexOf('overlap') < rendered.indexOf('middle'));
   assert.ok(rendered.indexOf('middle') < rendered.indexOf('final'));
-  assert.equal(rendered.includes('misplaced'), false);
+  assert.ok(rendered.indexOf('final') < rendered.indexOf('misplaced'));
   assert.equal(container.children[0], olderNode);
   assert.equal(container.children[1], overlapNode);
   assert.equal(container.children[3], finalNode);
@@ -207,7 +207,7 @@ test('completed REST recovery replaces the overlapping tail in response order', 
   });
 
   assert.equal(h.state.wsAllMessages[1].content[0].text, 'keep local first answer');
-  assert.equal(h.state.wsAllMessages[3].content[0].text, 'final last answer');
+  assert.equal(h.state.wsAllMessages[3].content[0].text, 'stale last answer');
   assert.equal(container.children[0], firstPromptNode);
   assert.equal(container.children[1], firstAnswerNode);
 
@@ -282,7 +282,7 @@ test('completed REST recovery replaces the overlapping tail in response order', 
   });
 
   const recoveredExpandedTool = container.querySelector('[data-tool-id="tool-state"]');
-  assert.match(recoveredExpandedTool.textContent, /new output/);
+  assert.match(recoveredExpandedTool.textContent, /old output/);
   assert.equal(
     recoveredExpandedTool.classList.contains('tool-details-collapsed'),
     false,
@@ -302,7 +302,7 @@ test('completed REST recovery replaces the overlapping tail in response order', 
     authoritativeScope: 'last-turn',
   });
   const recoveredCollapsedTool = container.querySelector('[data-tool-id="tool-state"]');
-  assert.match(recoveredCollapsedTool.textContent, /newest output/);
+  assert.match(recoveredCollapsedTool.textContent, /old output/);
   assert.equal(
     recoveredCollapsedTool.classList.contains('tool-details-collapsed'),
     true,

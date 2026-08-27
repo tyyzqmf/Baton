@@ -158,7 +158,6 @@ function reset() {
   state.wsRunning = true;
   state.wsLastTimestamp = '';
   state.pendingSentMessages = [];
-  state._wsBuffer = null;
   state.stickBottom = false;
   apiResponse = { messages: [], hasMore: false };
 }

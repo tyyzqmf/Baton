@@ -170,8 +170,10 @@
 
     if (!displayText && !attachHtml) return '';
     const anchorAttr = msg.turnId ? ` data-anchor="${esc(msg.turnId)}"` : '';
+    const messageAttr = msg.uuid ? ` data-message-id="${esc(msg.uuid)}"` : '';
+    const nativeAttr = msg.nativeId ? ` data-native-id="${esc(msg.nativeId)}"` : '';
     const className = `msg-user${extraClass ? ` ${extraClass}` : ''}`;
-    return `<div class="${className}"${anchorAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
+    return `<div class="${className}"${anchorAttr}${messageAttr}${nativeAttr}${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>
       ${attachHtml}
       ${displayText ? `<div class="msg-text" onclick="toggleExpand(this)">${esc(displayText)}</div>` : ''}
       <div class="msg-meta"><span class="msg-time">${fmtTime(msg.timestamp)}</span></div>

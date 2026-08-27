@@ -1665,6 +1665,9 @@ async function loadMessages(sessionId, preview, options) {
     var t0 = performance.now();
     var result = await bufferAndFetch(sessionId, '');
     if (_navVersion !== myNav) return;
+    if (result.ok === false && state.wsAllMessages.length === 0) {
+      throw result.error || new Error('Unable to load messages');
+    }
     var latency = Math.round(performance.now() - t0);
     state.wsRunning = resolveSessionRunningAfterFetch(
       result,
@@ -1720,7 +1723,6 @@ async function loadMessages(sessionId, preview, options) {
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
   } catch (e) {
     if (_navVersion !== myNav) return;
-    state._wsBuffer = null;
     content.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   }
   saveNav();

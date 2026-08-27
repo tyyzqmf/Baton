@@ -1,6 +1,14 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
 import { dedupeCodexUserMessages } from './message-dedup.js';
+import { FetchBarrierCoordinator } from './fetch-barrier.js';
+import {
+  mergeFetchWindow,
+  mergeLocalHistory,
+} from './history-recovery.js';
+import { commitHistoryRecovery } from './history-recovery-commit.js';
+import { createHistoryRecoveryDomAdapter } from './history-recovery-dom.js';
+import { resolveActivityState } from './runtime-status.js';
 import {
   StreamCoordinator,
   StreamingDomRenderer,
@@ -35,6 +43,7 @@ var _controlRequestState = new Map();
 var _preAdoptionTurnEvents = new Map();
 var _agentThreadRefreshTimer = null;
 var _agentThreadRefreshVersion = 0;
+var _historyFetchBarriers = new FetchBarrierCoordinator();
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
 var _appliedLifecycleVersion = 0;
@@ -724,21 +733,21 @@ function dispatchWsMessage(msg) {
       var remainingMessages = handleStrictMessages(msg);
       if (!remainingMessages.length) return;
       msg = Object.assign({}, msg, { messages: remainingMessages });
-      if (state._wsBuffer !== null) {
-        // Buffering during initial load — collect, don't render yet
-        for (var bi = 0; bi < msg.messages.length; bi++) {
-          state._wsBuffer.push(msg.messages[bi]);
-        }
+      var fetchBarrier = _historyFetchBarriers.current(msg.sessionId);
+      if (fetchBarrier) {
+        fetchBarrier.captureHistory(msg.messages);
         return;
       }
+      var appendedMessages = [];
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
         if (!trackMessageUuid(m)) continue;
         state.wsAllMessages.push(m);
+        appendedMessages.push(m);
         state.wsMessageCount++;
         if (m.timestamp) state.wsLastTimestamp = m.timestamp;
       }
-      updateLastTurn();
+      updateLastTurn(appendedMessages, { appendToTail: true });
       showStats(state.wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
@@ -821,17 +830,9 @@ function dispatchWsMessage(msg) {
         state.wsRequestId = null;
         adoptNewSession(msg.sessionId);
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
-        // Fold fetched rows in incrementally (updateLastTurn), never innerHTML-rebuild — a rebuild renders only wsAllMessages and wipes other in-flight optimistic bubbles.
         bufferAndFetch(msg.sessionId, '').then(function () {
           var container = document.querySelector('.messages');
           if (!container || !state.wsAllMessages.length) return;
-          updateLastTurn();
-          loadImages(container);
-          clampOverflow(container);
-          if (window.renderMermaidBlocks) renderMermaidBlocks(container);
-          if (window.renderKatexBlocks) renderKatexBlocks(container);
-          container.parentElement.scrollTop = container.parentElement.scrollHeight;
-          updateTitleFromMessages();
         }).catch(function () {});
       }
     } else if (msg.action === 'sync_complete') {
@@ -862,8 +863,6 @@ function dispatchWsMessage(msg) {
           }
           if (typeof updateSpinner === 'function') updateSpinner();
           content.scrollTop = content.scrollHeight;
-        } else {
-          updateLastTurn(result.messages);
         }
         updateTitleFromMessages();
         updateSendBtn();
@@ -1085,7 +1084,8 @@ function queueAgentThreadRefresh(options) {
 }
 
 function drainStrictStreamOperations() {
-  if (state._wsBuffer !== null || document.querySelector('.skeleton-messages')) return;
+  if (_historyFetchBarriers.current(state.wsSessionId)
+    || document.querySelector('.skeleton-messages')) return;
   var operations = _streamCoordinator.takeOperations();
   if (!operations.length) return;
   var completedTurn = false;
@@ -1266,17 +1266,18 @@ function mergeLateJoinAuthority(completion, completed, forceRender) {
   if (completed) _strictStatusAuthority = true;
   if (completed) _queuedTurnIds.delete(completion.turnId);
   if (completed) _reconnectingTurns.delete(completion.turnId);
-  if (state._wsBuffer !== null) {
-    state._wsBuffer.push.apply(state._wsBuffer, incoming);
-    // Initial REST can still be in flight when a complete stream_end crosses
-    // a missing sequence. The live preview has already been discarded, so
-    // terminal authority must render now; the buffered copy will dedupe when
-    // the fetch finishes. Non-terminal late-join updates remain buffered.
-    if (!forceRender) {
-      state.wsRunning = hasOutstandingTurns();
-      updateSendBtn();
-      return;
+  var fetchBarrier = _historyFetchBarriers.current(completion.sessionId);
+  if (fetchBarrier) {
+    if (completed) fetchBarrier.completeStrictTurn(completion.turnId);
+    for (var bufferedMessage of incoming) {
+      bufferedMessage.turnId = bufferedMessage.turnId || completion.turnId || '';
+      bufferedMessage._strictLifecycle = true;
+      bufferedMessage._strictManaged = false;
     }
+    fetchBarrier.captureStrictMessages(incoming);
+    state.wsRunning = hasOutstandingTurns();
+    updateSendBtn();
+    return;
   }
   var messages = [];
   for (var message of incoming) {
@@ -1318,6 +1319,7 @@ function handleStrictMessages(envelope) {
   var remaining = [];
   var added = false;
   var identities = [];
+  var fetchBarrier = _historyFetchBarriers.current(envelope.sessionId);
   for (var index = 0; index < envelope.messages.length; index++) {
     var message = envelope.messages[index];
     var identity = strictMessageIdentity(envelope, message, index);
@@ -1329,13 +1331,35 @@ function handleStrictMessages(envelope) {
       _strictLifecycle: true,
       _strictManaged: message.type === 'assistant' || message.type === 'summary',
     });
-    removeHistoricalMessageNodes(
-      message.uuid || '',
-      message.nativeId || '',
-      identity.turnId,
-    );
     identities.push(identity);
-    if (trackMessageUuid(message)) {
+    if (fetchBarrier) {
+      fetchBarrier.captureStrictMessages([message]);
+    } else {
+      removeHistoricalMessageNodes(
+        message.uuid || '',
+        message.nativeId || '',
+        identity.turnId,
+      );
+    }
+    var matchingAuthority = !fetchBarrier
+      ? state.wsAllMessages.find(function (candidate) {
+        return candidate !== message
+          && candidate.type === message.type
+          && candidate.nativeId
+          && candidate.nativeId === message.nativeId
+          && JSON.stringify(candidate.content) === JSON.stringify(message.content);
+      })
+      : null;
+    if (matchingAuthority) {
+      matchingAuthority.turnId = matchingAuthority.turnId || identity.turnId;
+      matchingAuthority._strictLifecycle = true;
+      matchingAuthority._strictManaged = message._strictManaged;
+      var aliases = new Set(matchingAuthority.identityAliases || []);
+      aliases.add('uuid:' + message.uuid);
+      aliases.add('turn:' + identity.turnId);
+      matchingAuthority.identityAliases = Array.from(aliases);
+      if (message.uuid) state.wsMessageUuids.add(message.uuid);
+    } else if (!fetchBarrier && trackMessageUuid(message)) {
       state.wsAllMessages.push(message);
       state.wsMessageCount++;
       if (message.timestamp) state.wsLastTimestamp = message.timestamp;
@@ -1379,6 +1403,7 @@ function removeHistoricalMessageNodes(messageId, nativeId, turnId) {
 }
 
 function resetStreamSessionState() {
+  _historyFetchBarriers.invalidate();
   if (_strictStreamRenderer) _strictStreamRenderer.reset();
   _strictStreamRenderer = null;
   _streamCoordinator.resetSession('');
@@ -1537,6 +1562,17 @@ function insertAtTimestamp(container, html, timestamp) {
     if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
     else container.insertAdjacentHTML('beforeend', html);
   }
+}
+
+function appendBeforePending(container, html) {
+  var firstPending = container.querySelector('[data-pending]');
+  if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
+  else container.insertAdjacentHTML('beforeend', html);
+}
+
+function appendAssistantAtTail(container, html) {
+  var row = '<div class="assistant-turn">' + html + '</div>';
+  appendBeforePending(container, row);
 }
 
 function insertAssistantItemAtTimestamp(container, html, timestamp) {
@@ -1739,7 +1775,8 @@ function applyThinkSecs(html) {
   return html.replace(/(<div class="thinking-toggle"[^>]*>)Thinking( <span)/, '$1Thought for ' + _lastThinkSecs + 's$2');
 }
 
-function updateLastTurn(explicitMessages) {
+function updateLastTurn(explicitMessages, options) {
+  options = options || {};
   var container = document.querySelector('.messages');
   if (!container) return;
 
@@ -1750,7 +1787,7 @@ function updateLastTurn(explicitMessages) {
   if (!newMessages.length) return;
 
   var content = document.getElementById('content');
-  if (newMessages.length > 1) {
+  if (newMessages.length > 1 && !options.appendToTail) {
     newMessages.sort(compareMessageOrder);
   }
 
@@ -1819,7 +1856,10 @@ function updateLastTurn(explicitMessages) {
     if (window.isLocalCommandStdout && window.isLocalCommandStdout(msg)) {
       if (tryDedup(msg)) continue;
       var stdoutHtml = window.renderLocalCommandStdout(msg);
-      if (stdoutHtml) insertAtTimestamp(container, stdoutHtml, msg.timestamp);
+      if (stdoutHtml) {
+        if (options.appendToTail) appendBeforePending(container, stdoutHtml);
+        else insertAtTimestamp(container, stdoutHtml, msg.timestamp);
+      }
       continue;
     }
 
@@ -1839,7 +1879,8 @@ function updateLastTurn(explicitMessages) {
         isInheritedAgentContext(msg, state.wsAllMessages) ? 'agent-context' : '',
       );
       if (userHtml) {
-        insertAtTimestamp(container, userHtml, msg.timestamp);
+        if (options.appendToTail) appendBeforePending(container, userHtml);
+        else insertAtTimestamp(container, userHtml, msg.timestamp);
         if (msg.turnId) _strictStreamRenderer?.attachTurnToAnchor(msg.turnId);
       }
       // Trivial-first-message sessions get no ai-title (last-prompt lands only on shutdown) → fall title back to first user prompt (idempotent; tier won't downgrade).
@@ -1855,7 +1896,10 @@ function updateLastTurn(explicitMessages) {
 
     if (msg.type === 'system_event') {
       var eventHtml = renderSystemEvent(msg);
-      if (eventHtml) insertAtTimestamp(container, eventHtml, msg.timestamp);
+      if (eventHtml) {
+        if (options.appendToTail) appendBeforePending(container, eventHtml);
+        else insertAtTimestamp(container, eventHtml, msg.timestamp);
+      }
       continue;
     }
 
@@ -1869,6 +1913,8 @@ function updateLastTurn(explicitMessages) {
       if (!interruptHtml) continue;
       if (msg.turnId) {
         insertAssistantItemForTurn(container, interruptHtml, msg.turnId);
+      } else if (options.appendToTail) {
+        appendAssistantAtTail(container, interruptHtml);
       } else {
         insertAssistantItemAtTimestamp(container, interruptHtml, msg.timestamp);
       }
@@ -1897,6 +1943,8 @@ function updateLastTurn(explicitMessages) {
 
     if (msg.turnId) {
       insertAssistantItemForTurn(container, html, msg.turnId);
+    } else if (options.appendToTail) {
+      appendAssistantAtTail(container, html);
     } else {
       insertAssistantItemAtTimestamp(container, html, msg.timestamp);
     }
@@ -1957,454 +2005,232 @@ function startWs(sessionId) {
 
 function trackMessageUuid(message) {
   if (!message) return true;
-  var uuidKey = message.uuid || '';
-  var nativeKey = message.nativeId ? 'native:' + message.nativeId : '';
-  if ((uuidKey && state.wsMessageUuids.has(uuidKey))
-    || (nativeKey && state.wsMessageUuids.has(nativeKey))) return false;
-  if (uuidKey) state.wsMessageUuids.add(uuidKey);
-  if (nativeKey) state.wsMessageUuids.add(nativeKey);
+  var keys = new Set(message.identityAliases || []);
+  if (message.uuid) keys.add(message.uuid);
+  else if (message.nativeId) keys.add('native:' + message.nativeId);
+  for (var key of keys) {
+    if (state.wsMessageUuids.has(String(key))) return false;
+  }
+  for (var keyToAdd of keys) state.wsMessageUuids.add(String(keyToAdd));
   return true;
-}
-
-function messageIdentity(message) {
-  if (message?.nativeId) return 'native:' + message.nativeId;
-  if (message?.uuid) return 'uuid:' + message.uuid;
-  return '';
-}
-
-function isRecoveryPromptMessage(message) {
-  return message?.type === 'user'
-    && !isInterruptMsg(message)
-    && !isToolResultOnly(message)
-    && !window.isSubagentNotificationMsg?.(message);
-}
-
-function recoveryPrefixIndex(messages, overlapIndex) {
-  if (overlapIndex < 0) return messages.length;
-  for (var index = overlapIndex; index >= 0; index--) {
-    if (isRecoveryPromptMessage(messages[index])) return index;
-  }
-  return overlapIndex;
-}
-
-function replaceAuthoritativeTail(messages, scope) {
-  var authoritative = dedupeCodexUserMessages(messages || []);
-  if (!authoritative.length) {
-    return { added: 0, messages: [], replaced: false };
-  }
-
-  var localMessages = state.wsAllMessages;
-  var prefixIndex = -1;
-  if (scope === 'last-turn') {
-    var restPromptIndex = -1;
-    for (var promptIndex = authoritative.length - 1;
-      promptIndex >= 0;
-      promptIndex--) {
-      if (isRecoveryPromptMessage(authoritative[promptIndex])) {
-        restPromptIndex = promptIndex;
-        break;
-      }
-    }
-    if (restPromptIndex >= 0) {
-      var restPromptKey = messageIdentity(authoritative[restPromptIndex]);
-      for (var localPromptIndex = localMessages.length - 1;
-        localPromptIndex >= 0;
-        localPromptIndex--) {
-        if (restPromptKey
-          && messageIdentity(localMessages[localPromptIndex]) === restPromptKey) {
-          prefixIndex = localPromptIndex;
-          break;
-        }
-      }
-      if (prefixIndex < 0) {
-        for (var fallbackPrompt = localMessages.length - 1;
-          fallbackPrompt >= 0;
-          fallbackPrompt--) {
-          if (isRecoveryPromptMessage(localMessages[fallbackPrompt])) {
-            prefixIndex = fallbackPrompt;
-            break;
-          }
-        }
-      }
-      authoritative = authoritative.slice(restPromptIndex);
-    }
-  }
-
-  var localIndexes = new Map();
-  for (var localIndex = 0; localIndex < localMessages.length; localIndex++) {
-    var localKey = messageIdentity(localMessages[localIndex]);
-    if (localKey && !localIndexes.has(localKey)) {
-      localIndexes.set(localKey, localIndex);
-    }
-  }
-
-  var overlapLocalIndex = -1;
-  for (var restIndex = 0; restIndex < authoritative.length; restIndex++) {
-    var restKey = messageIdentity(authoritative[restIndex]);
-    if (restKey && localIndexes.has(restKey)) {
-      overlapLocalIndex = localIndexes.get(restKey);
-      break;
-    }
-  }
-
-  var authoritativeKeys = new Set(
-    authoritative.map(messageIdentity).filter(Boolean),
-  );
-  // REST returns only the latest page. With no overlap, the local rows are the
-  // only known history prefix, so preserve them and append the authoritative
-  // page rather than dropping older loaded history.
-  if (prefixIndex < 0) {
-    prefixIndex = recoveryPrefixIndex(localMessages, overlapLocalIndex);
-  }
-  var hasKnownBoundary = overlapLocalIndex >= 0
-    || (scope === 'last-turn' && prefixIndex < localMessages.length);
-  var prefix = hasKnownBoundary
-    ? localMessages.slice(0, prefixIndex)
-    : localMessages.slice();
-  prefix = prefix.filter(function (message) {
-    var key = messageIdentity(message);
-    return !key || !authoritativeKeys.has(key);
-  });
-
-  var previousKeys = new Set(
-    localMessages.map(messageIdentity).filter(Boolean),
-  );
-  var added = authoritative.reduce(function (count, message) {
-    var key = messageIdentity(message);
-    return count + (!key || !previousKeys.has(key) ? 1 : 0);
-  }, 0);
-
-  state.wsAllMessages = prefix.concat(authoritative);
-  state.wsMessageUuids = new Set();
-  for (var message of state.wsAllMessages) {
-    if (message.uuid) state.wsMessageUuids.add(message.uuid);
-    if (message.nativeId) state.wsMessageUuids.add('native:' + message.nativeId);
-  }
-  state.wsMessageCount = state.wsAllMessages.length;
-  state.wsLastTimestamp = state.wsAllMessages.length
-    ? state.wsAllMessages[state.wsAllMessages.length - 1].timestamp || ''
-    : '';
-  return {
-    added: added,
-    messages: authoritative,
-    prefixLength: prefix.length,
-    replaced: true,
-  };
-}
-
-function recoveryDomKey(element) {
-  if (!element) return '';
-  var nativeId = element.dataset?.nativeId || '';
-  var messageId = element.dataset?.messageId || '';
-  var toolId = element.dataset?.toolId || '';
-  if (nativeId) return 'native:' + nativeId + (toolId ? ':tool:' + toolId : '');
-  if (messageId) return 'uuid:' + messageId + (toolId ? ':tool:' + toolId : '');
-  if (toolId) return 'tool:' + toolId;
-  if (element.classList?.contains('msg-user')) {
-    return 'user:' + (element.dataset.anchor || element.dataset.ts || '')
-      + ':' + (element.textContent || '').trim();
-  }
-  var firstIdentity = element.querySelector?.(
-    '[data-native-id], [data-message-id], [data-tool-id]',
-  );
-  if (firstIdentity) {
-    return 'group:' + recoveryDomKey(firstIdentity);
-  }
-  return 'fallback:' + (element.className || '')
-    + ':' + (element.dataset?.ts || '')
-    + ':' + (element.textContent || '').trim();
-}
-
-function recoveryComparableMarkup(element) {
-  var clone = element.cloneNode(true);
-  var nodes = [clone].concat(Array.from(clone.querySelectorAll('*')));
-  for (var node of nodes) {
-    node.classList?.remove(
-      'tool-details-collapsed',
-      'expanded-desc',
-      'expanded',
-      'clamped',
-      'open',
-    );
-    node.removeAttribute?.('aria-expanded');
-    node.removeAttribute?.('data-tool-details-group');
-    if (node.classList?.contains('tool-body-content')
-      && String(node.id || '').indexOf('tool-') === 0) {
-      node.removeAttribute('id');
-    }
-  }
-  for (var button of clone.querySelectorAll('.clamp-btn')) button.remove();
-  return clone.outerHTML;
-}
-
-function recoveryNodeUnchanged(current, expected) {
-  if (!current || !expected || current.tagName !== expected.tagName) return false;
-  return recoveryDomKey(current) === recoveryDomKey(expected)
-    && recoveryComparableMarkup(current) === recoveryComparableMarkup(expected);
-}
-
-function inheritRecoveryUiState(current, expected) {
-  if (!current || !expected) return;
-  if (current.classList.contains('tool-node')
-    && expected.classList.contains('tool-node')) {
-    var collapsed = current.classList.contains('tool-details-collapsed');
-    expected.classList.toggle('tool-details-collapsed', collapsed);
-    var header = expected.querySelector(':scope > .tool-header');
-    if (header?.classList.contains('tool-details-toggle')) {
-      header.setAttribute('aria-expanded', String(!collapsed));
-    }
-  }
-}
-
-function reconcileRecoveryChildren(parent, expectedParent) {
-  var existing = Array.from(parent.children);
-  var used = new Set();
-  var byKey = new Map();
-  for (var element of existing) {
-    var key = recoveryDomKey(element);
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(element);
-  }
-
-  var cursor = parent.firstElementChild;
-  for (var expected of Array.from(expectedParent.children)) {
-    var expectedKey = recoveryDomKey(expected);
-    var candidates = byKey.get(expectedKey) || [];
-    var current = candidates.find(function (candidate) {
-      return !used.has(candidate);
-    }) || null;
-    var resolved;
-    if (current && recoveryNodeUnchanged(current, expected)) {
-      used.add(current);
-      resolved = current;
-      if (resolved !== cursor) parent.insertBefore(resolved, cursor);
-    } else {
-      inheritRecoveryUiState(current, expected);
-      resolved = expected;
-      parent.insertBefore(resolved, cursor);
-      if (current) {
-        used.add(current);
-        current.remove();
-      }
-    }
-    cursor = resolved.nextElementSibling;
-  }
-
-  for (var stale of existing) {
-    if (!used.has(stale) && stale.isConnected) stale.remove();
-  }
-}
-
-function reconcileAuthoritativeMessages(container, expected, prefixCount) {
-  var existing = Array.from(container.children);
-  var expectedChildren = Array.from(expected.children);
-  var safePrefix = Math.min(prefixCount, existing.length, expectedChildren.length);
-  var existingTail = existing.slice(safePrefix);
-  var used = new Set();
-  var byKey = new Map();
-  for (var element of existingTail) {
-    var key = recoveryDomKey(element);
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(element);
-  }
-
-  var cursor = container.children[safePrefix] || null;
-  for (var expectedElement of expectedChildren.slice(safePrefix)) {
-    var expectedKey = recoveryDomKey(expectedElement);
-    var candidates = byKey.get(expectedKey) || [];
-    var current = candidates.find(function (candidate) {
-      return !used.has(candidate);
-    }) || null;
-    if (!current && expectedKey.indexOf('fallback:') === 0
-      && cursor?.classList.contains('assistant-turn')
-      && expectedElement.classList.contains('assistant-turn')
-      && !used.has(cursor)) {
-      current = cursor;
-    }
-
-    var resolved;
-    if (current?.classList.contains('assistant-turn')
-      && expectedElement.classList.contains('assistant-turn')) {
-      used.add(current);
-      reconcileRecoveryChildren(current, expectedElement);
-      resolved = current;
-      if (resolved !== cursor) container.insertBefore(resolved, cursor);
-    } else if (current && recoveryNodeUnchanged(current, expectedElement)) {
-      used.add(current);
-      resolved = current;
-      if (resolved !== cursor) container.insertBefore(resolved, cursor);
-    } else {
-      inheritRecoveryUiState(current, expectedElement);
-      resolved = expectedElement;
-      container.insertBefore(resolved, cursor);
-      if (current) {
-        used.add(current);
-        current.remove();
-      }
-    }
-    cursor = resolved.nextElementSibling;
-  }
-
-  for (var stale of existingTail) {
-    if (!used.has(stale) && stale.isConnected) stale.remove();
-  }
-}
-
-function takeLocalPendingRecoveryNodes(container, preservePendingIds) {
-  preservePendingIds = preservePendingIds || new Set();
-  var nodes = [];
-  for (var pending of state.pendingSentMessages) {
-    if (pending.sessionId !== state.wsSessionId
-      || (!pending.failed
-        && pending.delivered
-        && !preservePendingIds.has(pending.id))) {
-      continue;
-    }
-    var node = document.getElementById(pending.id);
-    if (!node || node.parentElement !== container) continue;
-    node.remove();
-    nodes.push(node);
-  }
-  return nodes;
 }
 
 function renderAuthoritativeRecovery(result, options) {
   options = options || {};
-  var container = document.querySelector('.messages');
-  if (!container) return false;
+  if (!result?.mergeResult) return false;
+  if (result.status === 'completed') {
+    for (var message of state.wsAllMessages) {
+      message._strictManaged = false;
+    }
+    if (_strictStreamRenderer) {
+      _strictStreamRenderer.reset({ remove: false });
+      _strictStreamRenderer = null;
+    }
+  }
+  var adapter = createRecoveryDomAdapter({
+    deferRender: false,
+    isCurrentBarrier: function () { return true; },
+  });
+  var rendered = adapter.applyHistoryChanges(result.mergeResult);
+  adapter.finalize();
+  restoreBottomAfterRecovery(result.wasFollowingBottom);
+  return rendered;
+}
+
+function currentActivity() {
+  if (typeof hasActivePermissionPrompt === 'function'
+    && hasActivePermissionPrompt()) {
+    return 'needs_input';
+  }
+  return state.wsRunning ? 'running' : 'completed';
+}
+
+function createRecoveryDomAdapter(options) {
+  options = options || {};
+  return createHistoryRecoveryDomAdapter({
+    state: state,
+    document: document,
+    runtime: function () { return state.appState.runtime; },
+    renderMessages: function (messages, runtime, renderOptions) {
+      return renderMessages(messages, runtime, renderOptions);
+    },
+    deferRender: !!options.deferRender,
+    isCurrentBarrier: options.isCurrentBarrier,
+    promotePending: promoteEchoedBubble,
+    reportConflict: function (conflict) {
+      if (window.__APEEK_TEST__) return;
+      console.warn('History recovery conflict', conflict);
+    },
+    releaseBarrier: options.releaseBarrier,
+    applyStreamOperations: options.applyStreamOperations,
+    markTurnAdjacency: markTurnAdjacency,
+    loadImages: loadImages,
+    clampOverflow: clampOverflow,
+    renderMermaidBlocks: window.renderMermaidBlocks,
+    renderKatexBlocks: window.renderKatexBlocks,
+    updateTitleFromMessages: updateTitleFromMessages,
+    markSpinnerTurnEnd: window.markSpinnerTurnEnd,
+    updateSendBtn: updateSendBtn,
+    updateSpinner: window.updateSpinner,
+  });
+}
+
+function historyRequestKey(after, options) {
+  return JSON.stringify({
+    after: after || '',
+    authoritative: !!options.authoritative,
+    scope: options.authoritativeScope || '',
+    requireCompleted: !!options.requireCompleted,
+    deferRender: !!options.deferRender,
+  });
+}
+
+function restoreBottomAfterRecovery(wasFollowingBottom) {
+  if (!wasFollowingBottom || !state.stickBottom) return;
   var content = document.getElementById('content');
-  var previousScrollTop = content?.scrollTop || 0;
-  var localPendingNodes = takeLocalPendingRecoveryNodes(
-    container,
-    options.preservePendingIds,
-  );
-  for (var message of state.wsAllMessages) {
-    message._strictLifecycle = false;
-    message._strictManaged = false;
-  }
-  if (_strictStreamRenderer) {
-    _strictStreamRenderer.reset({ remove: false });
-    _strictStreamRenderer = null;
-  }
-  var expected = document.createElement('div');
-  expected.innerHTML = renderMessages(
-    state.wsAllMessages,
-    state.appState.runtime,
-    { collapseToolDetails: false },
-  );
-  var prefix = document.createElement('div');
-  prefix.innerHTML = renderMessages(
-    state.wsAllMessages.slice(0, result?.prefixLength || 0),
-    state.appState.runtime,
-    { collapseToolDetails: false },
-  );
-  reconcileAuthoritativeMessages(
-    container,
-    expected,
-    prefix.children.length,
-  );
-  for (var pendingNode of localPendingNodes) {
-    container.appendChild(pendingNode);
-  }
-  state.wsRenderedCount = state.wsAllMessages.length;
-  markTurnAdjacency(container);
-  loadImages(container);
-  clampOverflow(container);
-  if (window.renderMermaidBlocks) renderMermaidBlocks(container);
-  if (window.renderKatexBlocks) renderKatexBlocks(container);
-  if (content) {
-    content.scrollTop = state.stickBottom
-      ? content.scrollHeight
-      : Math.min(previousScrollTop, content.scrollHeight);
-  }
-  updateTitleFromMessages();
-  return true;
+  if (!content || content.querySelector('.skeleton-messages')) return;
+  var distance = content.scrollHeight - content.scrollTop - content.clientHeight;
+  if (distance > 2) content.scrollTop = content.scrollHeight;
 }
 
 /**
- * Buffer WS → fetch DDB → merge + dedup → return merged messages.
- * Used by both initial load (after='') and reconnect recovery (after=wsLastTimestamp).
+ * Fetches one history window and atomically commits history, pending echoes,
+ * strict authority and runtime activity.
  */
 async function bufferAndFetch(sessionId, after, options) {
   options = options || {};
-  var lifecycleVersion = _appliedLifecycleVersion;
-  state._wsBuffer = [];
-  try {
+  var requestKey = historyRequestKey(after, options);
+  var active = _historyFetchBarriers.current(sessionId);
+  if (active) {
+    if (active.requestKey === requestKey && active.promise) {
+      return active.promise;
+    }
+    try { await active.promise; } catch (error) {}
+    if (state.wsSessionId !== sessionId) {
+      return { added: 0, needSync: false, stale: true };
+    }
+    return bufferAndFetch(sessionId, after, options);
+  }
+
+  var barrier = _historyFetchBarriers.open({
+    sessionId: sessionId,
+    requestKey: requestKey,
+    lifecycleVersion: _appliedLifecycleVersion,
+    activityBeforeFetch: currentActivity(),
+    localMessages: state.wsAllMessages,
+    pendingIds: state.pendingSentMessages.map(function (pending) {
+      return pending.id;
+    }),
+  });
+  var wasFollowingBottom = state.stickBottom;
+
+  barrier.promise = (async function () {
     var params = { session: sessionId };
     if (after) params.after = after;
     if (state.appState.device) params.device = state.appState.device;
-    if (state.appState.project?.hash) {
-      params.project = state.appState.project.hash;
+    if (state.appState.project?.hash) params.project = state.appState.project.hash;
+
+    var data = {};
+    var restOk = true;
+    var restError = null;
+    try {
+      data = await api('/api/bridge/messages', params);
+    } catch (error) {
+      restOk = false;
+      restError = error;
     }
-    var data = await api('/api/bridge/messages', params);
-    // User navigated to another session while this was in flight — drop the stale response.
-    if (state.wsSessionId !== sessionId) return { added: 0, needSync: false };
-    var buffered = state._wsBuffer || [];
-    state._wsBuffer = null;
-    var useAuthoritative = !!options.authoritative
-      && (!options.requireCompleted || data.status === 'completed');
-    if (useAuthoritative) {
-      var replacement = replaceAuthoritativeTail(
-        data.messages || [],
-        options.authoritativeScope || 'all',
-      );
-      if (!after && data.hasMore !== undefined) {
-        state.wsHasMore = data.hasMore;
-        state.wsOldestTimestamp = data.oldestTimestamp || '';
-      }
-      return {
-        added: replacement.added,
-        messages: replacement.messages,
-        needSync: data.needSync,
+
+    if (!_historyFetchBarriers.isCurrent(barrier)
+      || state.wsSessionId !== sessionId) {
+      return { added: 0, needSync: false, stale: true };
+    }
+    barrier.beginCommit();
+
+    var fetched = mergeFetchWindow({
+      restMessages: dedupeCodexUserMessages(data.messages || []),
+      historyBuffer: dedupeCodexUserMessages(barrier.historyBuffer),
+      restOk: restOk,
+    });
+    var strictMessages = dedupeCodexUserMessages(barrier.strictMessages);
+    var mergeResult = mergeLocalHistory({
+      localMessages: barrier.localMessages,
+      fetchedMessages: fetched.messages.concat(strictMessages),
+    });
+    var liveLifecycleChanged =
+      _appliedLifecycleVersion !== barrier.lifecycleVersion
+      || state.pendingSentMessages.some(function (pending) {
+        return !barrier.pendingIds.has(pending.id);
+      });
+    var adapter = createRecoveryDomAdapter({
+      deferRender: options.deferRender,
+      isCurrentBarrier: function () {
+        return _historyFetchBarriers.isCurrent(barrier);
+      },
+      releaseBarrier: function () {
+        _historyFetchBarriers.close(barrier);
+      },
+      applyStreamOperations: function () {
+        drainStrictStreamOperations();
+      },
+    });
+    var committed = commitHistoryRecovery({
+      mergeResult: mergeResult,
+      pendingMessages: state.pendingSentMessages.slice(),
+      restResult: {
+        ok: restOk,
         status: data.status || '',
-        authoritative: replacement.replaced,
-        liveLifecycleChanged: _appliedLifecycleVersion !== lifecycleVersion,
-      };
+      },
+      activitySnapshot: {
+        liveStateChanged: liveLifecycleChanged,
+        liveActivity: currentActivity(),
+        activityBeforeFetch: barrier.activityBeforeFetch,
+        runtime: state.appState.runtime,
+        hasOutstandingTurns: hasOutstandingTurns(),
+      },
+      adapter: adapter,
+    });
+    if (!options.deferRender) {
+      restoreBottomAfterRecovery(wasFollowingBottom);
     }
-    var all = dedupeCodexUserMessages(
-      buffered.concat(data.messages || []),
-    );
-    var added = 0;
-    var addedMessages = [];
-    for (var i = 0; i < all.length; i++) {
-      if (!trackMessageUuid(all[i])) continue;
-      state.wsAllMessages.push(all[i]);
-      state.wsMessageCount++;
-      addedMessages.push(all[i]);
-      added++;
-    }
-    if (added > 0) {
-      state.wsAllMessages.sort(compareMessageOrder);
-    }
-    state.wsLastTimestamp = state.wsAllMessages.length ? state.wsAllMessages[state.wsAllMessages.length - 1].timestamp || '' : '';
-    // Save pagination state from initial load
+
     if (!after && data.hasMore !== undefined) {
       state.wsHasMore = data.hasMore;
       state.wsOldestTimestamp = data.oldestTimestamp || '';
     }
+
+    var useAuthoritative = !!options.authoritative
+      && (!options.requireCompleted || data.status === 'completed');
     return {
-      added: added,
-      messages: addedMessages,
+      ok: restOk,
+      error: restError,
+      added: mergeResult.inserted.length,
+      messages: mergeResult.inserted.map(function (entry) {
+        return entry.message;
+      }),
+      mergeResult: mergeResult,
       needSync: data.needSync,
       status: data.status || '',
-      liveLifecycleChanged: _appliedLifecycleVersion !== lifecycleVersion,
+      authoritative: useAuthoritative,
+      liveLifecycleChanged: liveLifecycleChanged,
+      activity: committed.activity,
+      wasFollowingBottom: wasFollowingBottom,
     };
-  } catch (e) { state._wsBuffer = null; throw e; }
+  })();
+
+  return barrier.promise;
 }
 
 function resolveSessionRunningAfterFetch(result, messages, runtime) {
-  // A lifecycle event applied while REST was in flight is causally newer than
-  // the REST snapshot. Preserve the state established by start/end/permission.
-  if (result?.status === 'needs_input') return false;
-  if (result?.liveLifecycleChanged) return state.wsRunning;
-  if (result?.status) {
-    if (result.status === 'running' && hasTerminalAssistantTail(messages)) {
-      return false;
-    }
-    return result.status === 'running';
-  }
-  if (hasOutstandingTurns()) return true;
-  return deriveRunning(messages, '', runtime);
+  return resolveActivityState({
+    liveStateChanged: result?.liveLifecycleChanged,
+    liveActivity: currentActivity(),
+    activityBeforeFetch: state.wsRunning ? 'running' : 'completed',
+    restOk: result?.ok !== false,
+    restStatus: result?.status || '',
+    messages: messages,
+    runtime: runtime,
+    hasOutstandingTurns: hasOutstandingTurns(),
+  }) === 'running';
 }
 
 function hasTerminalAssistantTail(messages) {
@@ -2457,30 +2283,13 @@ async function recoverMissing(after, options) {
   options = options || {};
   if (!state.wsSessionId) return null;
   if (after === undefined) after = state.wsLastTimestamp;
-  if (state._wsBuffer !== null) {
-    return new Promise(function (resolve) {
-      setTimeout(function () {
-        recoverMissing(after, options).then(resolve);
-      }, 100);
-    });
-  }
   try {
     var result = await bufferAndFetch(state.wsSessionId, after, options);
     if (result.authoritative) {
-      if (!options.deferRender) renderAuthoritativeRecovery(result);
       showStats(state.wsMessageCount + ' messages (REST authority)');
       return result;
     }
     if (!result.added) return result;
-    var container = document.querySelector('.messages');
-    if (container) {
-      updateLastTurn(result.messages);
-      loadImages(container);
-      clampOverflow(container);
-      if (window.renderMermaidBlocks) renderMermaidBlocks(container);
-      if (window.renderKatexBlocks) renderKatexBlocks(container);
-      container.parentElement.scrollTop = container.parentElement.scrollHeight;
-    }
     showStats(state.wsMessageCount + ' messages (' + result.added + ' recovered)');
     return result;
   } catch (e) {
@@ -3020,6 +2829,26 @@ function settlePendingAtTurnEnd(turnId, end) {
   // Keep the pending record until that ack decides whether the prompt itself
   // was accepted, so a later failure still has an exact bubble to update.
   if (end?.error && !pending.delivered) return false;
+  if (!messageEchoed(pending)) {
+    var confirmed = {
+      uuid: pending.id,
+      turnId: pending.id,
+      type: 'user',
+      content: pending.fullText || pending.text || '',
+      timestamp: new Date(pending.sentAt || Date.now()).toISOString(),
+      identityAliases: ['turn:' + pending.id, 'pending:' + pending.id],
+      _optimisticConfirmed: true,
+    };
+    var fetchBarrier = _historyFetchBarriers.current(state.wsSessionId);
+    if (fetchBarrier) {
+      fetchBarrier.captureStrictMessages([confirmed]);
+    } else if (trackMessageUuid(confirmed)) {
+      state.wsAllMessages.push(confirmed);
+      state.wsMessageCount++;
+      state.wsRenderedCount = state.wsAllMessages.length;
+      if (confirmed.timestamp) state.wsLastTimestamp = confirmed.timestamp;
+    }
+  }
   promoteEchoedBubble(pending, {});
   return true;
 }

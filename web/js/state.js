@@ -44,7 +44,6 @@ export const state = {
   wsHasMore: false,           // more older messages on server
   wsOldestTimestamp: '',      // cursor for older-load
   wsLoadingOlder: false,
-  _wsBuffer: null,            // null = normal mode, [] = buffering during initial load
   _syncedOnce: null,          // sessionId already re-fetched once after sync_complete (anti-loop)
   _pendingCreatePath: null,   // projectPath for create_project matching
   pendingSentMessages: [],

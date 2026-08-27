@@ -1,8 +1,11 @@
 # Streaming 顺序与渲染设计
 
-> 状态：已实现
-> 日期：2026-08-17
+> 状态：strict streaming 已实现；历史合并重构待实现
+> 日期：2026-08-27
 > 范围：Claude Code、Codex、Bridge、WebSocket Server 与 Web 前端
+
+REST、请求期 historyBuffer、本地历史和 DOM 的目标合并策略，以及当前待修复问题，见
+[`message-history-merge.md`](message-history-merge.md)。
 
 ## 1. 核心原则
 
@@ -252,10 +255,13 @@ Bridge 和 Server 原样使用该 `turnId`。Streaming renderer 只通过精确�
 
 ### 8.1 连接恢复
 
+> 本节描述 strict turn 恢复不变量。REST/historyBuffer/local history 的统一 FetchBarrier
+> 尚待按 [`message-history-merge.md`](message-history-merge.md) 重构。
+
 后台回前台和意外 WS 断线使用同一条恢复链：
 
 1. 立即废弃旧连接的 turn seq 缓冲，但不修改现有 DOM。
-2. 新 WS 订阅后请求增量 REST 历史；同一响应并行强一致读取 Session status。
+2. 新 WS 订阅后请求 REST 历史；同一响应并行强一致读取 Session status。
 3. REST 完成前，新连接的 strict turn 事件只缓存，不渲染。
 4. REST 历史先按 UUID/nativeId 合并，再按统一队列释放缓存的 WS 事件。
 5. `completed` 收口重连前的 turn；`running` 保留 outstanding turn；`needs_input`
@@ -304,12 +310,13 @@ permission-only app-server observation 发现尚未回答的审批。仍属于�
 - 立即进入 `TurnEventQueue`，不进入历史 buffer。
 - REST 首次渲染后，把仍活跃的 preview 重新挂回对应 `data-anchor=turnId`。
 - 权威 `messages` 与 REST 历史按 `uuid/nativeId` 去重。
-- late-join authority 若在 REST 完成前到达，进入历史 buffer，参与第一次合并渲染。
+- late-join authority 仍属于 strict turn；REST barrier 完成后再按 seq/checkpoint 消费，
+  不作为普通无 seq 历史消息参与 REST 数组合并。
 
 ### 10.2 无 seq 的 JSONL/TUI 消息
 
 - 仅来自没有 runtime ownership 的外部 TUI/IDE turn；Web 发起的 runtime turn 不走此路径。
-- REST 完成前进入 `_wsBuffer`。
+- REST 完成前进入请求级 `historyBuffer`。
 - REST 返回后按 `uuid/nativeId` 合并去重，再执行第一次历史渲染。
 - REST 完成后到达的无 seq 消息走普通历史增量渲染。
 - 无 seq 消息不进入 turn queue，也不能关闭或改变 active streaming turn。

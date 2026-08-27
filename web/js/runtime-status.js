@@ -1,90 +1,222 @@
-import './components/message.js';
+const TERMINAL_STOP_REASONS = new Set([
+  'end_turn',
+  'max_tokens',
+  'stop_sequence',
+]);
 
-(function () {
-  function isMetadata(message) {
-    return message.type === 'ai-title'
-      || message.type === 'custom-title'
-      || message.type === 'last-prompt';
+/**
+ * @param {{messages?: object[], runtime?: string, authStatus?: string}} options
+ * @returns {'running'|'completed'}
+ */
+export function deriveActivityFromMessages(options = {}) {
+  var messages = Array.isArray(options.messages) ? options.messages : [];
+  return options.runtime === 'codex'
+    ? deriveCodexActivity(messages)
+    : deriveClaudeActivity(messages, options.authStatus || '');
+}
+
+/**
+ * @param {{liveStateChanged?: boolean, liveActivity?: string, activityBeforeFetch?: string, restOk?: boolean, restStatus?: string, messages?: object[], runtime?: string, hasOutstandingTurns?: boolean}} options
+ * @returns {'running'|'needs_input'|'completed'}
+ */
+export function resolveActivityState(options = {}) {
+  if (options.liveStateChanged) {
+    return normalizeActivity(options.liveActivity);
+  }
+  if (options.restOk === false) {
+    return normalizeActivity(options.activityBeforeFetch);
   }
 
-  function assistantRunning(message) {
-    return message.stopReason == null || message.stopReason === 'tool_use';
+  var restStatus = normalizeActivity(options.restStatus, '');
+  if (restStatus === 'needs_input') return 'needs_input';
+  if (restStatus === 'running') {
+    return hasTerminalAssistantTail(options.messages || [])
+      ? 'completed'
+      : 'running';
   }
-
-  function isInteractiveToolResult(message, messages) {
-    if (!Array.isArray(message.content)) return false;
-    var interactiveIds = new Set();
-    for (var i = 0; i < messages.length; i++) {
-      var content = messages[i]?.content;
-      if (!Array.isArray(content)) continue;
-      for (var j = 0; j < content.length; j++) {
-        var block = content[j];
-        if (block.type === 'tool_use'
-          && ['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode'].includes(block.name)) {
-          interactiveIds.add(block.id);
-        }
-      }
-    }
-    return message.content.some(function (block) {
-      if (block.type !== 'tool_result' || !interactiveIds.has(block.tool_use_id)) return false;
-      var text = typeof block.content === 'string'
-        ? block.content
-        : Array.isArray(block.content)
-          ? block.content.map(function (item) { return item.text || ''; }).join('')
-          : '';
-      return text.indexOf('tool use was rejected') === -1;
-    });
-  }
-
-  function deriveClaudeRunning(messages, authStatus) {
-    var atTail = true;
-    for (var i = messages.length - 1; i >= 0; i--) {
-      var message = messages[i];
-      if (!message || isMetadata(message)) continue;
-      if (window.isLocalCommandStdout(message)) return false;
-      if (message.type === 'assistant') return assistantRunning(message);
-      if (message.type === 'user') {
-        if (window.isInterruptMsg(message) || window.isLocalCommandMarker(message)) return false;
-        if (window.isToolResultOnly(message)) {
-          if (atTail
-            && message.content.every(function (block) { return block.is_error; })
-            && !isInteractiveToolResult(message, messages)) {
-            return false;
-          }
-          atTail = false;
-          continue;
-        }
-        if (atTail && authStatus === 'completed') return false;
-        return true;
-      }
-      atTail = false;
-    }
-    return false;
-  }
-
-  function deriveCodexRunning(messages) {
-    for (var i = messages.length - 1; i >= 0; i--) {
-      var message = messages[i];
-      if (!message || isMetadata(message)) continue;
-      if (message.type === 'assistant') return assistantRunning(message);
-      if (message.type === 'user') {
-        if (window.isInterruptMsg(message)) return false;
-        if (window.isToolResultOnly(message)) continue;
-        return true;
-      }
-    }
-    return false;
-  }
-
-  var adapters = Object.freeze({
-    claude: deriveClaudeRunning,
-    codex: deriveCodexRunning,
+  if (restStatus === 'completed') return 'completed';
+  if (options.hasOutstandingTurns) return 'running';
+  return deriveActivityFromMessages({
+    messages: options.messages,
+    runtime: options.runtime,
+    authStatus: restStatus,
   });
+}
 
+function normalizeActivity(value, fallback = 'completed') {
+  return value === 'running' || value === 'needs_input' || value === 'completed'
+    ? value
+    : fallback;
+}
+
+function userText(message) {
+  if (typeof message?.content === 'string') return message.content;
+  if (Array.isArray(message?.content)) {
+    return message.content.map(function (block) {
+      return block?.text || '';
+    }).join('');
+  }
+  return '';
+}
+
+function isMetadata(message) {
+  return message?.type === 'ai-title'
+    || message?.type === 'custom-title'
+    || message?.type === 'last-prompt';
+}
+
+function isInterruptMessage(message) {
+  if (message?.type !== 'user' || !Array.isArray(message.content)) return false;
+  var text = message.content.length === 1 && message.content[0]?.type === 'text'
+    ? message.content[0].text || ''
+    : '';
+  return text === '[Request interrupted by user]'
+    || text === '[Request interrupted by user for tool use]';
+}
+
+function isToolResultOnly(message) {
+  return message?.type === 'user'
+    && Array.isArray(message.content)
+    && message.content.every(function (block) {
+      return block?.type === 'tool_result';
+    });
+}
+
+function isSubagentNotification(message) {
+  return message?.type === 'user'
+    && /^\s*<subagent_notification>[\s\S]*<\/subagent_notification>\s*$/i
+      .test(userText(message));
+}
+
+function isLocalCommandStdout(message) {
+  return message?.type === 'user'
+    && /<local-command-stdout>/.test(userText(message));
+}
+
+function isLocalCommandMarker(message) {
+  if (message?.type !== 'user') return false;
+  var text = userText(message);
+  if (/^\s*<(?:local-command-caveat|task-notification|system-reminder)/.test(text)) {
+    return true;
+  }
+  return /^\s*<command-name>\/?clear<\/command-name>/.test(text);
+}
+
+function assistantRunning(message) {
+  return message?.stopReason == null || message.stopReason === 'tool_use';
+}
+
+function isInteractiveToolResult(message, messages) {
+  if (!Array.isArray(message?.content)) return false;
+  var interactiveIds = new Set();
+  for (var source of messages) {
+    if (!Array.isArray(source?.content)) continue;
+    for (var block of source.content) {
+      if (block?.type === 'tool_use'
+        && ['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode'].includes(block.name)) {
+        interactiveIds.add(block.id);
+      }
+    }
+  }
+  return message.content.some(function (block) {
+    if (block?.type !== 'tool_result'
+      || !interactiveIds.has(block.tool_use_id)) {
+      return false;
+    }
+    var text = typeof block.content === 'string'
+      ? block.content
+      : Array.isArray(block.content)
+        ? block.content.map(function (item) { return item?.text || ''; }).join('')
+        : '';
+    return text.indexOf('tool use was rejected') === -1;
+  });
+}
+
+function deriveClaudeActivity(messages, authStatus) {
+  var atTail = true;
+  for (var index = messages.length - 1; index >= 0; index--) {
+    var message = messages[index];
+    if (!message || isMetadata(message)) continue;
+    if (isLocalCommandStdout(message)) return 'completed';
+    if (message.type === 'assistant') {
+      return assistantRunning(message) ? 'running' : 'completed';
+    }
+    if (message.type === 'user') {
+      if (isInterruptMessage(message) || isLocalCommandMarker(message)) {
+        return 'completed';
+      }
+      if (isToolResultOnly(message)) {
+        if (atTail
+          && message.content.every(function (block) { return block.is_error; })
+          && !isInteractiveToolResult(message, messages)) {
+          return 'completed';
+        }
+        atTail = false;
+        continue;
+      }
+      if (atTail && authStatus === 'completed') return 'completed';
+      return 'running';
+    }
+    atTail = false;
+  }
+  return 'completed';
+}
+
+function deriveCodexActivity(messages) {
+  for (var index = messages.length - 1; index >= 0; index--) {
+    var message = messages[index];
+    if (!message || isMetadata(message)) continue;
+    if (message.type === 'assistant') {
+      return assistantRunning(message) ? 'running' : 'completed';
+    }
+    if (message.type === 'user') {
+      if (isInterruptMessage(message)) return 'completed';
+      if (isToolResultOnly(message)) continue;
+      return 'running';
+    }
+  }
+  return 'completed';
+}
+
+function hasTerminalAssistantTail(messages) {
+  for (var index = messages.length - 1; index >= 0; index--) {
+    var message = messages[index];
+    if (message?.type === 'assistant' || message?.type === 'summary') {
+      return message.type === 'assistant'
+        && TERMINAL_STOP_REASONS.has(message.stopReason);
+    }
+    if (message?.type === 'user'
+      && !isInterruptMessage(message)
+      && !isToolResultOnly(message)
+      && !isSubagentNotification(message)) {
+      return false;
+    }
+  }
+  return false;
+}
+
+var adapters = Object.freeze({
+  claude: function (messages, authStatus) {
+    return deriveActivityFromMessages({
+      messages: messages,
+      runtime: 'claude',
+      authStatus: authStatus,
+    }) === 'running';
+  },
+  codex: function (messages, authStatus) {
+    return deriveActivityFromMessages({
+      messages: messages,
+      runtime: 'codex',
+      authStatus: authStatus,
+    }) === 'running';
+  },
+});
+
+if (typeof window !== 'undefined') {
   window.runtimeStatusAdapters = adapters;
   window.deriveRunning = function (messages, authStatus, runtime) {
     if (!Array.isArray(messages)) return false;
     var adapter = adapters[runtime === 'codex' ? 'codex' : 'claude'];
     return adapter(messages, authStatus);
   };
-})();
+}

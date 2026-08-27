@@ -46,7 +46,7 @@ test('initial REST merges no-seq watcher messages before the first render', asyn
         timestamp: '2026-08-17T00:00:00.000Z',
       },
       {
-        uuid: 'rest-copy',
+        uuid: 'ws-copy',
         nativeId: 'codex:item:shared',
         type: 'assistant',
         content: [{ type: 'text', text: 'merged once' }],

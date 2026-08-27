@@ -328,7 +328,7 @@ full/reduced/filtered classifications.
 ```
 App taps session "abc":
 
-1. _wsBuffer = [] → start buffering WS messages
+1. Open a request-scoped FetchBarrier
    WS: { action: "subscribe", sessionId: "abc" }
 
 2. bufferAndFetch(sessionId, '') → REST load from DDB
@@ -337,21 +337,24 @@ App taps session "abc":
    → DDB empty → return empty (bridge hasn't synced this session yet)
    → Session status is read in parallel and returned with the message page
 
-3. Merge: DDB results + _wsBuffer, dedup by uuid, sort by timestamp
+3. Merge:
+   → mergeFetchWindow(REST, complete no-seq historyBuffer)
+   → mergeLocalHistory(current confirmed history, fetched + delayed strict authority)
+   → preserve REST/WS source order; do not globally sort by timestamp
 
 4. Resolve running state:
    → applied WS lifecycle during REST wins
    → otherwise use response status
    → message-tail inference only if status is missing
 
-5. _wsBuffer = null → switch to real-time mode. Render merged result.
+5. Keyed DOM reconcile → close FetchBarrier → replay strict DOM operations.
    Track wsLastTimestamp for reconnect recovery.
 
-6. Subsequent WS messages → append directly via updateLastTurn().
+6. Subsequent complete no-seq WS messages → append to confirmed tail before pending bubbles.
 
 7. WS reconnect → subscribe + recoverMissing():
-   _wsBuffer = [] → bufferAndFetch(sessionId, wsLastTimestamp)
-   Same buffer+fetch+merge pattern, dedup + sort + incremental DOM reconciliation.
+   bufferAndFetch(sessionId, wsLastTimestamp)
+   Same FetchBarrier + merge + keyed DOM reconciliation.
    The returned status replaces the former active-turn state request.
 
 8. App leaves session:

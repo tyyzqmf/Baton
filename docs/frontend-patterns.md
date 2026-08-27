@@ -53,23 +53,22 @@ appState = { device, project: { hash, name }, session, sessionPreview }
 loadMessages(sessionId):
   1. wsAllMessages = [], wsMessageUuids = Set(), reset state
   2. startWs(sessionId) → subscribe → reveal_permission
-  3. _wsBuffer = []          ← buffer no-seq JSONL/TUI messages
+  3. open request-scoped FetchBarrier
   4. GET /api/bridge/messages?session=X&device=D&project=P
                                 ← pull history + current Session status
-  5. merged = _wsBuffer.concat(ddbMessages)
-  6. _wsBuffer = null         ← disable buffer, subsequent WS messages render directly
-  7. Deduplicate by uuid/nativeId
-  8. Sort by timestamp
+  5. mergeFetchWindow(REST, historyBuffer)
+  6. mergeLocalHistory(wsAllMessages, fetched + delayed strict authority)
+  7. keyed DOM reconcile; pending bubbles remain last
+  8. close barrier and replay strict DOM operations
   9. Resolve state: newer applied WS lifecycle → response status → message-tail fallback
-  10. renderMessages(wsAllMessages)  ← full render
-  11. Rebind any active strict-stream preview by turnId
-  12. place the rendered history at the bottom
+  10. Rebind any active strict-stream preview by turnId
+  11. If bottom-follow intent remains active, scroll once after all DOM updates
 ```
 
-No-seq `messages` are historical JSONL/TUI updates and use the REST buffer above. Events carrying
-`turnId + seq` belong to a live turn: they immediately enter `TurnEventQueue`, remain strictly
-ordered, and survive the first history render through DOM rebind. Authority and REST rows share the
-same UUID/nativeId deduplication set.
+No-seq `messages` are historical JSONL/TUI updates and enter the barrier historyBuffer. Events
+carrying `turnId + seq` belong to a live turn: lifecycle state is applied immediately, while strict
+authority history and DOM operations wait until the REST commit. Identity is UUID-first; explicit
+aliases connect protocol mirrors, and nativeId is only a fallback when UUID is absent.
 
 `reveal_permission` is intentionally narrower than message replay. It asks the Bridge to resend only
 the current pending permission state after entering or reconnecting to a Session. Existing CC hook
@@ -106,7 +105,7 @@ Each message is routed by type:
 New message arrives:
   ├── isToolResultOnly?   → update corresponding tool node in-place by tool_use_id
   ├── strict user         → promote the exact optimistic bubble by turnId
-  ├── no-seq user         → insert as a historical message
+  ├── no-seq user         → append to confirmed history tail
   ├── ai-title            → update breadcrumb title, don't render to message list
   ├── isInterrupt         → render as tl-item (type=interrupt), placed in assistant-turn
   └── assistant           → strict turn reconcile or historical insertion

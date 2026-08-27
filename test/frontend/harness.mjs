@@ -75,6 +75,8 @@ export async function makeHarness(options = {}) {
   const isInterrupt = (m) => m.type === 'user' && Array.isArray(m.content) && m.content.length === 1 && m.content[0].type === 'text' && !!INTERRUPT_MAP[m.content[0].text];
   G('renderUserBubble', (m) => '<div class="msg-user"'
     + (m.turnId ? ' data-anchor="' + m.turnId + '"' : '')
+    + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+    + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
     + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '')
     + '>' + textOf(m.content) + '</div>');
   G('renderSingleMessage', (m) => {
@@ -90,6 +92,8 @@ export async function makeHarness(options = {}) {
   G('renderMessages', (msgs) => msgs.map(m => {
     if (m.type === 'user') return '<div class="msg-user"'
       + (m.turnId ? ' data-anchor="' + m.turnId + '"' : '')
+      + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+      + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
       + (m.timestamp ? ' data-ts="' + m.timestamp + '"' : '')
       + '>' + textOf(m.content) + '</div>';
     if (m.type === 'assistant') {
@@ -148,7 +152,7 @@ export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText
   state.wsSessionId = sessionId;
   state.wsRootSessionId = sessionId;
   state.wsAllMessages = []; state.wsMessageUuids = new Set(); state.wsRenderedCount = 0; state.wsMessageCount = 0;
-  state._wsBuffer = null; state.wsRunning = mode === 'new';
+  state.wsRunning = mode === 'new';
   state._syncedOnce = null;
   state.wsLastTimestamp = ''; state._titleTier = 0;
   state.pendingSentMessages = mode === 'new' && firstText

@@ -33,7 +33,6 @@ test('no-seq watcher messages render incrementally after REST finishes', async (
     }],
   });
 
-  assert.equal(h.state._wsBuffer, null);
   assert.equal(
     h.state.wsAllMessages.filter((message) =>
       message.nativeId === 'codex:item:rest-first-answer').length,
