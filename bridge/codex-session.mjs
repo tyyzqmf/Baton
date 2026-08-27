@@ -35,11 +35,14 @@ function previewText(value) {
   return text.length > 200 ? `${text.slice(0, 200).trim()}...` : text;
 }
 
-function isInternalUserContext(text) {
+export function isCodexInternalUserContext(text) {
   const value = text.trim();
   return /^<environment_context>[\s\S]*<\/environment_context>$/i.test(value)
     || /^<turn_aborted>[\s\S]*<\/turn_aborted>$/i.test(value)
-    || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/i.test(value);
+    || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/i.test(value)
+    || /^<codex_internal_context source="[a-z][a-z0-9_]*">[\s\S]*<\/codex_internal_context>$/i
+      .test(value)
+    || /^<goal_context>[\s\S]*<\/goal_context>$/i.test(value);
 }
 
 export function codexResponseUserText(payload) {
@@ -49,7 +52,7 @@ export function codexResponseUserText(payload) {
   return payload.content
     .filter((block) => block?.type === 'input_text' && typeof block.text === 'string')
     .map((block) => block.text.trim())
-    .filter((text) => text && !isInternalUserContext(text))
+    .filter((text) => text && !isCodexInternalUserContext(text))
     .join('\n');
 }
 

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'events';
 import test from 'node:test';
 import { CodexInteraction } from '../../../bridge/codex-interaction.mjs';
-import { codexPreviewBlocks } from '../../../bridge/codex-live.mjs';
+import {
+  codexCompletedLiveMessages,
+  codexPreviewBlocks,
+} from '../../../bridge/codex-live.mjs';
 import {
   clearLiveMessageRegistry,
   liveMessageRoute,
@@ -23,6 +26,7 @@ class FakeClient extends EventEmitter {
     this.mcpServers = [];
     this.resumeModel = '';
     this.failThreadFeatureLookup = false;
+    this.goal = null;
   }
 
   async start() {
@@ -88,6 +92,13 @@ class FakeClient extends EventEmitter {
           modelProvider: 'openai',
         },
       };
+    }
+    if (method === 'thread/goal/get') return { goal: this.goal };
+    if (method === 'thread/goal/set') {
+      this.goal = this.goal
+        ? { ...this.goal, ...params }
+        : { threadId: params.threadId, ...params };
+      return { goal: this.goal };
     }
     if (method === 'mcpServerStatus/list') {
       return { data: this.mcpServers, nextCursor: null };
@@ -233,6 +244,21 @@ test('Codex fileChange previews preserve add, delete, and update semantics', () 
     old_string: 'before',
     new_string: 'after',
   }]);
+});
+
+test('Codex live messages hide internal goal context', () => {
+  const completed = codexCompletedLiveMessages({
+    id: 'goal-context',
+    type: 'userMessage',
+    clientId: 'goal-context-client',
+    content: [{
+      type: 'text',
+      text: '<codex_internal_context source="goal">\nHidden steering.\n'
+        + '</codex_internal_context>',
+    }],
+  }, Date.parse('2026-08-27T10:00:00.000Z'));
+
+  assert.deepEqual(completed, []);
 });
 
 test('existing Codex session releases after completion and reuses CC stream frames', async () => {
@@ -1902,6 +1928,16 @@ test('permission observation replays a managed TUI approval without starting a t
   clearLiveMessageRegistry();
   t.after(clearLiveMessageRegistry);
   const client = new FakeClient();
+  client.goal = {
+    threadId: 'thread-observed',
+    objective: 'A stopped goal should wait behind the real approval.',
+    status: 'blocked',
+    tokenBudget: null,
+    tokensUsed: 10,
+    timeUsedSeconds: 5,
+    createdAt: 1,
+    updatedAt: 2,
+  };
   const request = client.request.bind(client);
   client.request = async (method, params) => {
     if (method === 'thread/loaded/list') {
@@ -1963,6 +1999,108 @@ test('permission observation replays a managed TUI approval without starting a t
   assert.equal(cb.controls[0].request.input.command, 'git commit -m test');
   assert.equal(interaction.owns('thread-observed'), false);
   assert.equal(liveMessageRoute('codex', 'runtime-turn:turn-external'), null);
+});
+
+test('permission observation presents a resumable goal through the control channel', async () => {
+  const client = new FakeClient();
+  client.goal = {
+    threadId: 'thread-goal',
+    objective: 'Finish the long-running task.',
+    status: 'blocked',
+    tokenBudget: null,
+    tokensUsed: 100,
+    timeUsedSeconds: 20,
+    createdAt: 1,
+    updatedAt: 7,
+  };
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['thread-goal'] };
+    }
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  assert.deepEqual(await interaction.observePermissions({
+    sessionId: 'codex:thread-goal',
+    nativeSessionId: 'thread-goal',
+    callbacks: cb.value,
+  }), { active: true, loaded: true });
+
+  assert.equal(cb.controls.length, 1);
+  assert.deepEqual(cb.controls[0], {
+    request_id: 'codex:thread-goal:goal-resume:7',
+    request: {
+      tool_name: 'Goal',
+      input: {
+        codexGoalResume: {
+          objective: 'Finish the long-running task.',
+          status: 'blocked',
+          updatedAt: 7,
+        },
+      },
+      requires_user_interaction: false,
+      approval_type: 'codex-goal-resume',
+      sync_status: false,
+    },
+  });
+
+  assert.equal(interaction.replyControl(
+    'thread-goal',
+    cb.controls[0].request_id,
+    { approvalResponse: { action: 'resume' } },
+  ), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(client.requests.some((entry) => (
+    entry.method === 'thread/goal/set'
+      && entry.params.threadId === 'thread-goal'
+      && entry.params.status === 'active'
+  )));
+});
+
+test('leaving a resumable goal paused sends no goal update', async () => {
+  const client = new FakeClient();
+  client.goal = {
+    threadId: 'thread-goal-leave',
+    objective: 'Keep this goal stopped.',
+    status: 'paused',
+    tokenBudget: null,
+    tokensUsed: 50,
+    timeUsedSeconds: 10,
+    createdAt: 1,
+    updatedAt: 8,
+  };
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['thread-goal-leave'] };
+    }
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  await interaction.observePermissions({
+    sessionId: 'codex:thread-goal-leave',
+    nativeSessionId: 'thread-goal-leave',
+    callbacks: cb.value,
+  });
+  assert.equal(interaction.replyControl(
+    'thread-goal-leave',
+    cb.controls[0].request_id,
+    { approvalResponse: { action: 'leavePaused' } },
+  ), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'thread/goal/set').length,
+    0,
+  );
+  assert.equal(client.stopCalls, 1);
 });
 
 test('permission observation ignores unloaded Codex threads', async () => {

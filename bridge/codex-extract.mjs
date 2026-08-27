@@ -13,7 +13,10 @@ import {
   codexUserNativeId,
   tagCodexLiveSource,
 } from './codex-live.mjs';
-import { codexResponseUserText } from './codex-session.mjs';
+import {
+  codexResponseUserText,
+  isCodexInternalUserContext,
+} from './codex-session.mjs';
 
 const TOOL_NAMES = new Map([
   ['exec_command', 'Bash'],
@@ -496,7 +499,8 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const isReviewPrompt = !!reviewPrompt && text === reviewPrompt;
       const duplicateReviewPrompt = isReviewPrompt && reviewPromptSeen;
       if (isReviewPrompt) reviewPromptSeen = true;
-      if (shouldEmit && text.trim() && !duplicateReviewPrompt) {
+      if (shouldEmit && text.trim() && !isCodexInternalUserContext(text)
+        && !duplicateReviewPrompt) {
         emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'user', payload.message),
           nativeId: payload.client_id ? `codex:user:${payload.client_id}` : '',

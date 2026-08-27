@@ -192,6 +192,19 @@ test('response-only user messages provide metadata preview without exposing inte
         payload: {
           type: 'message',
           role: 'user',
+          content: [{
+            type: 'input_text',
+            text: '<codex_internal_context source="goal">\n'
+              + 'Continue pursuing the hidden goal.\n'
+              + '</codex_internal_context>',
+          }],
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
           content: [{ type: 'input_text', text: 'Why is this session missing?' }],
         },
       },

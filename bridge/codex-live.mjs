@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isCodexInternalUserContext } from './codex-session.mjs';
 
 export const CODEX_LIVE_SOURCE = Symbol('codexLiveSource');
 
@@ -253,7 +254,10 @@ export function codexTurnErrorLiveMessage(turnId, error, at, uuid = '') {
 
 export function codexUserItemText(item) {
   return (item?.content || []).map((part) => {
-    if (part?.type === 'text') return part.text || '';
+    if (part?.type === 'text') {
+      const text = part.text || '';
+      return isCodexInternalUserContext(text) ? '' : text;
+    }
     if (part?.type === 'localImage') return `![Image](${part.path || ''})`;
     if (part?.type === 'image') return `![Image](${part.url || ''})`;
     return '';

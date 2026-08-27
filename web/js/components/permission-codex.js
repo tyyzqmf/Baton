@@ -33,7 +33,27 @@ export function createCodexPermissionController(options) {
         : [],
     };
 
-    if (request.approvalType === 'codex-permissions') {
+    if (request.approvalType === 'codex-goal-resume') {
+      var goal = input.codexGoalResume || {};
+      renderPrompt({
+        title: 'Resume paused goal?',
+        description: 'Goal: ' + (goal.objective || ''),
+        options: [
+          {
+            label: 'Resume goal',
+            description: 'Mark it active and continue when idle',
+            act: 'goal:resume',
+            key: '1',
+          },
+          {
+            label: 'Leave paused',
+            description: 'Keep it paused; use /goal resume later',
+            act: 'goal:leavePaused',
+            key: '2',
+          },
+        ],
+      });
+    } else if (request.approvalType === 'codex-permissions') {
       renderPrompt(buildPermissionsPrompt(input));
     } else if (request.approvalType === 'codex-mcp-elicitation') {
       renderMcpPrompt(input.codexMcpElicitation || {});
@@ -52,6 +72,15 @@ export function createCodexPermissionController(options) {
 
   function choose(act, label, isTyped) {
     if (!request) return false;
+
+    if (request.approvalType === 'codex-goal-resume') {
+      finish({
+        approvalResponse: {
+          action: act === 'goal:resume' ? 'resume' : 'leavePaused',
+        },
+      });
+      return true;
+    }
 
     if (request.approvalType === 'codex-permissions') {
       var permissionAction = act.indexOf('permissions:') === 0 ? act.slice(12) : 'deny';
@@ -84,7 +113,11 @@ export function createCodexPermissionController(options) {
 
   function cancel() {
     if (!request) return false;
-    if (request.approvalType === 'codex-permissions') {
+    if (request.approvalType === 'codex-goal-resume') {
+      finish({
+        approvalResponse: { action: 'leavePaused' },
+      });
+    } else if (request.approvalType === 'codex-permissions') {
       finish({
         approvalResponse: { action: 'deny' },
       });

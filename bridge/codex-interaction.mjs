@@ -16,6 +16,9 @@ import { registerRuntimeOwnedMessage } from './live-message-registry.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 
+const CODEX_GOAL_RESUME_APPROVAL_TYPE = 'codex-goal-resume';
+const RESUMABLE_GOAL_STATUSES = new Set(['paused', 'blocked', 'usageLimited']);
+
 function turnStatusError(turn) {
   const status = turn?.status || 'completed';
   return ['failed', 'interrupted'].includes(status) ? status : undefined;
@@ -580,6 +583,15 @@ export class CodexInteraction {
     const operation = session.sendLock.then(async () => {
       if (session.active) return { active: true, loaded: true };
       let observed = null;
+      let actualControlRequestSeen = false;
+      const callbacks = options.callbacks || {};
+      const observerCallbacks = {
+        ...callbacks,
+        onControlRequest: (request) => {
+          actualControlRequestSeen = true;
+          callbacks.onControlRequest?.(request);
+        },
+      };
       const clearObservation = () => {
         if (!observed) return;
         if (observed.turnId) {
@@ -596,7 +608,12 @@ export class CodexInteraction {
         if (session.releasePromise) await session.releasePromise;
         const client = this.#client(session, { managedOnly: true });
         await client.start();
-        const loaded = await client.request('thread/loaded/list');
+        const [loaded, goalResponse] = await Promise.all([
+          client.request('thread/loaded/list'),
+          client.request('thread/goal/get', {
+            threadId: session.nativeSessionId,
+          }).catch(() => ({ goal: null })),
+        ]);
         if (!(loaded?.data || []).includes(session.nativeSessionId)) {
           await this.#release(session);
           return { active: false, loaded: false };
@@ -604,7 +621,7 @@ export class CodexInteraction {
         observed = this.#prepareTurn(session, {
           streamId: `codex-permission-${session.nativeSessionId}-${client.generation}`,
           text: '',
-          callbacks: options.callbacks || {},
+          callbacks: observerCallbacks,
           external: true,
           observerOnly: true,
         });
@@ -626,6 +643,40 @@ export class CodexInteraction {
         session.model = result.model || session.model;
         session.effort = result.reasoningEffort ?? session.effort;
         session.subscribedGeneration = client.generation;
+        const threadActive = result?.thread?.status?.type === 'active';
+        const goal = goalResponse?.goal;
+        if (!actualControlRequestSeen && !threadActive
+          && RESUMABLE_GOAL_STATUSES.has(goal?.status)) {
+          const requestId = [
+            'codex',
+            session.nativeSessionId,
+            'goal-resume',
+            goal.updatedAt ?? goal.status,
+          ].join(':');
+          this.pendingRequests.set(requestId, {
+            method: 'thread/goal/resume',
+            turn: observed,
+            client,
+            goal,
+          });
+          callbacks.onControlRequest?.({
+            request_id: requestId,
+            request: {
+              tool_name: 'Goal',
+              input: {
+                codexGoalResume: {
+                  objective: goal.objective || '',
+                  status: goal.status,
+                  updatedAt: goal.updatedAt ?? null,
+                },
+              },
+              requires_user_interaction: false,
+              approval_type: CODEX_GOAL_RESUME_APPROVAL_TYPE,
+              sync_status: false,
+            },
+          });
+          return { active: true, loaded: true };
+        }
         if (result?.thread?.status?.type === 'active') {
           return { active: true, loaded: true };
         }
@@ -640,6 +691,42 @@ export class CodexInteraction {
     });
     session.sendLock = operation.catch(() => {});
     return operation;
+  }
+
+  #releaseIdleGoalObservation(pending) {
+    const turn = pending.turn;
+    const session = turn?.session;
+    if (!turn || !session || turn.turnId || session.active !== turn) return;
+    session.active = null;
+    turn.framer.cancel();
+    this.#release(session).catch(() => {});
+  }
+
+  #resumeGoal(pending) {
+    const expectedUpdatedAt = pending.goal?.updatedAt;
+    const nativeSessionId = pending.turn.session.nativeSessionId;
+    pending.client.request('thread/goal/get', {
+      threadId: nativeSessionId,
+    }).then((response) => {
+      const current = response?.goal;
+      if (!current || !RESUMABLE_GOAL_STATUSES.has(current.status)
+        || (expectedUpdatedAt != null && current.updatedAt !== expectedUpdatedAt)) {
+        this.#releaseIdleGoalObservation(pending);
+        return null;
+      }
+      return pending.client.request('thread/goal/set', {
+        threadId: nativeSessionId,
+        status: 'active',
+      });
+    }).then((response) => {
+      if (!response) return;
+      const timer = setTimeout(() => {
+        this.#releaseIdleGoalObservation(pending);
+      }, 3000);
+      timer.unref?.();
+    }).catch(() => {
+      this.#releaseIdleGoalObservation(pending);
+    });
   }
 
   async create(options) {
@@ -1885,7 +1972,13 @@ export class CodexInteraction {
     const pending = this.pendingRequests.get(requestId);
     if (!pending || pending.turn.session.nativeSessionId !== nativeSessionId) return false;
     this.pendingRequests.delete(requestId);
-    if (pending.method === 'item/tool/requestUserInput') {
+    if (pending.method === 'thread/goal/resume') {
+      if (reply.approvalResponse?.action === 'resume') {
+        this.#resumeGoal(pending);
+      } else {
+        this.#releaseIdleGoalObservation(pending);
+      }
+    } else if (pending.method === 'item/tool/requestUserInput') {
       const answer = reply.answerText || '';
       const answers = Object.fromEntries(
         (pending.params.questions || []).map((question) => [

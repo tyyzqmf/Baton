@@ -230,6 +230,7 @@ function syncPoolStatus(sessionId, status, detail, options) {
 function controlDetail(p) {
   if (!p) return '';
   const input = p.input || {};
+  if (input.codexGoalResume) return input.codexGoalResume.objective || 'Resume goal';
   if (Array.isArray(input.questions) && input.questions.length) return input.questions[0].question || '';
   if (p.toolName === 'ExitPlanMode' || p.toolName === 'exit_plan_mode') return 'Review plan';
   return input.command || input.file_path || input.path || p.toolName || '';
@@ -299,6 +300,7 @@ function dismissPendingControl(sessionId, requestId) {
 function queuePermissionRequest(sessionId, req, options = {}) {
   const r = req.request || {};
   const input = r.input || {};
+  const syncStatus = options.syncStatus !== false && r.sync_status !== false;
   const queued = _pendingControl.enqueue(sessionId, {
     requestId: req.request_id,
     toolName: r.tool_name,
@@ -307,15 +309,17 @@ function queuePermissionRequest(sessionId, req, options = {}) {
     approvalType: r.approval_type || null,
     runtime: options.runtime || 'claude',
     nativeSessionId: options.nativeSessionId || sessionId,
-    syncStatus: true,
+    syncStatus,
     ...(options.liveTurn ? { liveTurn: options.liveTurn } : {}),
   });
-  syncInteractionStatus(
-    sessionId,
-    'needs_input',
-    controlDetail(queued.current),
-    options.runtime,
-  );
+  if (queued.current.syncStatus) {
+    syncInteractionStatus(
+      sessionId,
+      'needs_input',
+      controlDetail(queued.current),
+      options.runtime,
+    );
+  }
   if (queued.shouldPresent) sendPermissionRequest(sessionId, queued.current);
   return queued;
 }
@@ -336,12 +340,14 @@ async function handleRevealPermission(sessionId) {
   if (!sessionId) return;
   const pending = _pendingControl.current(sessionId);
   if (pending) {
-    syncInteractionStatus(
-      sessionId,
-      'needs_input',
-      controlDetail(pending),
-      pending.runtime,
-    );
+    if (pending.syncStatus) {
+      syncInteractionStatus(
+        sessionId,
+        'needs_input',
+        controlDetail(pending),
+        pending.runtime,
+      );
+    }
     sendPermissionRequest(sessionId, pending);
     return;
   }

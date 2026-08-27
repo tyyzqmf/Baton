@@ -556,6 +556,63 @@ test('closing a Codex permission approval safely denies the extra permissions', 
   assert.deepEqual(sent[0].approvalResponse, { action: 'deny' });
 });
 
+test('Codex goal resume reuses the permission prompt without changing its payload shape', () => {
+  reset();
+  window.showPermissionPrompt({
+    sessionId: 'codex:thread-1',
+    requestId: 'goal-resume-1',
+    kind: 'tool',
+    toolName: 'Goal',
+    approvalType: 'codex-goal-resume',
+    input: {
+      codexGoalResume: {
+        objective: 'Finish the long-running task.',
+        status: 'blocked',
+        updatedAt: 7,
+      },
+    },
+  });
+
+  assert.equal(document.querySelector('.permission-title').textContent, 'Resume paused goal?');
+  assert.equal(
+    document.querySelector('.permission-desc').textContent,
+    'Goal: Finish the long-running task.',
+  );
+  assert.deepEqual(
+    [...document.querySelectorAll('.permission-label')].map((el) => el.textContent),
+    ['Resume goal', 'Leave paused'],
+  );
+
+  window.handlePermissionOption(document.querySelectorAll('.permission-btn')[0]);
+  assert.deepEqual(sent[0], {
+    action: 'permission_reply',
+    sessionId: 'codex:thread-1',
+    device: 'test-ec2-ap',
+    requestId: 'goal-resume-1',
+    approvalResponse: { action: 'resume' },
+  });
+});
+
+test('closing a Codex goal resume prompt leaves the goal paused', () => {
+  reset();
+  window.showPermissionPrompt({
+    sessionId: 'codex:thread-1',
+    requestId: 'goal-resume-close',
+    kind: 'tool',
+    toolName: 'Goal',
+    approvalType: 'codex-goal-resume',
+    input: {
+      codexGoalResume: {
+        objective: 'Keep this goal stopped.',
+        status: 'paused',
+      },
+    },
+  });
+
+  window.cancelPermissionPrompt();
+  assert.deepEqual(sent[0].approvalResponse, { action: 'leavePaused' });
+});
+
 test('Codex MCP tool approval renders persistence choices from metadata', () => {
   reset();
   window.showPermissionPrompt({
