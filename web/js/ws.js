@@ -8,7 +8,10 @@ import {
 } from './history-recovery.js';
 import { commitHistoryRecovery } from './history-recovery-commit.js';
 import { createHistoryRecoveryDomAdapter } from './history-recovery-dom.js';
-import { resolveActivityState } from './runtime-status.js';
+import {
+  resolveActivityState,
+  resolveControlActivity,
+} from './runtime-status.js';
 import {
   StreamCoordinator,
   StreamingDomRenderer,
@@ -550,7 +553,10 @@ function dispatchControlEvent(message) {
     if (typeof resolvePermissionPrompt === 'function') {
       resolvePermissionPrompt(requestId);
     }
-    state.wsRunning = hasOutstandingTurns();
+    state.wsRunning = resolveControlActivity({
+      activityHint: message.activity,
+      hasOutstandingTurns: hasOutstandingTurns(),
+    }) === 'running';
     _appliedLifecycleVersion++;
     updateSendBtn();
   }

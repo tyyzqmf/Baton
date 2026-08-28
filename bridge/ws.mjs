@@ -45,7 +45,10 @@ import {
   reconcile,
 } from './sync.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
-import { PermissionQueue } from './permission-queue.mjs';
+import {
+  PermissionQueue,
+  resolvedControlActivity,
+} from './permission-queue.mjs';
 import { ClaudeHookServer } from './claude-hook.mjs';
 import { ActiveTurnRegistry } from './active-turn-registry.mjs';
 import {
@@ -263,8 +266,11 @@ function sendPermissionRequest(sessionId, p) {
   }
 }
 
-function sendPermissionResolved(sessionId, p) {
-  const payload = { requestId: p.requestId };
+function sendPermissionResolved(sessionId, p, activity = '') {
+  const payload = {
+    requestId: p.requestId,
+    ...(activity ? { activity } : {}),
+  };
   if (p.liveTurn && !p.liveTurn.isEnded()) {
     p.liveTurn.emit('permission_resolved', payload);
   } else {
@@ -1844,7 +1850,8 @@ function handlePermissionReply(msg) {
       );
     }
   } else {
-    sendPermissionResolved(sessionId, pending);
+    const activity = resolvedControlActivity(pending, { approvalResponse });
+    sendPermissionResolved(sessionId, pending, activity);
     if (pending.syncStatus) {
       syncInteractionStatus(sessionId, 'running', '', pending.runtime);
     }

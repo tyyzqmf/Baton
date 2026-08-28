@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PermissionQueue } from '../../bridge/permission-queue.mjs';
+import {
+  PermissionQueue,
+  resolvedControlActivity,
+} from '../../bridge/permission-queue.mjs';
 
 const request = (requestId, command = requestId) => ({
   requestId,
@@ -68,4 +71,22 @@ test('permission queue dismisses requests resolved by another client', () => {
   const active = queue.dismiss('session-1', 'first');
   assert.equal(active.next.requestId, 'third');
   assert.equal(queue.current('session-1').requestId, 'third');
+});
+
+test('only resuming a stopped goal advertises immediate running activity', () => {
+  assert.equal(resolvedControlActivity({
+    approvalType: 'codex-goal-resume',
+  }, {
+    approvalResponse: { action: 'resume' },
+  }), 'running');
+  assert.equal(resolvedControlActivity({
+    approvalType: 'codex-goal-resume',
+  }, {
+    approvalResponse: { action: 'leavePaused' },
+  }), '');
+  assert.equal(resolvedControlActivity({
+    approvalType: 'codex-command',
+  }, {
+    approvalResponse: { action: 'resume' },
+  }), '');
 });

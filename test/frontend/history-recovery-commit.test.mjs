@@ -6,6 +6,7 @@ import { extractCodexMessages } from '../../bridge/codex-extract.mjs';
 import {
   deriveActivityFromMessages,
   resolveActivityState,
+  resolveControlActivity,
 } from '../../web/js/runtime-status.js';
 import { commitHistoryRecovery } from '../../web/js/history-recovery-commit.js';
 import {
@@ -134,6 +135,19 @@ test('resolveActivityState falls back to outstanding turns and runtime activity'
     }],
   }), 'running');
   assert.equal(resolveActivityState({ restOk: true }), 'completed');
+});
+
+test('resolveControlActivity honors an explicit lifecycle hint before turn tracking catches up', () => {
+  assert.equal(resolveControlActivity({
+    activityHint: 'running',
+    hasOutstandingTurns: false,
+  }), 'running');
+  assert.equal(resolveControlActivity({
+    hasOutstandingTurns: true,
+  }), 'running');
+  assert.equal(resolveControlActivity({
+    hasOutstandingTurns: false,
+  }), 'completed');
 });
 
 test('deriveActivityFromMessages preserves Claude and Codex runtime rules', () => {

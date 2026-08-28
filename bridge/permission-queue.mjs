@@ -1,3 +1,10 @@
+export function resolvedControlActivity(request, reply) {
+  return request?.approvalType === 'codex-goal-resume'
+    && reply?.approvalResponse?.action === 'resume'
+    ? 'running'
+    : '';
+}
+
 export class PermissionQueue {
   constructor() {
     this.sessions = new Map();

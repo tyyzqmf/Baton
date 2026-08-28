@@ -205,6 +205,41 @@ test('unrelated tool results do not dismiss the active permission prompt', () =>
   assert.equal(document.getElementById('permission-prompt'), null);
 });
 
+test('Goal resume resolution starts the spinner before the first turn update arrives', () => {
+  reset();
+  state.wsRunning = false;
+  window.updateSpinner();
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: state.wsSessionId,
+    requestId: 'goal-resume',
+    kind: 'tool',
+    toolName: 'Goal',
+    approvalType: 'codex-goal-resume',
+    input: {
+      codexGoalResume: {
+        objective: 'Continue the goal.',
+        status: 'blocked',
+      },
+    },
+  });
+
+  window.__wsTest.handleWsMessage({
+    action: 'permission_resolved',
+    sessionId: state.wsSessionId,
+    requestId: 'goal-resume',
+    activity: 'running',
+  });
+
+  assert.equal(state.wsRunning, true);
+  assert.equal(window.hasActivePermissionPrompt(), false);
+  assert.equal(document.getElementById('cc-spinner')?.style.display, 'flex');
+  assert.equal(
+    document.getElementById('cc-spinner')?.classList.contains('is-collapsed'),
+    false,
+  );
+});
+
 function send(messages) {
   window.__wsTest.handleWsMessage({
     action: 'messages',

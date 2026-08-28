@@ -43,6 +43,16 @@ export function resolveActivityState(options = {}) {
   });
 }
 
+/**
+ * @param {{activityHint?: string, hasOutstandingTurns?: boolean}} options
+ * @returns {'running'|'needs_input'|'completed'}
+ */
+export function resolveControlActivity(options = {}) {
+  var activityHint = normalizeActivity(options.activityHint, '');
+  if (activityHint) return activityHint;
+  return options.hasOutstandingTurns ? 'running' : 'completed';
+}
+
 function normalizeActivity(value, fallback = 'completed') {
   return value === 'running' || value === 'needs_input' || value === 'completed'
     ? value
