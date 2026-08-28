@@ -2244,6 +2244,57 @@ test('permission observation ignores unloaded Codex threads', async () => {
   assert.equal(client.stopCalls, 1);
 });
 
+test('permission observation presents an unloaded resumable goal and loads it on resume', async () => {
+  const client = new FakeClient();
+  client.goal = {
+    threadId: 'thread-unloaded-goal',
+    objective: 'Resume this historical goal.',
+    status: 'blocked',
+    tokenBudget: null,
+    tokensUsed: 30,
+    timeUsedSeconds: 12,
+    createdAt: 1,
+    updatedAt: 9,
+  };
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'thread/loaded/list') {
+      client.requests.push({ method, params });
+      return { data: ['another-thread'] };
+    }
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  assert.deepEqual(await interaction.observePermissions({
+    sessionId: 'codex:thread-unloaded-goal',
+    nativeSessionId: 'thread-unloaded-goal',
+    callbacks: cb.value,
+  }), { active: true, loaded: false });
+  assert.equal(cb.controls[0].request.approval_type, 'codex-goal-resume');
+  assert.equal(
+    client.requests.filter((entry) => entry.method === 'thread/resume').length,
+    0,
+  );
+
+  assert.equal(interaction.replyControl(
+    'thread-unloaded-goal',
+    cb.controls[0].request_id,
+    { approvalResponse: { action: 'resume' } },
+  ), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const resumeIndex = client.requests.findIndex((entry) => entry.method === 'thread/resume');
+  const setIndex = client.requests.findIndex((entry) => entry.method === 'thread/goal/set');
+  assert.ok(resumeIndex !== -1);
+  assert.ok(setIndex > resumeIndex);
+  assert.deepEqual(client.requests[setIndex].params, {
+    threadId: 'thread-unloaded-goal',
+    status: 'active',
+  });
+});
+
 test('permission observation never terminates a conflicting Codex writer', async () => {
   const client = new FakeClient();
   const request = client.request.bind(client);
