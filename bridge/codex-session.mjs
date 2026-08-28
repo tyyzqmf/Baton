@@ -193,14 +193,20 @@ export function scanCodexRollout(filePath, options = {}) {
     : (prompts[0] || '');
   if (!preview) return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
 
+  const processInfoKnown = options.runningInfo !== undefined;
   const runningInfo = options.runningInfo || { projects: new Set(), sessions: new Set() };
   const now = options.now ?? Date.now();
   const staleMs = options.staleMs ?? CODEX_STATUS_STALE_MS;
   const isFresh = now - stat.mtimeMs <= staleMs;
+  const exactProcess = runningInfo.sessions.has(nativeSessionId);
+  const sameProjectProcess = runningInfo.projects.has(project);
   const isRunning = !!activeTurnId && (
-    isFresh
-    || runningInfo.sessions.has(nativeSessionId)
-    || runningInfo.projects.has(project)
+    options.runtimeOwned === true
+    || exactProcess
+    // Normal watcher appends intentionally avoid a ps/lsof scan. When process
+    // info is available (startup + stale recheck), project-level evidence is
+    // only valid while the rollout is fresh.
+    || (isFresh && (!processInfoKnown || sameProjectProcess))
   );
 
   return {

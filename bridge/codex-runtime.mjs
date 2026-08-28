@@ -119,6 +119,7 @@ export const codexRuntime = defineRuntimeAdapter({
       session = inspectCodexSession(nativeSessionId, {
         filePath,
         runningInfo: context.runningInfo,
+        runtimeOwned: codexInteraction.owns(nativeSessionId),
       });
       if (!session) return null;
     }

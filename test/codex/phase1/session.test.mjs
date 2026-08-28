@@ -237,7 +237,10 @@ test('response-only user messages provide metadata preview without exposing inte
 
     const scanned = scanCodexRollout(target, {
       now: Date.parse('2026-08-09T12:00:06.000Z'),
-      runningInfo: { projects: new Set(), sessions: new Set() },
+      runningInfo: {
+        projects: new Set(['-tmp-baton-codex-target']),
+        sessions: new Set(),
+      },
     });
     assert.equal(scanned.session.preview, 'Why is this session missing?');
     assert.equal(scanned.session.status, 'running');
@@ -304,33 +307,63 @@ test('incremental extraction waits for the canonical Codex user event', () => {
   }
 });
 
-test('fresh open turn is running while stale orphan is completed', () => {
+test('open turn requires exact, owned, or fresh same-project runtime evidence', () => {
   const { root, target } = tempRollout();
   try {
     const lines = fs.readFileSync(target, 'utf-8').split('\n').slice(0, 7).join('\n');
     fs.writeFileSync(target, lines);
-    const fresh = scanCodexRollout(target, {
+    const noProcess = scanCodexRollout(target, {
       now: Date.now(),
       staleMs: 60_000,
       runningInfo: { projects: new Set(), sessions: new Set() },
     });
-    assert.equal(fresh.session.status, 'running');
+    assert.equal(noProcess.session.status, 'completed');
+
+    const watcherFresh = scanCodexRollout(target, {
+      now: Date.now(),
+      staleMs: 60_000,
+    });
+    assert.equal(watcherFresh.session.status, 'running');
+
+    const projectFresh = scanCodexRollout(target, {
+      now: Date.now(),
+      staleMs: 60_000,
+      runningInfo: {
+        projects: new Set([noProcess.session.project]),
+        sessions: new Set(),
+      },
+    });
+    assert.equal(projectFresh.session.status, 'running');
 
     const old = new Date(Date.now() - 120_000);
     fs.utimesSync(target, old, old);
-    const stale = scanCodexRollout(target, {
+    const projectStale = scanCodexRollout(target, {
+      now: Date.now(),
+      staleMs: 60_000,
+      runningInfo: {
+        projects: new Set([noProcess.session.project]),
+        sessions: new Set(),
+      },
+    });
+    assert.equal(projectStale.session.status, 'completed');
+
+    const exactProcess = scanCodexRollout(target, {
+      now: Date.now(),
+      staleMs: 60_000,
+      runningInfo: {
+        projects: new Set([noProcess.session.project]),
+        sessions: new Set([SESSION_ID]),
+      },
+    });
+    assert.equal(exactProcess.session.status, 'running');
+
+    const runtimeOwned = scanCodexRollout(target, {
       now: Date.now(),
       staleMs: 60_000,
       runningInfo: { projects: new Set(), sessions: new Set() },
+      runtimeOwned: true,
     });
-    assert.equal(stale.session.status, 'completed');
-
-    const processMatched = scanCodexRollout(target, {
-      now: Date.now(),
-      staleMs: 60_000,
-      runningInfo: { projects: new Set([stale.session.project]), sessions: new Set() },
-    });
-    assert.equal(processMatched.session.status, 'running');
+    assert.equal(runtimeOwned.session.status, 'running');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

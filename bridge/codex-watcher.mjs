@@ -526,6 +526,7 @@ export class CodexWatcher {
     if (!this.threadKinds.has(sessionId)) {
       scannedSession = this.scanRollout(filePath, {
         nativeSessionId,
+        runtimeOwned: this.runtimeOwnsFn(nativeSessionId),
         ...(options.forceStatus ? { runningInfo: this.runningInfoFn() } : {}),
       }).session;
       if (scannedSession) {
@@ -580,6 +581,7 @@ export class CodexWatcher {
     if (needsSessionScan) {
       const session = scannedSession || this.scanRollout(filePath, {
         nativeSessionId,
+        runtimeOwned: this.runtimeOwnsFn(nativeSessionId),
         ...(options.forceStatus ? { runningInfo: this.runningInfoFn() } : {}),
       }).session;
       if (session) {

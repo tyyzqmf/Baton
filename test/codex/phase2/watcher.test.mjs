@@ -378,6 +378,26 @@ test('Codex watcher persists every row while app-server owns the session', async
   );
 });
 
+test('Codex watcher keeps a stale open turn running while app-server owns the session', async (t) => {
+  const home = createHome(t);
+  const filePath = rolloutPath(home, IDS[1]);
+  writeLines(filePath, baseLines(IDS[1], home, { complete: false }));
+  const old = new Date(Date.now() - 60 * 60_000);
+  fs.utimesSync(filePath, old, old);
+  const h = watcherHarness([home], {
+    runtimeOwnsFn: (nativeSessionId) => nativeSessionId === IDS[1],
+  });
+  t.after(() => h.watcher.stop());
+
+  await h.watcher.queueFile(filePath, { forceStatus: true });
+
+  assert.equal(
+    h.posts.some((entry) => entry.body.sessions?.some((session) =>
+      session.nativeSessionId === IDS[1] && session.status === 'running')),
+    true,
+  );
+});
+
 test('Codex watcher keeps a completed runtime turn storage-only through its JSONL terminal row', async (t) => {
   const home = createHome(t);
   const filePath = rolloutPath(home, IDS[1]);
