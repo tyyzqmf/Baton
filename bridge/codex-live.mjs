@@ -40,6 +40,10 @@ export function codexItemNativeId(itemId) {
   return itemId ? `codex:item:${itemId}` : '';
 }
 
+export function codexMessageUuid(nativeId) {
+  return nativeId || '';
+}
+
 export function codexToolUseId(sessionId, itemId, occurrence = 1, suffix = '') {
   if (!sessionId || !itemId) return '';
   const digest = crypto.createHash('sha1')
@@ -49,8 +53,10 @@ export function codexToolUseId(sessionId, itemId, occurrence = 1, suffix = '') {
   return `codex_tool_${digest}`;
 }
 
-export function codexToolMessageNativeId(itemId, phase) {
-  return itemId && phase ? `codex:item:${itemId}:${phase}` : '';
+export function codexToolMessageNativeId(itemId, phase, occurrence = 1) {
+  if (!itemId || !phase) return '';
+  const occurrencePart = occurrence > 1 ? `:${occurrence}` : '';
+  return `codex:item:${itemId}${occurrencePart}:${phase}`;
 }
 
 export function tagCodexLiveSource(message, key) {
@@ -172,12 +178,14 @@ function completedToolMessages(item, completedAtMs, context) {
   const at = timestamp(completedAtMs);
   const liveKey = codexItemLiveKey(item.id);
   const exitCode = item.exitCode ?? item.exit_code;
+  const toolUseNativeId = codexToolMessageNativeId(item.id, 'tool-use');
+  const toolResultNativeId = codexToolMessageNativeId(item.id, 'tool-result');
   return [
     {
       liveKey,
       message: {
-        uuid: `codex_live_tool_use_${item.id}`,
-        nativeId: codexToolMessageNativeId(item.id, 'tool-use'),
+        uuid: codexMessageUuid(toolUseNativeId),
+        nativeId: toolUseNativeId,
         type: 'assistant',
         content: uses,
         timestamp: at,
@@ -187,8 +195,8 @@ function completedToolMessages(item, completedAtMs, context) {
     {
       liveKey,
       message: {
-        uuid: `codex_live_tool_result_${item.id}`,
-        nativeId: codexToolMessageNativeId(item.id, 'tool-result'),
+        uuid: codexMessageUuid(toolResultNativeId),
+        nativeId: toolResultNativeId,
         type: 'user',
         content: uses.map((use) => ({
           type: 'tool_result',
@@ -244,11 +252,12 @@ export function codexTurnErrorLiveMessage(turnId, error, at, uuid = '') {
   const detail = codexErrorMessage(error);
   const liveKey = codexTurnErrorLiveKey(turnId);
   if (!detail || !liveKey) return null;
+  const nativeId = codexTurnErrorNativeId(turnId);
   return {
     liveKey,
     message: {
-      uuid: uuid || `codex_live_error_${turnId}`,
-      nativeId: codexTurnErrorNativeId(turnId),
+      uuid: codexMessageUuid(nativeId) || uuid || `codex_live_error_${turnId}`,
+      nativeId,
       type: 'assistant',
       content: [{ type: 'text', text: `Error: ${detail}` }],
       timestamp: timestamp(at),
@@ -283,13 +292,14 @@ export function codexCompletedLiveMessages(
     const text = codexUserItemText(item);
     const liveKey = codexUserLiveKey(item.clientId)
       || codexTurnUserLiveKey(context.turnId);
+    const nativeId = codexUserNativeId(item.clientId)
+      || codexTurnUserNativeId(context.turnId);
     if (!text || !liveKey) return [];
     return [{
       liveKey,
       message: {
-        uuid: `codex_live_user_${item.id}`,
-        nativeId: codexUserNativeId(item.clientId)
-          || codexTurnUserNativeId(context.turnId),
+        uuid: codexMessageUuid(nativeId),
+        nativeId,
         type: 'user',
         content: text,
         timestamp: at,
@@ -299,11 +309,12 @@ export function codexCompletedLiveMessages(
   if (item.type === 'agentMessage') {
     const text = item.text || fallbackText;
     if (!text) return [];
+    const nativeId = codexItemNativeId(item.id);
     return [{
       liveKey: codexItemLiveKey(item.id),
       message: {
-        uuid: `codex_live_agent_${item.id}`,
-        nativeId: codexItemNativeId(item.id),
+        uuid: codexMessageUuid(nativeId),
+        nativeId,
         type: 'assistant',
         content: [{ type: 'text', text }],
         timestamp: at,
@@ -314,11 +325,12 @@ export function codexCompletedLiveMessages(
     const thinking = [...(item.content || []), ...(item.summary || [])].join('\n')
       || fallbackText;
     if (!thinking) return [];
+    const nativeId = codexItemNativeId(item.id);
     return [{
       liveKey: codexItemLiveKey(item.id),
       message: {
-        uuid: `codex_live_reasoning_${item.id}`,
-        nativeId: codexItemNativeId(item.id),
+        uuid: codexMessageUuid(nativeId),
+        nativeId,
         type: 'assistant',
         content: [{ type: 'thinking', thinking }],
         timestamp: at,
@@ -326,11 +338,12 @@ export function codexCompletedLiveMessages(
     }];
   }
   if (item.type === 'plan' && item.text) {
+    const nativeId = codexItemNativeId(item.id);
     return [{
       liveKey: codexItemLiveKey(item.id),
       message: {
-        uuid: `codex_live_plan_${item.id}`,
-        nativeId: codexItemNativeId(item.id),
+        uuid: codexMessageUuid(nativeId),
+        nativeId,
         type: 'assistant',
         content: [{ type: 'text', text: item.text }],
         timestamp: at,

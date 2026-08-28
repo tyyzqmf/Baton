@@ -14,7 +14,11 @@ import {
   parseApplyPatchInput,
   syncCodexMessages,
 } from '../../../bridge/codex-extract.mjs';
-import { codexLiveSource } from '../../../bridge/codex-live.mjs';
+import {
+  codexCompletedLiveMessages,
+  codexLiveSource,
+  codexMessageUuid,
+} from '../../../bridge/codex-live.mjs';
 
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
 const FIXTURE = path.join(
@@ -302,6 +306,101 @@ test('incremental extraction waits for the canonical Codex user event', () => {
     assert.equal(second.messages.length, 1);
     assert.equal(second.messages[0].content, '你是我吗');
     assert.equal(second.messages[0].nativeId, `codex:user:${clientId}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex live and rollout copies use one canonical UUID for the same native item', () => {
+  const { root, target } = tempRollout();
+  try {
+    const itemId = 'msg-canonical-shared';
+    const timestamp = '2026-08-28T06:57:48.901Z';
+    fs.writeFileSync(target, `${JSON.stringify({
+      timestamp,
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id: itemId,
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'same final answer' }],
+      },
+    })}\n`);
+
+    const extracted = extractCodexMessages(target, SESSION_ID).messages[0];
+    const live = codexCompletedLiveMessages({
+      id: itemId,
+      type: 'agentMessage',
+      text: 'same final answer',
+    }, timestamp, '', { sessionId: SESSION_ID })[0].message;
+
+    assert.equal(extracted.nativeId, live.nativeId);
+    assert.equal(extracted.uuid, live.uuid);
+    assert.equal(extracted.uuid, codexMessageUuid(extracted.nativeId));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex live and rollout command messages share canonical tool UUIDs', () => {
+  const { root, target } = tempRollout();
+  try {
+    const callId = 'call-canonical-command';
+    const startedAt = '2026-08-28T06:57:40.000Z';
+    const completedAt = '2026-08-28T06:57:44.000Z';
+    const entries = [{
+      timestamp: startedAt,
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'echo ready', workdir: '/tmp' }),
+        call_id: callId,
+      },
+    }, {
+      timestamp: completedAt,
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output',
+        call_id: callId,
+        output: 'ready',
+      },
+    }, {
+      timestamp: completedAt,
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        item: {
+          type: 'CommandExecution',
+          id: callId,
+          command: ['/bin/sh', '-lc', 'echo ready'],
+          cwd: 'file:///tmp',
+          status: 'completed',
+          aggregated_output: 'ready',
+          exit_code: 0,
+        },
+      },
+    }];
+    fs.writeFileSync(target, `${entries.map(JSON.stringify).join('\n')}\n`);
+
+    const extracted = extractCodexMessages(target, SESSION_ID).messages;
+    const live = codexCompletedLiveMessages({
+      id: callId,
+      type: 'commandExecution',
+      command: 'echo ready',
+      cwd: '/tmp',
+      status: 'completed',
+      aggregatedOutput: 'ready',
+      exitCode: 0,
+    }, completedAt, '', { sessionId: SESSION_ID }).map((entry) => entry.message);
+
+    for (const liveMessage of live) {
+      const persisted = extracted.find((message) =>
+        message.nativeId === liveMessage.nativeId);
+      assert.ok(persisted);
+      assert.equal(persisted.uuid, liveMessage.uuid);
+      assert.equal(persisted.uuid, codexMessageUuid(persisted.nativeId));
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

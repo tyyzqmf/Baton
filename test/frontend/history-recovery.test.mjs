@@ -444,10 +444,10 @@ test('real Codex rollout preserves every message across REST and WS window overl
   const expectedOrder = all.map((item) => item.uuid);
 
   assert.equal(all.length, 11);
-  assert.ok(
-    new Set(all.map((item) => item.nativeId).filter(Boolean)).size
-      < all.filter((item) => item.nativeId).length,
-    'the real rollout must retain its reused native ids',
+  assert.equal(
+    new Set(all.map((item) => item.nativeId).filter(Boolean)).size,
+    all.filter((item) => item.nativeId).length,
+    'stable Codex native ids must uniquely identify each logical message',
   );
 
   const scenarios = [

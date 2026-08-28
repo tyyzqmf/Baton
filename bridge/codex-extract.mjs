@@ -3,6 +3,7 @@ import fs from 'fs';
 import {
   codexItemNativeId,
   codexItemLiveKey,
+  codexMessageUuid,
   codexToolMessageNativeId,
   codexToolUseId,
   codexTurnErrorLiveMessage,
@@ -394,6 +395,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   const emit = (...items) => {
     const liveKey = codexTurnLiveKey(activeTurnId);
     for (const item of items) {
+      if (item?.nativeId) item.uuid = codexMessageUuid(item.nativeId);
       messages.push(liveKey ? tagCodexLiveSource(item, liveKey) : item);
     }
   };
@@ -614,7 +616,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
             status: item.status,
             exitCode: item.exit_code,
           }),
-          nativeId: codexToolMessageNativeId(callId, 'tool-result'),
+          nativeId: codexToolMessageNativeId(callId, 'tool-result', occurrence),
           type: 'user',
           content: pair.uses.map((use) => ({
             type: 'tool_result',
@@ -652,7 +654,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
             tool: item.tool,
             status: item.status,
           }),
-          nativeId: codexToolMessageNativeId(callId, 'tool-result'),
+          nativeId: codexToolMessageNativeId(callId, 'tool-result', occurrence),
           type: 'user',
           content: pair.uses.map((use) => ({
             type: 'tool_result',
@@ -741,7 +743,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       if (shouldEmit) {
         emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'tool_call', payload),
-          nativeId: codexToolMessageNativeId(callId, 'tool-use'),
+          nativeId: codexToolMessageNativeId(callId, 'tool-use', occurrence),
           type: 'assistant',
           content: uses,
           timestamp,
@@ -798,10 +800,20 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       } else if (pair.mcpInfo || pair.mcpCompleted) {
         resultMeta = { codexSuperseded: true };
       }
+      if (pair.name === 'apply_patch') {
+        resultMeta = { ...resultMeta, codexProvisional: true };
+      }
       if (!shouldEmit) continue;
+      const resultPhase = pair.name === 'apply_patch'
+        ? 'tool-result'
+        : 'tool-result-provisional';
       emit(tagCodexLiveSource({
         uuid: stableId(sessionId, line, 'tool_output', payload),
-        nativeId: codexToolMessageNativeId(pair.callId, 'tool-result-provisional'),
+        nativeId: codexToolMessageNativeId(
+          pair.callId,
+          resultPhase,
+          pair.occurrence,
+        ),
         type: 'user',
         content: pair.uses.map((use) => ({
           type: 'tool_result',
@@ -821,7 +833,11 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       const identity = pair.fallbackOutput || { line, payload, timestamp };
       emit(tagCodexLiveSource({
         uuid: stableId(sessionId, identity.line, 'tool_output', identity.payload),
-        nativeId: codexToolMessageNativeId(pair.callId, 'tool-result'),
+        nativeId: codexToolMessageNativeId(
+          pair.callId,
+          'tool-result',
+          pair.occurrence,
+        ),
         type: 'user',
         content: pair.uses.map((use) => ({
           type: 'tool_result',

@@ -4,6 +4,8 @@ import test from 'node:test';
 import { CodexInteraction } from '../../../bridge/codex-interaction.mjs';
 import {
   codexCompletedLiveMessages,
+  codexItemNativeId,
+  codexMessageUuid,
   codexPreviewBlocks,
 } from '../../../bridge/codex-live.mjs';
 import {
@@ -786,7 +788,10 @@ test('turn completion reconciles a final agent item when intermediate notificati
   assert.deepEqual(cb.frames.map((frame) => frame.t), ['start', 'delta', 'stop']);
   assert.equal(cb.frames[1].chunk, 'complete text recovered from the turn');
   assert.equal(cb.messages.length, 1);
-  assert.equal(cb.messages[0].message.uuid, 'codex_live_agent_agent-reconciled');
+  assert.equal(
+    cb.messages[0].message.uuid,
+    codexMessageUuid(codexItemNativeId('agent-reconciled')),
+  );
   assert.equal(cb.messages[0].message.content[0].text, 'complete text recovered from the turn');
 });
 
