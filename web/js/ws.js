@@ -353,6 +353,9 @@ function recoverSubscribedSession() {
 
 function beginSessionConnectionRecovery() {
   if (!state.wsSessionId || !state.appState.session) return null;
+  if (_connectionRecovery?.sessionId === state.wsSessionId) {
+    return _connectionRecovery;
+  }
   var turnIds = _streamCoordinator.activeTurnIds().filter(function (turnId) {
     return !_streamCoordinator.getTurn(turnId)?.endReceived;
   });
