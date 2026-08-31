@@ -3,6 +3,7 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
 import { createHistoryRecoveryDomAdapter } from '../../web/js/history-recovery-dom.js';
+import { StreamingDomRenderer } from '../../web/js/streaming.js';
 
 function user(message) {
   return '<div class="msg-user" data-message-id="' + message.uuid + '">'
@@ -110,4 +111,98 @@ test('activity commit marks the spinner end only on running to completed', () =>
 
   assert.equal(state.wsRunning, false);
   assert.deepEqual(calls, ['end', 'button', 'spinner']);
+});
+
+test('completed recovery cannot reuse a stale stream turn for another answer', () => {
+  const turn8 = 'sent-user-eight';
+  const turn0 = 'sent-user-zero';
+  const answer8 = 'answer-eight';
+  const answer0 = 'answer-zero';
+  const dom = new JSDOM(
+    '<div class="messages">'
+      + '<div class="msg-user" data-message-id="user-eight">8</div>'
+      + '<div class="assistant-turn"><div class="tl-item assistant-text"'
+      + ' data-message-id="' + answer8 + '">8</div></div>'
+      + '<div class="msg-user" data-anchor="' + turn0 + '"'
+      + ' data-message-id="user-zero">0</div>'
+      + '<div class="assistant-turn stream-preview" data-turn-id="' + turn8 + '"></div>'
+      + '</div>',
+  );
+  const container = dom.window.document.querySelector('.messages');
+  const messages = [
+    { uuid: 'user-eight', type: 'user', content: '8' },
+    { uuid: answer8, type: 'assistant', content: '8' },
+    { uuid: 'user-zero', turnId: turn0, type: 'user', content: '0' },
+    { uuid: answer0, type: 'assistant', content: '0' },
+  ];
+  const state = {
+    wsAllMessages: messages,
+    wsMessageUuids: new Set(messages.map((message) => message.uuid)),
+    wsMessageCount: messages.length,
+    wsLastTimestamp: '',
+    wsRenderedCount: 0,
+    pendingSentMessages: [],
+    wsRunning: false,
+  };
+  const renderMessages = (items) => items.map((message) => {
+    if (message.type === 'user') {
+      return '<div class="msg-user"'
+        + (message.turnId ? ' data-anchor="' + message.turnId + '"' : '')
+        + ' data-message-id="' + message.uuid + '">' + message.content + '</div>';
+    }
+    return '<div class="assistant-turn"><div class="tl-item assistant-text"'
+      + ' data-message-id="' + message.uuid + '">' + message.content
+      + '</div></div>';
+  }).join('');
+  const renderer = new StreamingDomRenderer({
+    document: dom.window.document,
+    getContainer: () => container,
+    findAnchor: (turnId) => container.querySelector(
+      '[data-anchor="' + turnId + '"]',
+    ),
+    renderMarkdown: (element, text) => { element.textContent = text; },
+  });
+  renderer.createTurn({ turnId: turn8 });
+  const adapter = createHistoryRecoveryDomAdapter({
+    state,
+    document: dom.window.document,
+    runtime: () => 'claude',
+    renderMessages,
+    preserveStreamPreviews: false,
+    discardStreamTurn: (turnId) => renderer.discardTurn(turnId),
+  });
+
+  adapter.setMessages(messages);
+  adapter.applyHistoryChanges({
+    messages,
+    inserted: [],
+    patched: [],
+    identityUpdated: [],
+    conflicts: [],
+    reordered: true,
+    authoritative: true,
+  }, { promoted: [], remaining: [] }, 'completed');
+  renderer.applyOperation({
+    type: 'patchBlock',
+    turnId: turn8,
+    blockId: 2,
+    block: {
+      blockId: 2,
+      kind: 'text',
+      text: '8',
+      messageId: answer8,
+      displayComplete: true,
+      stopped: true,
+      authoritative: true,
+    },
+  });
+
+  const answerZeroTurn = container.querySelector(
+    '[data-message-id="' + answer0 + '"]',
+  )?.parentElement;
+  assert.equal(answerZeroTurn?.textContent, '0');
+  assert.equal(answerZeroTurn?.querySelectorAll('.tl-item').length, 1);
+  assert.equal(container.querySelectorAll(
+    '[data-message-id="' + answer8 + '"]',
+  ).length, 1);
 });

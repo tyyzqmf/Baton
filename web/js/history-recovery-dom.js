@@ -1,5 +1,5 @@
 /**
- * @param {{state: object, document: Document, runtime: Function, renderMessages: Function, preserveStreamPreviews?: boolean, isCurrentBarrier?: Function, promotePending?: Function, reportConflict?: Function, releaseBarrier?: Function, applyStreamOperations?: Function, markTurnAdjacency?: Function, loadImages?: Function, clampOverflow?: Function, renderMermaidBlocks?: Function, renderKatexBlocks?: Function, updateTitleFromMessages?: Function, markSpinnerTurnEnd?: Function, updateSendBtn?: Function, updateSpinner?: Function}} options
+ * @param {{state: object, document: Document, runtime: Function, renderMessages: Function, preserveStreamPreviews?: boolean, isCurrentBarrier?: Function, promotePending?: Function, reportConflict?: Function, releaseBarrier?: Function, applyStreamOperations?: Function, discardStreamTurn?: Function, markTurnAdjacency?: Function, loadImages?: Function, clampOverflow?: Function, renderMermaidBlocks?: Function, renderKatexBlocks?: Function, updateTitleFromMessages?: Function, markSpinnerTurnEnd?: Function, updateSendBtn?: Function, updateSpinner?: Function}} options
  * @returns {{setMessages: Function, applyHistoryChanges: Function, applyActivity: Function, finalize: Function}}
  */
 export function createHistoryRecoveryDomAdapter(options = {}) {
@@ -162,6 +162,7 @@ function reconcileTopLevel(container, expected) {
     if (!current
       && cursor?.classList.contains('assistant-turn')
       && expectedElement.classList.contains('assistant-turn')
+      && !cursor.dataset?.turnId
       && cursorKey.indexOf('group:uuid:') !== 0
       && !used.has(cursor)) {
       current = cursor;
@@ -304,13 +305,19 @@ function buildHistoryRecoveryDomAdapter(options) {
     var pendingNodes = pendingPlacements.map(function (placement) {
       return placement.node;
     });
-    var streamPreviews = activity === 'completed'
-      && !options.preserveStreamPreviews
-      ? []
-      : Array.from(container.children).filter(function (node) {
-          return node.classList.contains('stream-preview');
-        });
-    for (var node of pendingNodes.concat(streamPreviews)) node.remove();
+    var allStreamPreviews = Array.from(container.children).filter(function (node) {
+      return node.classList.contains('stream-preview');
+    });
+    var preserveStreamPreviews = activity !== 'completed'
+      || !!options.preserveStreamPreviews;
+    var streamPreviews = preserveStreamPreviews ? allStreamPreviews : [];
+    if (!preserveStreamPreviews) {
+      for (var stalePreview of allStreamPreviews) {
+        var staleTurnId = stalePreview.dataset?.turnId || '';
+        if (staleTurnId) options.discardStreamTurn?.(staleTurnId);
+      }
+    }
+    for (var node of pendingNodes.concat(allStreamPreviews)) node.remove();
 
     var streamedTurnIds = new Set(streamPreviews.map(function (node) {
       return node.dataset?.turnId || '';

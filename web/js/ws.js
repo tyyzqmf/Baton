@@ -2251,6 +2251,9 @@ function createRecoveryDomAdapter(options) {
     },
     releaseBarrier: options.releaseBarrier,
     applyStreamOperations: options.applyStreamOperations,
+    discardStreamTurn: function (turnId) {
+      _strictStreamRenderer?.discardTurn(turnId);
+    },
     markTurnAdjacency: markTurnAdjacency,
     loadImages: loadImages,
     clampOverflow: clampOverflow,
