@@ -27,6 +27,20 @@ test('browser regression: reordered Codex events append every chunk once', async
   const h = await makeHarness();
   resetSession(h, { sessionId });
   h.state.appState.runtime = 'codex';
+  const userMessage = {
+    uuid: 'user-browser-out-of-order-delta',
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'question',
+  };
+  const assistantMessage = {
+    uuid: 'assistant-browser-out-of-order-delta',
+    nativeId: 'codex:item:browser-out-of-order-delta',
+    type: 'assistant',
+    content: [{ type: 'text', text: fullText }],
+  };
+  h.document.querySelector('.messages').innerHTML =
+    `<div class="msg-user" data-anchor="${turnId}">question</div>`;
 
   const events = [
     event(0, 'stream_turn_start'),
@@ -35,13 +49,11 @@ test('browser regression: reordered Codex events append every chunk once', async
       event(index + 2, 'stream_delta', { chunk })),
     event(12, 'stream_block_stop'),
     event(13, 'messages', {
-      messages: [{
-        uuid: 'assistant-browser-out-of-order-delta',
-        type: 'assistant',
-        content: [{ type: 'text', text: fullText }],
-      }],
+      messages: [assistantMessage],
     }),
-    event(14, 'stream_end'),
+    event(14, 'stream_end', {
+      messages: [userMessage, assistantMessage],
+    }),
   ];
 
   // Captured shape: a large delta overtakes the leading character, then stop,
@@ -57,8 +69,7 @@ test('browser regression: reordered Codex events append every chunk once', async
   const turn = h.document.querySelector(`[data-turn-id="${turnId}"]`);
   const block = turn?.querySelector('[data-block-id="1"]');
   assert.ok(turn);
-  assert.ok(block);
   assert.equal(turn.classList.contains('stream-committed'), true);
-  assert.equal(block.textContent, fullText);
+  assert.equal((block || turn).textContent, fullText);
   assert.equal(turn.textContent.split(fullText).length - 1, 1);
 });

@@ -364,9 +364,16 @@ function beginSessionConnectionRecovery() {
     if (_streamCoordinator.getTurn(pending.id)?.endReceived) continue;
     if (!turnIds.includes(pending.id)) turnIds.push(pending.id);
   }
+  for (var queuedTurnId of _queuedTurnIds) {
+    if (!turnIds.includes(queuedTurnId)) turnIds.push(queuedTurnId);
+  }
+  for (var reconnectingTurnId of _reconnectingTurns) {
+    if (!turnIds.includes(reconnectingTurnId)) {
+      turnIds.push(reconnectingTurnId);
+    }
+  }
   _reconnectingTurns.clear();
   for (var turnId of turnIds) {
-    _turnEventQueue.restartTurn(turnId);
     _checkpointResumedTurns.delete(turnId);
     _reconnectingTurns.add(turnId);
   }
@@ -390,16 +397,12 @@ function startSessionConnectionRecovery(recovery) {
   recoverMissing('', {
     authoritative: true,
     authoritativeScope: 'all',
-    deferRender: true,
     requireCompleted: true,
   }).then(function (result) {
     if (recovery !== _connectionRecovery) return;
     recovery.authoritativeResult = result?.authoritative ? result : null;
     recovery.sessionStatus = result?.status || '';
-    if (recovery.sessionStatus === 'running'
-      && hasTerminalAssistantTail(state.wsAllMessages)) {
-      recovery.sessionStatus = 'completed';
-    }
+    recovery.activity = result?.activity || '';
     finishSessionConnectionRecovery(recovery);
   });
   return true;
@@ -415,20 +418,6 @@ function settleRecoveredTurns(turnIds) {
     _reconnectingTurns.delete(turnId);
   }
   return settled;
-}
-
-function settleAcknowledgedPendingForCompletedSession(sessionId, turnIds) {
-  var recoverableTurnIds = new Set(turnIds || []);
-  for (var pending of state.pendingSentMessages.slice()) {
-    if (pending.sessionId !== sessionId
-      || pending.failed
-      || !pending.delivered
-      || !recoverableTurnIds.has(pending.id)) {
-      continue;
-    }
-    _queuedTurnIds.delete(pending.id);
-    promoteEchoedBubble(pending, {});
-  }
 }
 
 function finishSessionConnectionRecovery(recovery) {
@@ -462,22 +451,15 @@ function finishSessionConnectionRecovery(recovery) {
       })
       .map(function (pending) { return pending.id; }),
   );
-  if (recovery.sessionStatus === 'completed') {
+  if (recovery.activity === 'completed') {
     settleRecoveredTurns(recovery.turnIds);
-    settleAcknowledgedPendingForCompletedSession(
-      recovery.sessionId,
-      recovery.turnIds,
-    );
     drainStrictStreamOperations();
-    if (recovery.authoritativeResult) {
-      renderAuthoritativeRecovery(recovery.authoritativeResult, {
-        preservePendingIds: newLocalTurnIds,
-      });
-    }
   }
   state.wsRunning = resolveSessionRunningAfterFetch({
     status: recovery.sessionStatus,
-    liveLifecycleChanged: bufferedLifecycleChanged || newLocalTurnIds.size > 0,
+    liveLifecycleChanged: bufferedLifecycleChanged
+      || newLocalTurnIds.size > 0
+      || recovery.activity === 'running',
   }, state.wsAllMessages, state.appState.runtime);
   updateSendBtn();
   return true;
@@ -701,7 +683,7 @@ function handleGappedTurnCompletion(completion) {
   _checkpointResumedTurns.delete(completion.turnId);
   _reconnectingTurns.delete(completion.turnId);
   settlePendingAtTurnEnd(completion.turnId, completion.end);
-  mergeLateJoinAuthority(completion, true, true);
+  mergeLateJoinAuthority(completion, true);
   _appliedLifecycleVersion++;
   updateSendBtn();
   if (turnCompletionNeedsRecovery(completion)) {
@@ -750,6 +732,17 @@ function dispatchWsMessage(msg) {
       var appendedMessages = [];
       for (var i = 0; i < msg.messages.length; i++) {
         var m = msg.messages[i];
+        var confirmedPrompt = findConfirmedPromptEcho(m);
+        if (confirmedPrompt) {
+          var aliases = new Set(confirmedPrompt.identityAliases || []);
+          if (m.uuid) {
+            aliases.add('uuid:' + m.uuid);
+            state.wsMessageUuids.add(m.uuid);
+          }
+          if (m.nativeId) aliases.add('native:' + m.nativeId);
+          confirmedPrompt.identityAliases = Array.from(aliases);
+          continue;
+        }
         if (!trackMessageUuid(m)) continue;
         state.wsAllMessages.push(m);
         appendedMessages.push(m);
@@ -779,7 +772,9 @@ function dispatchWsMessage(msg) {
         }
         if (pending && msg.ok && msg.queued) {
           pending.queued = true;
-          state.wsRunning = hasOutstandingTurns();
+          applyResolvedLiveActivity(
+            hasOutstandingTurns() ? 'running' : 'completed',
+          );
           updateSendBtn();
           return;
         }
@@ -803,7 +798,9 @@ function dispatchWsMessage(msg) {
       if (!msg.ok && msg.turnId) {
         rememberLatestSend(msg.turnId, true);
       }
-      state.wsRunning = hasOutstandingTurns();
+      applyResolvedLiveActivity(
+        hasOutstandingTurns() ? 'running' : 'completed',
+      );
       updateSendBtn();
       // New session: adopt only the result that belongs to this tab's pending
       // turn. Current Bridges echo requestId; legacy unscoped results are safe
@@ -840,14 +837,21 @@ function dispatchWsMessage(msg) {
         adoptNewSession(msg.sessionId);
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
         bufferAndFetch(msg.sessionId, '').then(function () {
-          var container = document.querySelector('.messages');
-          if (!container || !state.wsAllMessages.length) return;
+          if (state.wsSessionId === msg.sessionId) {
+            state._syncedOnce = msg.sessionId;
+          }
         }).catch(function () {});
       }
     } else if (msg.action === 'sync_complete') {
       if (msg.sessionId !== state.wsSessionId) return;
       // No real messages (not_found / synced 0) → clear skeleton, don't hang.
-      if (msg.status === 'not_found' || msg.count === 0) { showEmptyMessages(); return; }
+      if (msg.status === 'not_found' || msg.count === 0) {
+        var hasLocalMessages = state.pendingSentMessages.length > 0
+          || state.wsAllMessages.length > 0
+          || !!document.querySelector('.messages .msg-user');
+        if (!hasLocalMessages) showEmptyMessages();
+        return;
+      }
       if (state._syncedOnce === msg.sessionId) return;
       state._syncedOnce = msg.sessionId;
       // Re-fetch + render once. Don't call loadMessages — that resets sessionPreview/_titleTier
@@ -1099,6 +1103,9 @@ function drainStrictStreamOperations() {
   if (!operations.length) return;
   var completedTurn = false;
   getStrictStreamRenderer().applyOperations(operations);
+  if (removeHistoryCoveredByStrictTurns()) {
+    markTurnAdjacency(document.querySelector('.messages'));
+  }
   for (var operation of operations) {
     if (operation.type === 'createTurn') {
       state.wsRunning = true;
@@ -1109,11 +1116,50 @@ function drainStrictStreamOperations() {
       _reconnectingTurns.delete(operation.turnId);
     }
   }
-  state.wsRunning = hasOutstandingTurns();
+  applyResolvedLiveActivity(
+    hasOutstandingTurns() ? 'running' : 'completed',
+  );
   if (completedTurn && !state.wsRunning && typeof window.markSpinnerTurnEnd === 'function') {
     window.markSpinnerTurnEnd();
   }
   updateSendBtn();
+}
+
+function removeHistoryCoveredByStrictTurns() {
+  var container = document.querySelector('.messages');
+  if (!container) return false;
+  var strictMessageIds = new Set();
+  var strictNativeIds = new Set();
+  for (var turn of Array.from(container.children)) {
+    if (!turn.classList.contains('assistant-turn') || !turn.dataset?.turnId) {
+      continue;
+    }
+    for (var node of turn.querySelectorAll('[data-message-id]')) {
+      strictMessageIds.add(node.dataset.messageId);
+    }
+    for (var node of turn.querySelectorAll('[data-native-id]')) {
+      strictNativeIds.add(node.dataset.nativeId);
+    }
+  }
+  if (!strictMessageIds.size && !strictNativeIds.size) return false;
+  var removed = false;
+  for (var node of container.querySelectorAll(
+    '[data-message-id], [data-native-id]',
+  )) {
+    var matchesMessage = !!node.dataset.messageId
+      && strictMessageIds.has(node.dataset.messageId);
+    var matchesNative = !!node.dataset.nativeId
+      && strictNativeIds.has(node.dataset.nativeId);
+    if ((!matchesMessage && !matchesNative)
+      || node.closest('[data-turn-id]')) continue;
+    var parent = node.parentElement;
+    node.remove();
+    removed = true;
+    if (parent?.classList.contains('assistant-turn') && !parent.children.length) {
+      parent.remove();
+    }
+  }
+  return removed;
 }
 
 function handleStrictTurnStart(message) {
@@ -1149,7 +1195,12 @@ function handleStrictTurnEnd(message) {
     ? Object.assign({}, message, { messages: endMessages })
     : message;
   if (_checkpointResumedTurns.has(message.turnId)) {
-    mergeLateJoinAuthority(completed, false);
+    mergeLateJoinAuthority({
+      sessionId: message.sessionId,
+      turnId: message.turnId,
+      messages: endMessages,
+      end: message,
+    }, false, true);
   } else if (endMessages.length) {
     handleStrictMessages({
       action: 'messages',
@@ -1157,6 +1208,7 @@ function handleStrictTurnEnd(message) {
       turnId: message.turnId,
       seq: message.seq,
       messages: endMessages,
+      terminal: true,
     });
   }
   renderFailedTurnAuthority(message, endMessages);
@@ -1167,7 +1219,9 @@ function handleStrictTurnEnd(message) {
   _checkpointResumedTurns.delete(message.turnId);
   _reconnectingTurns.delete(message.turnId);
   settlePendingAtTurnEnd(message.turnId, message);
-  state.wsRunning = hasOutstandingTurns();
+  applyResolvedLiveActivity(
+    hasOutstandingTurns() ? 'running' : 'completed',
+  );
   _appliedLifecycleVersion++;
   updateSendBtn();
   if (message.recoveryRequired) {
@@ -1230,7 +1284,9 @@ function handleLateJoinCompletion(completion) {
   clearGappedEndTimer(completion.turnId);
   mergeLateJoinAuthority(completion, true);
   settlePendingAtTurnEnd(completion.turnId, completion.end);
-  state.wsRunning = hasOutstandingTurns();
+  applyResolvedLiveActivity(
+    hasOutstandingTurns() ? 'running' : 'completed',
+  );
   _appliedLifecycleVersion++;
   updateSendBtn();
   if (turnCompletionNeedsRecovery(completion)) {
@@ -1239,18 +1295,17 @@ function handleLateJoinCompletion(completion) {
 }
 
 function turnCompletionNeedsRecovery(completion) {
-  return !Array.isArray(completion.end?.messages)
-    || completion.end.messages.length === 0
-    || completion.end.recoveryRequired;
+  return completion.end?.recoveryRequired === true;
 }
 
-function mergeLateJoinAuthority(completion, completed, forceRender) {
+function mergeLateJoinAuthority(completion, completed, terminal) {
   if (!completion || completion.sessionId !== state.wsSessionId) return;
+  terminal = !!terminal || !!completed;
   var incoming = [];
   for (var source of completion.messages || []) {
     if (!source) continue;
     incoming.push(Object.assign({}, source, {
-      turnId: source.turnId || (completed ? completion.turnId : ''),
+      turnId: source.turnId || completion.turnId || '',
     }));
   }
   if (_reconnectingTurns.has(completion.turnId)
@@ -1262,13 +1317,16 @@ function mergeLateJoinAuthority(completion, completed, forceRender) {
         turnId: completion.turnId,
         seq: completion.end?.seq || 0,
         messages: incoming,
+        terminal: terminal,
       });
     }
     if (completed) {
       _strictStatusAuthority = true;
       _reconnectingTurns.delete(completion.turnId);
     }
-    state.wsRunning = hasOutstandingTurns();
+    applyResolvedLiveActivity(
+      hasOutstandingTurns() ? 'running' : 'completed',
+    );
     updateSendBtn();
     return;
   }
@@ -1277,56 +1335,101 @@ function mergeLateJoinAuthority(completion, completed, forceRender) {
   if (completed) _reconnectingTurns.delete(completion.turnId);
   var fetchBarrier = _historyFetchBarriers.current(completion.sessionId);
   if (fetchBarrier) {
-    if (completed) fetchBarrier.completeStrictTurn(completion.turnId);
     for (var bufferedMessage of incoming) {
       bufferedMessage.turnId = bufferedMessage.turnId || completion.turnId || '';
       bufferedMessage._strictLifecycle = true;
       bufferedMessage._strictManaged = false;
     }
-    fetchBarrier.captureStrictMessages(incoming);
-    state.wsRunning = hasOutstandingTurns();
+    if (terminal) {
+      fetchBarrier.replaceStrictTurn(completion.turnId, incoming);
+    } else {
+      fetchBarrier.captureStrictMessages(incoming);
+    }
+    applyResolvedLiveActivity(
+      hasOutstandingTurns() ? 'running' : 'completed',
+    );
     updateSendBtn();
     return;
   }
   var messages = [];
   for (var message of incoming) {
-    if (forceRender) {
-      var existing = state.wsAllMessages.find(function (candidate) {
-        return (message.nativeId && candidate.nativeId === message.nativeId)
-          || (message.uuid && candidate.uuid === message.uuid);
+    var existing = state.wsAllMessages.find(function (candidate) {
+      return candidate.type === message.type
+        && sameMessageIdentity(candidate, message);
+    });
+    if (existing) {
+      var existingAliases = existing.identityAliases;
+      Object.assign(existing, message, {
+        turnId: completion.turnId,
+        _strictManaged: false,
       });
-      if (existing) {
-        existing.turnId = existing.turnId || completion.turnId;
-        existing._strictManaged = false;
-        messages.push(existing);
-        continue;
+      if (existingAliases?.length && !existing.identityAliases) {
+        existing.identityAliases = existingAliases;
       }
+      continue;
     }
     if (!trackMessageUuid(message)) continue;
-    if (forceRender) message._strictManaged = false;
+    message._strictManaged = false;
     messages.push(message);
-    state.wsAllMessages.push(message);
-    state.wsMessageCount++;
-    if (message.timestamp) state.wsLastTimestamp = message.timestamp;
+    insertStrictStateMessage(message);
   }
-  if (messages.length) {
-    updateLastTurn(messages);
+  if (terminal && incoming.length) {
+    commitTerminalTurnState(completion.turnId, incoming);
+  }
+  var renderedTurn = document.querySelector(
+    '[data-turn-id="' + completion.turnId + '"]',
+  );
+  var messagesToRender = messages;
+  if (terminal && !renderedTurn && incoming.length) {
+    var promptAuthority = incoming.filter(function (message) {
+      return message?.type === 'user'
+        && !isInterruptMsg(message)
+        && !isToolResultOnly(message);
+    });
+    if (promptAuthority.length) updateLastTurn(promptAuthority);
     _strictStreamRenderer?.attachTurnToAnchor(completion.turnId);
-    if (completed) {
-      _strictStreamRenderer?.applyOperation({
-        type: 'completeTurn',
-        turnId: completion.turnId,
+    renderedTurn = document.querySelector(
+      '[data-turn-id="' + completion.turnId + '"]',
+    );
+    messagesToRender = incoming.filter(function (message) {
+      if (promptAuthority.includes(message)) return false;
+      if ((message?.type !== 'assistant' && message?.type !== 'summary')
+        || !renderedTurn) {
+        return true;
+      }
+      return !Array.from(renderedTurn.querySelectorAll(
+        '[data-message-id], [data-native-id]',
+      )).some(function (node) {
+        return (message.uuid && node.dataset.messageId === message.uuid)
+          || (message.nativeId && node.dataset.nativeId === message.nativeId);
       });
-    }
+    });
+  }
+  if (messagesToRender.length) {
+    updateLastTurn(messagesToRender);
+  }
+  _strictStreamRenderer?.attachTurnToAnchor(completion.turnId);
+  if (completed) {
+    _strictStreamRenderer?.applyOperation({
+      type: 'completeTurn',
+      turnId: completion.turnId,
+    });
+  }
+  if (removeHistoryCoveredByStrictTurns()) {
+    markTurnAdjacency(document.querySelector('.messages'));
+  }
+  if (messagesToRender.length) {
     showStats(state.wsMessageCount + ' messages (late join)');
   }
-  state.wsRunning = hasOutstandingTurns();
+  applyResolvedLiveActivity(
+    hasOutstandingTurns() ? 'running' : 'completed',
+  );
   updateSendBtn();
 }
 
 function handleStrictMessages(envelope) {
   var remaining = [];
-  var added = false;
+  var addedMessages = [];
   var identities = [];
   var fetchBarrier = _historyFetchBarriers.current(envelope.sessionId);
   for (var index = 0; index < envelope.messages.length; index++) {
@@ -1341,14 +1444,8 @@ function handleStrictMessages(envelope) {
       _strictManaged: message.type === 'assistant' || message.type === 'summary',
     });
     identities.push(identity);
-    if (fetchBarrier) {
+    if (fetchBarrier && !envelope.terminal) {
       fetchBarrier.captureStrictMessages([message]);
-    } else {
-      removeHistoricalMessageNodes(
-        message.uuid || '',
-        message.nativeId || '',
-        identity.turnId,
-      );
     }
     var matchingAuthority = !fetchBarrier
       ? state.wsAllMessages.find(function (candidate) {
@@ -1356,59 +1453,56 @@ function handleStrictMessages(envelope) {
           && candidate.type === message.type
           && candidate.nativeId
           && candidate.nativeId === message.nativeId
-          && JSON.stringify(candidate.content) === JSON.stringify(message.content);
+          && (envelope.terminal
+            || JSON.stringify(candidate.content) === JSON.stringify(message.content));
       })
       : null;
     if (matchingAuthority) {
-      matchingAuthority.turnId = matchingAuthority.turnId || identity.turnId;
-      matchingAuthority._strictLifecycle = true;
-      matchingAuthority._strictManaged = message._strictManaged;
+      if (envelope.terminal) {
+        var previousAliases = matchingAuthority.identityAliases;
+        Object.assign(matchingAuthority, message, {
+          turnId: identity.turnId,
+          _strictLifecycle: true,
+          _strictManaged: message._strictManaged,
+        });
+        if (previousAliases?.length && !matchingAuthority.identityAliases) {
+          matchingAuthority.identityAliases = previousAliases;
+        }
+      } else {
+        matchingAuthority.turnId = matchingAuthority.turnId || identity.turnId;
+        matchingAuthority._strictLifecycle = true;
+        matchingAuthority._strictManaged = message._strictManaged;
+      }
       var aliases = new Set(matchingAuthority.identityAliases || []);
       aliases.add('uuid:' + message.uuid);
       aliases.add('turn:' + identity.turnId);
       matchingAuthority.identityAliases = Array.from(aliases);
       if (message.uuid) state.wsMessageUuids.add(message.uuid);
     } else if (!fetchBarrier && trackMessageUuid(message)) {
-      state.wsAllMessages.push(message);
-      state.wsMessageCount++;
-      if (message.timestamp) state.wsLastTimestamp = message.timestamp;
-      added = true;
+      insertStrictStateMessage(message);
+      addedMessages.push(message);
     }
     _streamCoordinator.ingestAuthoritative({
       ...identity,
       message: message,
     });
   }
+  if (fetchBarrier && envelope.terminal) {
+    fetchBarrier.replaceStrictTurn(envelope.turnId, envelope.messages);
+  } else if (!fetchBarrier && envelope.terminal) {
+    commitTerminalTurnState(envelope.turnId, envelope.messages);
+  }
   drainStrictStreamOperations();
-  if (added) updateLastTurn();
+  if (addedMessages.length) updateLastTurn(addedMessages);
   if (_strictStreamRenderer) {
     for (var identity of identities) {
       _strictStreamRenderer.attachTurnToAnchor(identity.turnId);
     }
   }
-  if (added) {
+  if (addedMessages.length) {
     showStats(state.wsMessageCount + ' messages (strict live)');
   }
   return remaining;
-}
-
-function removeHistoricalMessageNodes(messageId, nativeId, turnId) {
-  if (!messageId && !nativeId) return;
-  var container = document.querySelector('.messages');
-  if (!container) return;
-  var nodes = container.querySelectorAll('[data-message-id], [data-native-id]');
-  for (var node of nodes) {
-    var matchesUuid = !!messageId && node.dataset.messageId === messageId;
-    var matchesNative = !!nativeId && node.dataset.nativeId === nativeId;
-    if (!matchesUuid && !matchesNative) continue;
-    var strictTurn = node.closest('[data-turn-id]');
-    if (turnId && strictTurn?.dataset.turnId === turnId) continue;
-    var turn = node.parentElement;
-    node.remove();
-    if (turn?.classList.contains('assistant-turn') && !turn.children.length) {
-      turn.remove();
-    }
-  }
 }
 
 function resetStreamSessionState() {
@@ -1420,6 +1514,7 @@ function resetStreamSessionState() {
   _checkpointResumedTurns.clear();
   _reconnectingTurns.clear();
   _queuedTurnIds.clear();
+  _turnSendOrder.clear();
   _connectionRecovery = null;
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
   _controlEventTimers.clear();
@@ -1617,12 +1712,6 @@ function insertAssistantItemForTurn(container, html, turnId) {
   if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
 }
 
-function compareMessageOrder(left, right) {
-  var leftTimestamp = left?.timestamp || '';
-  var rightTimestamp = right?.timestamp || '';
-  return leftTimestamp < rightTimestamp ? -1 : leftTimestamp > rightTimestamp ? 1 : 0;
-}
-
 var _latestTurnId = '';
 var _latestTurnOrder = -1;
 var _latestSendFailed = false;
@@ -1693,18 +1782,21 @@ function rememberLatestSend(turnId, failed, explicitOrder) {
 }
 
 function hasOutstandingTurns() {
-  if (_streamCoordinator.hasActiveTurns()) return true;
-  if (_reconnectingTurns.size) return true;
-  if (_queuedTurnIds.size) return true;
-  if (state.pendingSentMessages.some(function (pending) {
-    return !pending.failed;
-  })) return true;
-  var pending = _latestTurnId ? findPending(_latestTurnId) : null;
-  return !!(_latestTurnId
-    && !_latestSendFailed
-    && !_interruptedTurns[_latestTurnId]
-    && pending
-    && !pending.failed);
+  return outstandingTurnIds().length > 0;
+}
+
+function outstandingTurnIds() {
+  var turnIds = [];
+  function add(turnId) {
+    if (turnId && !turnIds.includes(turnId)) turnIds.push(turnId);
+  }
+  for (var turnId of _streamCoordinator.activeTurnIds()) add(turnId);
+  for (var reconnectingTurnId of _reconnectingTurns) add(reconnectingTurnId);
+  for (var queuedTurnId of _queuedTurnIds) add(queuedTurnId);
+  for (var pendingMessage of state.pendingSentMessages) {
+    if (!pendingMessage.failed) add(pendingMessage.id);
+  }
+  return turnIds;
 }
 
 function latestOutstandingTurnId() {
@@ -1796,10 +1888,6 @@ function updateLastTurn(explicitMessages, options) {
   if (!newMessages.length) return;
 
   var content = document.getElementById('content');
-  if (newMessages.length > 1 && !options.appendToTail) {
-    newMessages.sort(compareMessageOrder);
-  }
-
   var hasToolResults = newMessages.some(isToolResultOnly);
   var toolIndexes = hasToolResults
     ? buildToolIndexes(state.wsAllMessages)
@@ -1888,7 +1976,7 @@ function updateLastTurn(explicitMessages, options) {
         isInheritedAgentContext(msg, state.wsAllMessages) ? 'agent-context' : '',
       );
       if (userHtml) {
-        if (options.appendToTail) appendBeforePending(container, userHtml);
+        if (msg.turnId || options.appendToTail) appendBeforePending(container, userHtml);
         else insertAtTimestamp(container, userHtml, msg.timestamp);
         if (msg.turnId) _strictStreamRenderer?.attachTurnToAnchor(msg.turnId);
       }
@@ -1975,9 +2063,11 @@ function updateLastTurn(explicitMessages, options) {
       && !isToolResultOnly(message);
   });
   if (startsExternalTurn) _strictStatusAuthority = false;
-  if (hasOutstandingTurns()) state.wsRunning = true;
+  if (hasOutstandingTurns()) {
+    applyResolvedLiveActivity('running');
+  }
   else if (!_strictStatusAuthority && nonStrictTurnFrames.length) {
-    state.wsRunning = derived;
+    applyResolvedLiveActivity(derived ? 'running' : 'completed');
   }
   updateSendBtn();
 
@@ -2014,7 +2104,9 @@ function startWs(sessionId) {
 
 function trackMessageUuid(message) {
   if (!message) return true;
-  var keys = new Set(message.identityAliases || []);
+  var keys = new Set((message.identityAliases || []).filter(function (alias) {
+    return !/^(?:turn|pending):/.test(String(alias));
+  }));
   if (message.uuid) keys.add(message.uuid);
   else if (message.nativeId) keys.add('native:' + message.nativeId);
   for (var key of keys) {
@@ -2024,26 +2116,99 @@ function trackMessageUuid(message) {
   return true;
 }
 
-function renderAuthoritativeRecovery(result, options) {
-  options = options || {};
-  if (!result?.mergeResult) return false;
-  if (result.status === 'completed') {
-    for (var message of state.wsAllMessages) {
-      message._strictManaged = false;
+function sameMessageIdentity(left, right) {
+  if (!left || !right) return false;
+  return !!(
+    (left.uuid && right.uuid && left.uuid === right.uuid)
+    || (left.nativeId && right.nativeId && left.nativeId === right.nativeId)
+  );
+}
+
+function insertStrictStateMessage(message) {
+  var insertionIndex = state.wsAllMessages.length;
+  if (message?.turnId) {
+    var sendOrder = _turnSendOrder.get(message.turnId);
+    if (Number.isInteger(sendOrder)) {
+      for (var orderedIndex = 0;
+        orderedIndex < state.wsAllMessages.length;
+        orderedIndex++) {
+        var candidateOrder = _turnSendOrder.get(
+          state.wsAllMessages[orderedIndex]?.turnId,
+        );
+        if (Number.isInteger(candidateOrder) && candidateOrder > sendOrder) {
+          insertionIndex = orderedIndex;
+          break;
+        }
+      }
     }
-    if (_strictStreamRenderer) {
-      _strictStreamRenderer.reset({ remove: false });
-      _strictStreamRenderer = null;
+    for (var index = state.wsAllMessages.length - 1; index >= 0; index--) {
+      if (state.wsAllMessages[index]?.turnId === message.turnId) {
+        insertionIndex = index + 1;
+        break;
+      }
     }
   }
-  var adapter = createRecoveryDomAdapter({
-    deferRender: false,
-    isCurrentBarrier: function () { return true; },
+  state.wsAllMessages.splice(insertionIndex, 0, message);
+  state.wsMessageCount++;
+  state.wsRenderedCount = state.wsAllMessages.length;
+  if (message.timestamp
+    && (!state.wsLastTimestamp || message.timestamp > state.wsLastTimestamp)) {
+    state.wsLastTimestamp = message.timestamp;
+  }
+}
+
+function rebuildLiveMessageIndex() {
+  var index = new Set();
+  for (var message of state.wsAllMessages) {
+    if (message?.uuid) index.add(message.uuid);
+    else if (message?.nativeId) index.add('native:' + message.nativeId);
+    for (var alias of message?.identityAliases || []) {
+      if (!/^(?:turn|pending):/.test(String(alias))) index.add(String(alias));
+    }
+  }
+  state.wsMessageUuids = index;
+}
+
+function commitTerminalTurnState(turnId, terminalMessages) {
+  if (!turnId || !Array.isArray(terminalMessages)
+    || !terminalMessages.length) {
+    return false;
+  }
+  var existingTurnMessages = state.wsAllMessages.filter(function (message) {
+    return message?.turnId === turnId;
   });
-  var rendered = adapter.applyHistoryChanges(result.mergeResult);
-  adapter.finalize();
-  restoreBottomAfterRecovery(result.wasFollowingBottom);
-  return rendered;
+  var canonical = [];
+  for (var terminalMessage of terminalMessages) {
+    var existing = existingTurnMessages.find(function (message) {
+      return sameMessageIdentity(message, terminalMessage);
+    });
+    canonical.push(existing || terminalMessage);
+  }
+  state.wsAllMessages = state.wsAllMessages.filter(function (message) {
+    return message?.turnId !== turnId;
+  });
+  var firstIndex = state.wsAllMessages.length;
+  var sendOrder = _turnSendOrder.get(turnId);
+  if (Number.isInteger(sendOrder)) {
+    for (var index = 0; index < state.wsAllMessages.length; index++) {
+      var candidateOrder = _turnSendOrder.get(
+        state.wsAllMessages[index]?.turnId,
+      );
+      if (Number.isInteger(candidateOrder) && candidateOrder > sendOrder) {
+        firstIndex = index;
+        break;
+      }
+    }
+  }
+  state.wsAllMessages.splice(
+    Math.min(firstIndex, state.wsAllMessages.length),
+    0,
+    ...canonical,
+  );
+  state.wsMessageCount = state.wsAllMessages.length;
+  state.wsRenderedCount = state.wsAllMessages.length;
+  rebuildLiveMessageIndex();
+  return true;
 }
 
 function currentActivity() {
@@ -2052,6 +2217,20 @@ function currentActivity() {
     return 'needs_input';
   }
   return state.wsRunning ? 'running' : 'completed';
+}
+
+function applyResolvedLiveActivity(activity) {
+  var resolved = resolveActivityState({
+    liveStateChanged: true,
+    liveActivity: activity,
+    activityBeforeFetch: state.wsRunning ? 'running' : 'completed',
+    messages: state.wsAllMessages,
+    runtime: state.appState.runtime,
+    hasOutstandingTurns: hasOutstandingTurns(),
+    outstandingTurnIds: outstandingTurnIds(),
+  });
+  state.wsRunning = resolved === 'running';
+  return resolved;
 }
 
 function createRecoveryDomAdapter(options) {
@@ -2063,7 +2242,7 @@ function createRecoveryDomAdapter(options) {
     renderMessages: function (messages, runtime, renderOptions) {
       return renderMessages(messages, runtime, renderOptions);
     },
-    deferRender: !!options.deferRender,
+    preserveStreamPreviews: !!options.preserveStreamPreviews,
     isCurrentBarrier: options.isCurrentBarrier,
     promotePending: promoteEchoedBubble,
     reportConflict: function (conflict) {
@@ -2090,7 +2269,6 @@ function historyRequestKey(after, options) {
     authoritative: !!options.authoritative,
     scope: options.authoritativeScope || '',
     requireCompleted: !!options.requireCompleted,
-    deferRender: !!options.deferRender,
   });
 }
 
@@ -2155,15 +2333,34 @@ async function bufferAndFetch(sessionId, after, options) {
     }
     barrier.beginCommit();
 
+    var strictMessages = dedupeCodexUserMessages(barrier.strictMessages).map(
+      function (message) {
+        if ((message.type !== 'assistant' && message.type !== 'summary')
+          || !message.turnId) {
+          return message;
+        }
+        var streamTurn = document.querySelector(
+          '[data-turn-id="' + message.turnId + '"]',
+        );
+        if (!_streamCoordinator.getTurn(message.turnId) && !streamTurn) {
+          return message;
+        }
+        return { ...message, _strictManaged: true };
+      },
+    );
     var fetched = mergeFetchWindow({
       restMessages: dedupeCodexUserMessages(data.messages || []),
-      historyBuffer: dedupeCodexUserMessages(barrier.historyBuffer),
+      historyBuffer: dedupeCodexUserMessages(
+        barrier.historyBuffer.concat(strictMessages),
+      ),
       restOk: restOk,
     });
-    var strictMessages = dedupeCodexUserMessages(barrier.strictMessages);
+    var authoritative = !!options.authoritative
+      && restOk;
     var mergeResult = mergeLocalHistory({
       localMessages: barrier.localMessages,
-      fetchedMessages: fetched.messages.concat(strictMessages),
+      fetchedMessages: fetched.messages,
+      authoritative: authoritative,
     });
     var liveLifecycleChanged =
       _appliedLifecycleVersion !== barrier.lifecycleVersion
@@ -2171,7 +2368,7 @@ async function bufferAndFetch(sessionId, after, options) {
         return !barrier.pendingIds.has(pending.id);
       });
     var adapter = createRecoveryDomAdapter({
-      deferRender: options.deferRender,
+      preserveStreamPreviews: _streamCoordinator.hasActiveTurns(),
       isCurrentBarrier: function () {
         return _historyFetchBarriers.isCurrent(barrier);
       },
@@ -2195,20 +2392,22 @@ async function bufferAndFetch(sessionId, after, options) {
         activityBeforeFetch: barrier.activityBeforeFetch,
         runtime: state.appState.runtime,
         hasOutstandingTurns: hasOutstandingTurns(),
+        outstandingTurnIds: outstandingTurnIds(),
       },
       adapter: adapter,
     });
-    if (!options.deferRender) {
-      restoreBottomAfterRecovery(wasFollowingBottom);
-    }
+    restoreBottomAfterRecovery(wasFollowingBottom);
 
-    if (!after && data.hasMore !== undefined) {
+    if (!after
+      && !options.authoritative
+      && data.hasMore !== undefined) {
       state.wsHasMore = data.hasMore;
       state.wsOldestTimestamp = data.oldestTimestamp || '';
     }
 
     var useAuthoritative = !!options.authoritative
-      && (!options.requireCompleted || data.status === 'completed');
+      && (!options.requireCompleted
+        || (data.status === 'completed' && committed.activity === 'completed'));
     return {
       ok: restOk,
       error: restError,
@@ -2239,23 +2438,8 @@ function resolveSessionRunningAfterFetch(result, messages, runtime) {
     messages: messages,
     runtime: runtime,
     hasOutstandingTurns: hasOutstandingTurns(),
+    outstandingTurnIds: outstandingTurnIds(),
   }) === 'running';
-}
-
-function hasTerminalAssistantTail(messages) {
-  for (var index = (messages || []).length - 1; index >= 0; index--) {
-    var message = messages[index];
-    if (message?.type === 'assistant' || message?.type === 'summary') {
-      return isTerminalAssistantMessage(message);
-    }
-    if (message?.type === 'user'
-      && !isInterruptMsg(message)
-      && !(typeof isToolResultOnly === 'function' && isToolResultOnly(message))
-      && !window.isSubagentNotificationMsg?.(message)) {
-      return false;
-    }
-  }
-  return false;
 }
 
 /**
@@ -2492,7 +2676,9 @@ function interruptSession() {
     device: state.appState.device || '',
     ...(activeTurnId ? { turnId: activeTurnId } : {}),
   });
-  state.wsRunning = hasOutstandingTurns();
+  applyResolvedLiveActivity(
+    hasOutstandingTurns() ? 'running' : 'completed',
+  );
   updateSendBtn();
 }
 (function () {
@@ -2559,6 +2745,7 @@ document.addEventListener('keydown', function (e) {
 });
 
 var _sendOrder = 0;
+var _turnSendOrder = new Map();
 
 function doSend(fullText, displayText, images) {
   var previousTurnId = latestOutstandingTurnId();
@@ -2573,6 +2760,7 @@ function doSend(fullText, displayText, images) {
     ? crypto.randomUUID()
     : sentAt + '-' + Math.random().toString(36).slice(2));
   rememberLatestSend(msgId, false, seq);
+  _turnSendOrder.set(msgId, seq);
   _queuedTurnIds.add(msgId);
   updateSendBtn();
   var sendPayload;
@@ -2765,7 +2953,9 @@ function resolvePending(pending, ok, error) {
     _queuedTurnIds.delete(pending.id);
     rememberLatestSend(pending.id, true);
     markPendingFailed(pending, error);
-    state.wsRunning = hasOutstandingTurns();
+    applyResolvedLiveActivity(
+      hasOutstandingTurns() ? 'running' : 'completed',
+    );
     updateSendBtn();
   }
 }
@@ -2790,9 +2980,11 @@ function completeLocalCommand(pending, result) {
   if (trackMessageUuid(message)) {
     state.wsAllMessages.push(message);
     state.wsMessageCount++;
-    updateLastTurn();
+    updateLastTurn([message]);
   }
-  state.wsRunning = hasOutstandingTurns();
+  applyResolvedLiveActivity(
+    hasOutstandingTurns() ? 'running' : 'completed',
+  );
   updateSendBtn();
 }
 
@@ -2806,13 +2998,51 @@ function applyCodexCommandAction(action) {
 }
 
 // A durable echo belongs to a pending bubble only through its exact turn id.
+function messageMatchesPending(message, turnId) {
+  if (message.turnId === turnId
+    || message.uuid === turnId
+    || message.uuid === String(turnId).replace(/^sent-/, '')
+    || message.nativeId === 'codex:user:' + turnId
+    || message.nativeId === 'live:user:' + turnId
+    || message.nativeId === 'codex:turn:' + turnId + ':user') {
+    return true;
+  }
+  var aliases = new Set(message.identityAliases || []);
+  return aliases.has('turn:' + turnId)
+    || aliases.has('pending:' + turnId)
+    || aliases.has('native:codex:user:' + turnId)
+    || aliases.has('native:live:user:' + turnId);
+}
+
+function findConfirmedPromptEcho(message) {
+  if (message?.type !== 'user' || isInterruptMsg(message)
+    || isToolResultOnly(message)) {
+    return null;
+  }
+  var turnId = message.turnId || '';
+  if (!turnId && typeof message.nativeId === 'string') {
+    if (message.nativeId.indexOf('codex:user:') === 0) {
+      turnId = message.nativeId.slice('codex:user:'.length);
+    } else if (message.nativeId.indexOf('live:user:') === 0) {
+      turnId = message.nativeId.slice('live:user:'.length);
+    }
+  }
+  if (!turnId) return null;
+  return state.wsAllMessages.find(function (candidate) {
+    return candidate.type === 'user'
+      && !isInterruptMsg(candidate)
+      && !isToolResultOnly(candidate)
+      && messageMatchesPending(candidate, turnId);
+  }) || null;
+}
+
 function messageEchoed(pending) {
   // Scan only rows after this send (echoScanFrom); a historical same-text row isn't its echo.
   var from = pending.echoScanFrom || 0;
   for (var i = from; i < state.wsAllMessages.length; i++) {
     var m = state.wsAllMessages[i];
     if (m.type !== 'user' || isInterruptMsg(m) || isToolResultOnly(m)) continue;
-    if (m.turnId === pending.id || m.nativeId === 'codex:user:' + pending.id) return m;
+    if (messageMatchesPending(m, pending.id)) return m;
   }
   return null;
 }
@@ -2838,27 +3068,17 @@ function settlePendingAtTurnEnd(turnId, end) {
   // Keep the pending record until that ack decides whether the prompt itself
   // was accepted, so a later failure still has an exact bubble to update.
   if (end?.error && !pending.delivered) return false;
-  if (!messageEchoed(pending)) {
-    var confirmed = {
-      uuid: pending.id,
-      turnId: pending.id,
-      type: 'user',
-      content: pending.fullText || pending.text || '',
-      timestamp: new Date(pending.sentAt || Date.now()).toISOString(),
-      identityAliases: ['turn:' + pending.id, 'pending:' + pending.id],
-      _optimisticConfirmed: true,
-    };
-    var fetchBarrier = _historyFetchBarriers.current(state.wsSessionId);
-    if (fetchBarrier) {
-      fetchBarrier.captureStrictMessages([confirmed]);
-    } else if (trackMessageUuid(confirmed)) {
-      state.wsAllMessages.push(confirmed);
-      state.wsMessageCount++;
-      state.wsRenderedCount = state.wsAllMessages.length;
-      if (confirmed.timestamp) state.wsLastTimestamp = confirmed.timestamp;
-    }
-  }
-  promoteEchoedBubble(pending, {});
+  var terminalEcho = Array.isArray(end?.messages)
+    ? end.messages.find(function (message) {
+        return message?.type === 'user'
+          && !isInterruptMsg(message)
+          && !isToolResultOnly(message)
+          && messageMatchesPending(message, pending.id);
+      })
+    : null;
+  var echoed = terminalEcho || messageEchoed(pending);
+  if (!echoed) return false;
+  promoteEchoedBubble(pending, echoed);
   return true;
 }
 
@@ -2905,18 +3125,31 @@ async function reconcilePendingSend(msgId) {
   resolvePending(pending, messageEchoed(pending), null);
 }
 
-// Manual retry: re-check the server first (avoid double-send if it actually
-// landed), then re-send the exact original payload as a fresh pending bubble.
+// Manual retry: re-check the server first, then reuse the same durable user
+// bubble and turn id. A retry changes transport state, never user-message order.
 async function retryPendingSend(msgId) {
   var pending = findPending(msgId);
   if (!pending) return;
   try { await bufferAndFetch(state.wsSessionId, state.wsLastTimestamp); } catch (e) {}
-  if (messageEchoed(pending)) { resolvePending(pending, true, null); return; }
-  // Remove the failed bubble + its pending record, then re-send from scratch.
-  var el = document.getElementById(pending.id);
-  if (el) el.remove();
-  removePending(pending);
-  doSend(pending.fullText, pending.text, pending.images || []);
+  var echoed = messageEchoed(pending);
+  if (echoed) {
+    promoteEchoedBubble(pending, echoed);
+    return;
+  }
+  pending.delivered = false;
+  pending.failed = false;
+  pending.queued = false;
+  pending.serverReceived = false;
+  pending.turnEnded = false;
+  pending.transportRetries = 0;
+  _queuedTurnIds.add(pending.id);
+  rememberLatestSend(pending.id, false, pending.seq);
+  pendingStatus(pending, 'sending...');
+  applyResolvedLiveActivity('running');
+  updateSendBtn();
+  wsSendReliable(pending.sendPayload);
+  schedulePendingTransportRetry(pending);
+  scheduleSendTimeout(pending.id);
 }
 
 // ---- Message dedup utilities ----
@@ -2970,6 +3203,9 @@ function promoteEchoedBubble(pending, msg) {
   if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
   var el = document.getElementById(pending.id);
   if (el) {
+    if (msg.uuid) el.dataset.messageId = msg.uuid;
+    if (msg.nativeId) el.dataset.nativeId = msg.nativeId;
+    if (msg.turnId) el.dataset.anchor = msg.turnId;
     if (msg.timestamp) {
       el.dataset.serverTs = msg.timestamp;
     }

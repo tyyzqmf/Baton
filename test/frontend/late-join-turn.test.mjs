@@ -15,24 +15,28 @@ test('seq greater than 1 waits for end and renders authority without partial pre
     seq,
     ...extra,
   });
+  const user = {
+    uuid: 'user-late-join',
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'question',
+  };
+  const answer = {
+    uuid: 'assistant-late-join',
+    nativeId: 'codex:item:late-join',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'complete answer' }],
+  };
 
   h.hooks.handleWsMessage(event(3, 'stream_delta', { chunk: 'partial' }));
   h.hooks.handleWsMessage(event(5, 'messages', {
-    messages: [{
-      uuid: 'assistant-late-join',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'complete answer' }],
-    }],
+    messages: [answer],
   }));
   assert.equal(h.document.querySelector(`[data-turn-id="${turnId}"]`), null);
   assert.equal(h.document.body.textContent.includes('partial'), false);
 
   h.hooks.handleWsMessage(event(6, 'stream_end', {
-    messages: [{
-      uuid: 'assistant-late-join',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'complete answer' }],
-    }],
+    messages: [user, answer],
   }));
   await h.tick(20);
 

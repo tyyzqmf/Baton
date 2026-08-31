@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { makeHarness, resetSession } from './harness.mjs';
 
-test('new Claude session stream_end settles the first optimistic send without a user echo', async () => {
+test('new Claude session stream_end settles the first optimistic send from terminal authority', async () => {
   const h = await makeHarness();
   const sessionId = 'ee82235e-1962-4fa0-b864-ab262636a2de';
   const requestId = 'f55f5544-814e-40f2-9056-422fb2955cde';
@@ -29,6 +29,13 @@ test('new Claude session stream_end settles the first optimistic send without a 
       text: 'Hi! What can I help you with today?',
     }],
     timestamp: '2026-08-20T23:05:10.936Z',
+  };
+  const user = {
+    uuid: 'live:user:' + turnId,
+    nativeId: 'live:user:' + turnId,
+    type: 'user',
+    content: 'hi',
+    timestamp: '2026-08-20T23:05:09.936Z',
   };
 
   for (const event of [
@@ -87,7 +94,7 @@ test('new Claude session stream_end settles the first optimistic send without a 
       sessionId,
       turnId,
       seq: 8,
-      messages: [assistant],
+      messages: [user, assistant],
     },
     {
       action: 'stream_block_stop',

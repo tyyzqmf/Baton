@@ -22,6 +22,18 @@ export function commitHistoryRecovery(options = {}) {
     options.pendingMessages || [],
     messages,
   );
+  var restResult = options.restResult || {};
+  var activity = resolveActivityState({
+    liveStateChanged: activitySnapshot.liveStateChanged,
+    liveActivity: activitySnapshot.liveActivity,
+    activityBeforeFetch: activitySnapshot.activityBeforeFetch,
+    restOk: restResult.ok,
+    restStatus: restResult.status,
+    messages: messages,
+    runtime: activitySnapshot.runtime,
+    hasOutstandingTurns: activitySnapshot.hasOutstandingTurns,
+    outstandingTurnIds: activitySnapshot.outstandingTurnIds,
+  });
 
   adapter.setMessages?.(messages);
 
@@ -29,7 +41,7 @@ export function commitHistoryRecovery(options = {}) {
     adapter.promotePending?.(promotion.pending, promotion.echo);
   }
   if (adapter.applyHistoryChanges) {
-    adapter.applyHistoryChanges(mergeResult, pendingResult);
+    adapter.applyHistoryChanges(mergeResult, pendingResult, activity);
   } else {
     for (var patch of mergeResult.patched || []) {
       adapter.patchHistoryNode?.(patch);
@@ -52,17 +64,6 @@ export function commitHistoryRecovery(options = {}) {
   adapter.releaseBarrier?.();
   adapter.applyStreamOperations?.(options.streamOperations || []);
 
-  var restResult = options.restResult || {};
-  var activity = resolveActivityState({
-    liveStateChanged: activitySnapshot.liveStateChanged,
-    liveActivity: activitySnapshot.liveActivity,
-    activityBeforeFetch: activitySnapshot.activityBeforeFetch,
-    restOk: restResult.ok,
-    restStatus: restResult.status,
-    messages: messages,
-    runtime: activitySnapshot.runtime,
-    hasOutstandingTurns: activitySnapshot.hasOutstandingTurns,
-  });
   if (adapter.applyActivity) adapter.applyActivity(activity);
   else {
     adapter.setActivity?.(activity);
@@ -86,12 +87,28 @@ function normalizeActivity(value) {
 
 function isUserEcho(message, pending) {
   if (message?.type !== 'user' || !pending?.id) return false;
-  if (message.turnId === pending.id || message.uuid === pending.id) return true;
-  if (message.nativeId === 'codex:user:' + pending.id) return true;
+  if (Array.isArray(message.content)
+    && message.content.length
+    && message.content.every(function (block) {
+      return block?.type === 'tool_result';
+    })) {
+    return false;
+  }
+  var turnId = pending.id;
+  var promptUuid = String(turnId).replace(/^sent-/, '');
+  if (message.turnId === turnId
+    || message.uuid === turnId
+    || message.uuid === promptUuid
+    || message.nativeId === 'codex:user:' + turnId
+    || message.nativeId === 'live:user:' + turnId
+    || message.nativeId === 'codex:turn:' + turnId + ':user') {
+    return true;
+  }
   var aliases = new Set(message.identityAliases || []);
-  return aliases.has('turn:' + pending.id)
-    || aliases.has('pending:' + pending.id)
-    || aliases.has('native:codex:user:' + pending.id);
+  return aliases.has('turn:' + turnId)
+    || aliases.has('pending:' + turnId)
+    || aliases.has('native:codex:user:' + turnId)
+    || aliases.has('native:live:user:' + turnId);
 }
 
 function reconcilePendingEchoes(pendingMessages, messages) {
@@ -107,6 +124,7 @@ function reconcilePendingEchoes(pendingMessages, messages) {
       remaining.push(pending);
       continue;
     }
+    if (!echo.turnId) echo.turnId = pending.id;
     promoted.push({ pending: pending, echo: echo });
     if (echo.uuid) promotedUuids.add(echo.uuid);
   }

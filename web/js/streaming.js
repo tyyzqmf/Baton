@@ -178,17 +178,10 @@ export class TurnEventQueue {
     var end = events.find(function (event) {
       return event.action === 'stream_end';
     }) || null;
-    var authorityEvents = events.slice();
-    if (Array.isArray(end?.messages)) {
-      authorityEvents.push({
-        action: 'messages',
-        messages: end.messages,
-      });
-    }
     this.lateJoinCompletions.push({
       sessionId: end?.sessionId || events[0]?.sessionId || '',
       turnId: turnId,
-      messages: this.messagesFromEvents(authorityEvents),
+      messages: this.terminalMessages(end),
       end: end,
       gapped: true,
       missingSeq: turn.nextSeq,
@@ -205,30 +198,10 @@ export class TurnEventQueue {
     var end = events.find(function (event) {
       return event.action === 'stream_end';
     }) || null;
-    var messages = [];
-    for (var event of events) {
-      if (event.action === 'messages' && Array.isArray(event.messages)) {
-        messages.push.apply(messages, event.messages);
-      }
-    }
-    if (Array.isArray(end?.messages)) {
-      messages.push.apply(messages, end.messages);
-    }
-    var seen = new Set();
-    messages = messages.filter(function (message) {
-      var key = message?.nativeId
-        ? 'native:' + message.nativeId
-        : message?.uuid
-          ? 'uuid:' + message.uuid
-          : stableJson(message);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
     this.lateJoinCompletions.push({
       sessionId: end?.sessionId || events[0]?.sessionId || '',
       turnId: turnId,
-      messages: messages,
+      messages: this.terminalMessages(end),
       end: end,
     });
     this.closeTurn(turnId);
@@ -319,6 +292,21 @@ export class TurnEventQueue {
       return true;
     });
   }
+
+  terminalMessages(end) {
+    if (!Array.isArray(end?.messages) || !end.messages.length) return [];
+    var seen = new Set();
+    return end.messages.filter(function (message) {
+      var key = message?.nativeId
+        ? 'native:' + message.nativeId
+        : message?.uuid
+          ? 'uuid:' + message.uuid
+          : stableJson(message);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
 }
 
 class BlockState {
@@ -336,6 +324,8 @@ class BlockState {
     this.authoritative = false;
     this.authorityAssigned = false;
     this.toolUseId = '';
+    this.messageId = '';
+    this.nativeId = '';
   }
 
   start(kind, name) {
@@ -373,6 +363,8 @@ class BlockState {
       text: this.text,
       inputJson: this.inputJson,
       toolUseId: this.toolUseId,
+      messageId: this.messageId,
+      nativeId: this.nativeId,
       stopped: this.stopped,
       authoritative: this.authoritative,
       displayComplete: this.displayComplete,
@@ -406,6 +398,8 @@ class BlockState {
       ? stableJson(authoritative.input || {})
       : '';
     this.toolUseId = authoritative.toolUseId || this.toolUseId;
+    this.messageId = authoritative.messageId || this.messageId;
+    this.nativeId = authoritative.nativeId || this.nativeId;
     this.started = true;
     this.stopped = true;
     this.authoritative = true;
@@ -906,12 +900,16 @@ function normalizeAuthoritativeBlocks(payload) {
         kind: 'text',
         name: '',
         text: source.text || '',
+        messageId: payload.message?.uuid || '',
+        nativeId: payload.message?.nativeId || '',
       });
     } else if (source.type === 'thinking') {
       normalized.push({
         kind: 'thinking',
         name: '',
         text: source.thinking || '',
+        messageId: payload.message?.uuid || '',
+        nativeId: payload.message?.nativeId || '',
       });
     } else if (source.type === 'tool_use') {
       normalized.push({
@@ -919,6 +917,8 @@ function normalizeAuthoritativeBlocks(payload) {
         name: source.name || '',
         input: source.input || {},
         toolUseId: source.id || '',
+        messageId: payload.message?.uuid || '',
+        nativeId: payload.message?.nativeId || '',
       });
     }
   }
@@ -1039,16 +1039,16 @@ export class StreamingDomRenderer {
   insertTurn(container, turn, turnId) {
     var anchor = this.findAnchor(turnId);
     if (!anchor) {
-      container.appendChild(turn);
-      return;
+      return false;
     }
     var insertionPoint = anchor;
     while (insertionPoint.nextElementSibling?.classList.contains('assistant-turn')
       && insertionPoint.nextElementSibling !== turn) {
       insertionPoint = insertionPoint.nextElementSibling;
     }
-    if (insertionPoint.nextElementSibling === turn) return;
+    if (insertionPoint.nextElementSibling === turn) return true;
     insertionPoint.insertAdjacentElement('afterend', turn);
+    return true;
   }
 
   attachTurnToAnchor(turnId) {
@@ -1139,8 +1139,18 @@ export class StreamingDomRenderer {
     var view = this.blockView(operation);
     if (!view) return;
     view.block = { ...view.block, ...operation.block };
+    if (view.block.kind !== 'tool_use') {
+      view.targetText = view.block.text || '';
+      if (view.block.displayComplete) {
+        view.shown = Array.from(view.targetText).length;
+        this.renderText(view);
+      }
+    }
     view.element.classList.add('stream-block-authoritative');
     if (view.block.toolUseId) view.element.dataset.toolId = view.block.toolUseId;
+    if (view.block.messageId) view.element.dataset.messageId = view.block.messageId;
+    if (view.block.nativeId) view.element.dataset.nativeId = view.block.nativeId;
+    this.onMutation(view.element);
   }
 
   patchBlock(operation) {
@@ -1164,6 +1174,8 @@ export class StreamingDomRenderer {
       }
     }
     if (view.block.toolUseId) view.element.dataset.toolId = view.block.toolUseId;
+    if (view.block.messageId) view.element.dataset.messageId = view.block.messageId;
+    if (view.block.nativeId) view.element.dataset.nativeId = view.block.nativeId;
     view.element.classList.add('stream-block-authoritative');
     this.onMutation(view.element);
   }

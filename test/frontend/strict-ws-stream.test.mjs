@@ -13,15 +13,31 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
   const h = await makeHarness();
   resetSession(h, { sessionId });
   const turnId = 'turn-1';
+  const userOne = {
+    uuid: 'user-1',
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'question',
+  };
+  const assistantOne = {
+    uuid: 'assistant-1',
+    nativeId: 'codex:item:assistant-1',
+    type: 'assistant',
+    content: [
+      { type: 'text', text: 'abcdefghij' },
+      {
+        type: 'tool_use',
+        id: 'tool-1',
+        name: 'Bash',
+        input: { command: 'pwd' },
+      },
+    ],
+  };
 
   const events = [
     event(turnId, 0, 'stream_turn_start'),
     event(turnId, 1, 'messages', {
-      messages: [{
-        uuid: 'user-1',
-        type: 'user',
-        content: 'question',
-      }],
+      messages: [userOne],
     }),
     event(turnId, 2, 'stream_block_start', { kind: 'text' }),
     event(turnId, 3, 'stream_delta', { chunk: 'abcdefghij' }),
@@ -35,21 +51,11 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
     }),
     event(turnId, 7, 'stream_block_stop'),
     event(turnId, 8, 'messages', {
-      messages: [{
-        uuid: 'assistant-1',
-        type: 'assistant',
-        content: [
-          { type: 'text', text: 'abcdefghij' },
-          {
-            type: 'tool_use',
-            id: 'tool-1',
-            name: 'Bash',
-            input: { command: 'pwd' },
-          },
-        ],
-      }],
+      messages: [assistantOne],
     }),
-    event(turnId, 9, 'stream_end'),
+    event(turnId, 9, 'stream_end', {
+      messages: [userOne, assistantOne],
+    }),
   ];
 
   // Authority and stop arrive before the missing deltas. Ordinary frames stay
@@ -78,19 +84,52 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
   assert.equal(turn.textContent.split('abcdefghij').length - 1, 1);
   assert.equal(turn.classList.contains('stream-committed'), true);
 
+  const firstUser = {
+    uuid: 'user-turn-a',
+    nativeId: 'codex:user:turn-a',
+    type: 'user',
+    content: 'first question',
+  };
+  const firstAnswer = {
+    uuid: 'assistant-turn-a',
+    nativeId: 'codex:item:turn-a',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'first' }],
+  };
+  const secondUser = {
+    uuid: 'user-turn-b',
+    nativeId: 'codex:user:turn-b',
+    type: 'user',
+    content: 'second question',
+  };
+  const secondAnswer = {
+    uuid: 'assistant-turn-b',
+    nativeId: 'codex:item:turn-b',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'second' }],
+  };
+  h.document.querySelector('.messages').insertAdjacentHTML(
+    'beforeend',
+    '<div class="msg-user" data-anchor="turn-a">first question</div>'
+      + '<div class="msg-user" data-anchor="turn-b">second question</div>',
+  );
   const first = [
     event('turn-a', 0, 'stream_turn_start'),
     event('turn-a', 1, 'stream_block_start', { kind: 'text' }),
     event('turn-a', 2, 'stream_delta', { chunk: 'first' }),
     event('turn-a', 3, 'stream_block_stop'),
-    event('turn-a', 4, 'stream_end'),
+    event('turn-a', 4, 'stream_end', {
+      messages: [firstUser, firstAnswer],
+    }),
   ];
   const second = [
     event('turn-b', 0, 'stream_turn_start'),
     event('turn-b', 1, 'stream_block_start', { kind: 'text' }),
     event('turn-b', 2, 'stream_delta', { chunk: 'second' }),
     event('turn-b', 3, 'stream_block_stop'),
-    event('turn-b', 4, 'stream_end'),
+    event('turn-b', 4, 'stream_end', {
+      messages: [secondUser, secondAnswer],
+    }),
   ];
 
   for (const item of [
@@ -108,8 +147,8 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
   ]);
   assert.equal(turns.at(-2).textContent, 'first');
   assert.equal(turns.at(-1).textContent, 'second');
-  assert.equal(turns.at(-2).classList.contains('has-next-turn'), true);
-  assert.equal(turns.at(-1).classList.contains('follows-turn'), true);
+  assert.equal(turns.at(-2).classList.contains('has-next-turn'), false);
+  assert.equal(turns.at(-1).classList.contains('follows-turn'), false);
   assert.equal(turns.at(-1).classList.contains('has-next-turn'), false);
   assert.equal(h.state.wsRunning, false);
 
@@ -184,12 +223,20 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
     timestamp: '2026-08-24T07:43:17.000Z',
     stopReason: 'end_turn',
   };
+  const failedUser = {
+    uuid: 'failed-user',
+    nativeId: 'codex:user:' + failedTurnId,
+    type: 'user',
+    content: 'run validation',
+  };
+  h.document.querySelector('.messages').innerHTML =
+    `<div class="msg-user" data-anchor="${failedTurnId}">run validation</div>`;
   for (const item of [
     event(failedTurnId, 0, 'stream_turn_start'),
     event(failedTurnId, 1, 'messages', { messages: [failedMessage] }),
     event(failedTurnId, 2, 'stream_end', {
       error: 'failed',
-      messages: [failedMessage],
+      messages: [failedUser, failedMessage],
     }),
   ]) {
     h.hooks.handleWsMessage(item);

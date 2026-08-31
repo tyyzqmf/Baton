@@ -1,5 +1,5 @@
 /**
- * @param {{state: object, document: Document, runtime: Function, renderMessages: Function, deferRender?: boolean, isCurrentBarrier?: Function, promotePending?: Function, reportConflict?: Function, releaseBarrier?: Function, applyStreamOperations?: Function, markTurnAdjacency?: Function, loadImages?: Function, clampOverflow?: Function, renderMermaidBlocks?: Function, renderKatexBlocks?: Function, updateTitleFromMessages?: Function, markSpinnerTurnEnd?: Function, updateSendBtn?: Function, updateSpinner?: Function}} options
+ * @param {{state: object, document: Document, runtime: Function, renderMessages: Function, preserveStreamPreviews?: boolean, isCurrentBarrier?: Function, promotePending?: Function, reportConflict?: Function, releaseBarrier?: Function, applyStreamOperations?: Function, markTurnAdjacency?: Function, loadImages?: Function, clampOverflow?: Function, renderMermaidBlocks?: Function, renderKatexBlocks?: Function, updateTitleFromMessages?: Function, markSpinnerTurnEnd?: Function, updateSendBtn?: Function, updateSpinner?: Function}} options
  * @returns {{setMessages: Function, applyHistoryChanges: Function, applyActivity: Function, finalize: Function}}
  */
 export function createHistoryRecoveryDomAdapter(options = {}) {
@@ -56,6 +56,26 @@ function nodeUnchanged(current, expected) {
   if (!current || !expected || current.tagName !== expected.tagName) return false;
   return domKey(current) === domKey(expected)
     && comparableMarkup(current) === comparableMarkup(expected);
+}
+
+function sameUserAnchor(current, expected) {
+  if (!current?.classList.contains('msg-user')
+    || !expected?.classList.contains('msg-user')) {
+    return false;
+  }
+  var currentAnchor = current.dataset?.anchor || '';
+  var expectedAnchor = expected.dataset?.anchor || '';
+  return !!currentAnchor && currentAnchor === expectedAnchor;
+}
+
+function syncUserIdentity(current, expected) {
+  if (!current || !expected) return;
+  for (var attribute of ['data-anchor', 'data-message-id', 'data-native-id']) {
+    if (expected.hasAttribute(attribute)) {
+      current.setAttribute(attribute, expected.getAttribute(attribute));
+    }
+  }
+  if (expected.dataset?.ts) current.dataset.serverTs = expected.dataset.ts;
 }
 
 function inheritUiState(current, expected) {
@@ -132,6 +152,12 @@ function reconcileTopLevel(container, expected) {
     var current = candidates.find(function (candidate) {
       return !used.has(candidate);
     }) || null;
+    if (!current && expectedElement.classList.contains('msg-user')) {
+      current = existing.find(function (candidate) {
+        return !used.has(candidate)
+          && sameUserAnchor(candidate, expectedElement);
+      }) || null;
+    }
     var cursorKey = domKey(cursor);
     if (!current
       && cursor?.classList.contains('assistant-turn')
@@ -142,10 +168,22 @@ function reconcileTopLevel(container, expected) {
     }
 
     var resolved;
-    if (current?.classList.contains('assistant-turn')
+    if (current && sameUserAnchor(current, expectedElement)) {
+      used.add(current);
+      syncUserIdentity(current, expectedElement);
+      resolved = current;
+    } else if (current?.classList.contains('assistant-turn')
       && expectedElement.classList.contains('assistant-turn')) {
       used.add(current);
       reconcileChildren(current, expectedElement);
+      current.className = expectedElement.className;
+      for (var attribute of ['data-turn-id', 'data-ts']) {
+        if (expectedElement.hasAttribute(attribute)) {
+          current.setAttribute(attribute, expectedElement.getAttribute(attribute));
+        } else {
+          current.removeAttribute(attribute);
+        }
+      }
       resolved = current;
       if (resolved !== cursor) container.insertBefore(resolved, cursor);
     } else if (current && nodeUnchanged(current, expectedElement)) {
@@ -165,15 +203,42 @@ function reconcileTopLevel(container, expected) {
   }
 
   for (var stale of existing) {
-    if (!used.has(stale) && stale.isConnected) stale.remove();
+    if (!used.has(stale)
+      && stale.isConnected
+      && !stale.hasAttribute('data-recovery-pending-placeholder')
+      && !stale.hasAttribute('data-pending')
+      && !(stale.classList.contains('msg-user') && stale.dataset?.anchor)) {
+      stale.remove();
+    }
   }
+}
+
+function restoreStreamPreview(container, streamPreview) {
+  var turnId = streamPreview?.dataset?.turnId || '';
+  var anchor = turnId
+    ? Array.from(container.children).find(function (element) {
+        return element.dataset?.anchor === turnId;
+      })
+    : null;
+  if (!anchor) {
+    return false;
+  }
+  var insertionPoint = anchor;
+  while (insertionPoint.nextElementSibling?.classList.contains('assistant-turn')
+    && insertionPoint.nextElementSibling !== streamPreview) {
+    insertionPoint = insertionPoint.nextElementSibling;
+  }
+  insertionPoint.insertAdjacentElement('afterend', streamPreview);
+  return true;
 }
 
 function rebuildMessageIndex(messages) {
   var index = new Set();
   for (var message of messages) {
     if (message?.uuid) index.add(message.uuid);
-    for (var alias of message?.identityAliases || []) index.add(String(alias));
+    for (var alias of message?.identityAliases || []) {
+      if (!/^(?:turn|pending):/.test(String(alias))) index.add(String(alias));
+    }
     if (!message?.uuid && message?.nativeId) {
       index.add('native:' + message.nativeId);
     }
@@ -213,32 +278,67 @@ function buildHistoryRecoveryDomAdapter(options) {
       : '';
   }
 
-  function applyHistoryChanges(mergeResult) {
+  function applyHistoryChanges(mergeResult, pendingResult, activity) {
     var changed = (mergeResult.inserted || []).filter(changeAffectsDom).length
       + (mergeResult.patched || []).filter(changeAffectsDom).length
       + (mergeResult.identityUpdated || []).filter(changeAffectsDom).length;
-    if (!changed || options.deferRender) return false;
+    if (mergeResult.reordered) changed++;
+    if (mergeResult.authoritative) changed++;
+    if (!changed) return false;
     var container = doc.querySelector('.messages');
     if (!container || container.classList.contains('skeleton-messages')) {
       return false;
     }
 
-    var protectedNodes = Array.from(container.children).filter(function (node) {
-      return node.hasAttribute('data-pending')
-        || node.classList.contains('stream-preview');
+    var pendingPlacements = Array.from(container.children)
+      .filter(function (node) {
+        return node.hasAttribute('data-pending');
+      })
+      .map(function (node) {
+        var marker = doc.createElement('span');
+        marker.hidden = true;
+        marker.dataset.recoveryPendingPlaceholder = '1';
+        node.before(marker);
+        return { node: node, marker: marker };
+      });
+    var pendingNodes = pendingPlacements.map(function (placement) {
+      return placement.node;
     });
-    for (var node of protectedNodes) node.remove();
+    var streamPreviews = activity === 'completed'
+      && !options.preserveStreamPreviews
+      ? []
+      : Array.from(container.children).filter(function (node) {
+          return node.classList.contains('stream-preview');
+        });
+    for (var node of pendingNodes.concat(streamPreviews)) node.remove();
 
+    var streamedTurnIds = new Set(streamPreviews.map(function (node) {
+      return node.dataset?.turnId || '';
+    }).filter(Boolean));
+    var renderMessages = streamedTurnIds.size
+      ? state.wsAllMessages.map(function (message) {
+          if ((message?.type !== 'assistant' && message?.type !== 'summary')
+            || !streamedTurnIds.has(message.turnId)) {
+            return message;
+          }
+          return { ...message, _strictManaged: true };
+        })
+      : state.wsAllMessages;
     var expected = doc.createElement('div');
     expected.innerHTML = options.renderMessages(
-      state.wsAllMessages,
+      renderMessages,
       options.runtime(),
       { collapseToolDetails: false },
     );
     reconcileTopLevel(container, expected);
 
-    for (var protectedNode of protectedNodes) {
-      container.appendChild(protectedNode);
+    for (var placement of pendingPlacements) {
+      if (placement.marker.isConnected) {
+        placement.marker.replaceWith(placement.node);
+      }
+    }
+    for (var streamPreview of streamPreviews) {
+      restoreStreamPreview(container, streamPreview);
     }
     state.wsRenderedCount = state.wsAllMessages.length;
     rendered = true;

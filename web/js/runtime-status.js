@@ -16,7 +16,7 @@ export function deriveActivityFromMessages(options = {}) {
 }
 
 /**
- * @param {{liveStateChanged?: boolean, liveActivity?: string, activityBeforeFetch?: string, restOk?: boolean, restStatus?: string, messages?: object[], runtime?: string, hasOutstandingTurns?: boolean}} options
+ * @param {{liveStateChanged?: boolean, liveActivity?: string, activityBeforeFetch?: string, restOk?: boolean, restStatus?: string, messages?: object[], runtime?: string, hasOutstandingTurns?: boolean, outstandingTurnIds?: string[]}} options
  * @returns {'running'|'needs_input'|'completed'}
  */
 export function resolveActivityState(options = {}) {
@@ -29,18 +29,79 @@ export function resolveActivityState(options = {}) {
 
   var restStatus = normalizeActivity(options.restStatus, '');
   if (restStatus === 'needs_input') return 'needs_input';
+  if (restStatus === 'completed') {
+    if (!options.hasOutstandingTurns) return 'completed';
+    var outstandingTurnIds = Array.isArray(options.outstandingTurnIds)
+      ? options.outstandingTurnIds.filter(Boolean)
+      : [];
+    if (outstandingTurnIds.length) {
+      return outstandingTurnIds.every(function (turnId) {
+        return historyAnswersTurn(options.messages || [], turnId);
+      }) ? 'completed' : 'running';
+    }
+    return hasAnsweredTail(options.messages || [])
+      ? 'completed'
+      : 'running';
+  }
   if (restStatus === 'running') {
     return hasTerminalAssistantTail(options.messages || [])
       ? 'completed'
       : 'running';
   }
-  if (restStatus === 'completed') return 'completed';
   if (options.hasOutstandingTurns) return 'running';
   return deriveActivityFromMessages({
     messages: options.messages,
     runtime: options.runtime,
     authStatus: restStatus,
   });
+}
+
+function messageMatchesTurnPrompt(message, turnId) {
+  if (message?.type !== 'user' || isToolResultOnly(message)) return false;
+  if (message.turnId === turnId
+    || message.uuid === turnId
+    || message.uuid === String(turnId).replace(/^sent-/, '')
+    || message.nativeId === 'codex:user:' + turnId
+    || message.nativeId === 'live:user:' + turnId
+    || message.nativeId === 'codex:turn:' + turnId + ':user') {
+    return true;
+  }
+  var aliases = new Set(message.identityAliases || []);
+  return aliases.has('turn:' + turnId)
+    || aliases.has('pending:' + turnId)
+    || aliases.has('native:codex:user:' + turnId)
+    || aliases.has('native:live:user:' + turnId);
+}
+
+function historyAnswersTurn(messages, turnId) {
+  var promptIndex = messages.findIndex(function (message) {
+    return messageMatchesTurnPrompt(message, turnId);
+  });
+  if (promptIndex < 0) return false;
+  for (var index = promptIndex + 1; index < messages.length; index++) {
+    var message = messages[index];
+    if (!message || isMetadata(message)
+      || isToolResultOnly(message)
+      || isSubagentNotification(message)) {
+      continue;
+    }
+    if (message.type === 'assistant' || message.type === 'summary') return true;
+    if (message.type === 'user') return false;
+  }
+  return false;
+}
+
+function hasAnsweredTail(messages) {
+  for (var index = messages.length - 1; index >= 0; index--) {
+    var message = messages[index];
+    if (!message || isMetadata(message)) continue;
+    if (message.type === 'assistant' || message.type === 'summary') return true;
+    if (message.type !== 'user') continue;
+    if (isInterruptMessage(message) || isLocalCommandMarker(message)) return true;
+    if (isToolResultOnly(message) || isSubagentNotification(message)) continue;
+    return false;
+  }
+  return false;
 }
 
 /**

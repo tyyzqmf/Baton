@@ -64,6 +64,25 @@ export class FetchBarrier {
     return true;
   }
 
+  replaceStrictTurn(turnId, messages) {
+    if (this.state !== 'open' || !turnId) return false;
+    var firstIndex = this.strictMessages.findIndex(function (message) {
+      return message?.turnId === turnId;
+    });
+    this.strictMessages = this.strictMessages.filter(function (message) {
+      return message?.turnId !== turnId;
+    });
+    var insertionIndex = firstIndex >= 0
+      ? Math.min(firstIndex, this.strictMessages.length)
+      : this.strictMessages.length;
+    this.strictMessages.splice(
+      insertionIndex,
+      0,
+      ...(messages || []).filter(Boolean),
+    );
+    return true;
+  }
+
   beginCommit() {
     if (this.state !== 'open') return false;
     this.state = 'committing';

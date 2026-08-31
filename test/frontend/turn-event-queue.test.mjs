@@ -184,10 +184,10 @@ test('a turn that reaches end without seq 0 or 1 completes as late join', () => 
   var queue = new TurnEventQueue();
   queue.push({
     ...event(4, 'messages'),
-    messages: [{
-      uuid: 'assistant-history',
-      nativeId: 'codex:item:answer-1',
-      type: 'assistant',
+      messages: [{
+        uuid: 'assistant-live',
+        nativeId: 'codex:item:answer-1',
+        type: 'assistant',
       content: [{ type: 'text', text: 'complete answer' }],
     }],
   });
@@ -207,7 +207,7 @@ test('a turn that reaches end without seq 0 or 1 completes as late join', () => 
     sessionId: 'session-1',
     turnId: 'turn-1',
     messages: [{
-      uuid: 'assistant-history',
+      uuid: 'assistant-live',
       nativeId: 'codex:item:answer-1',
       type: 'assistant',
       content: [{ type: 'text', text: 'complete answer' }],

@@ -455,7 +455,11 @@ export function prepareWsPayload(data, recoveryTurns, frameLimit = WS_FRAME_LIMI
     && recovery.has(data.turnId)
     ? { ...data, recoveryRequired: true }
     : data;
-  const outgoing = fitWsPayload(source, frameLimit);
+  let outgoing = fitWsPayload(source, frameLimit);
+  if (data?.action === 'stream_end'
+    && (!Array.isArray(outgoing?.messages) || outgoing.messages.length === 0)) {
+    outgoing = { ...outgoing, recoveryRequired: true };
+  }
   if (data?.action === 'messages'
     && data.turnId
     && Array.isArray(data.messages)

@@ -15,24 +15,27 @@ test('end-first late join renders authority once and ignores delayed frames', as
     seq,
     ...extra,
   });
+  const terminalUser = {
+    uuid: 'end-first-user',
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'question',
+  };
+  const terminalAnswer = {
+    uuid: 'end-first-answer',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'ordered answer' }],
+  };
 
   h.hooks.handleWsMessage(event(5, 'stream_end', {
-    messages: [{
-      uuid: 'end-first-answer',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'ordered answer' }],
-    }],
+    messages: [terminalUser, terminalAnswer],
   }));
   await h.tick(50);
 
   for (const item of [
     event(0, 'stream_turn_start'),
     event(1, 'messages', {
-      messages: [{
-        uuid: 'end-first-user',
-        type: 'user',
-        content: 'question',
-      }],
+      messages: [terminalUser],
     }),
     event(2, 'stream_block_start', { kind: 'text' }),
     event(3, 'stream_delta', { chunk: 'ordered answer' }),
@@ -73,19 +76,21 @@ test('end-first late join renders authority once and ignores delayed frames', as
     stopReason: 'end_turn',
     content: [{ type: 'text', text: 'complete after gap' }],
   };
+  const gappedUser = {
+    uuid: 'gapped-user',
+    nativeId: 'codex:user:' + gappedTurnId,
+    type: 'user',
+    content: 'question',
+  };
 
   for (const item of [
     gappedEvent(0, 'stream_turn_start'),
     gappedEvent(1, 'messages', {
-      messages: [{
-        uuid: 'gapped-user',
-        type: 'user',
-        content: 'question',
-      }],
+      messages: [gappedUser],
     }),
     gappedEvent(3, 'stream_delta', { chunk: 'partial' }),
     gappedEvent(6, 'messages', { messages: [answer] }),
-    gappedEvent(7, 'stream_end', { messages: [answer] }),
+    gappedEvent(7, 'stream_end', { messages: [gappedUser, answer] }),
   ]) {
     h.hooks.handleWsMessage(item);
   }

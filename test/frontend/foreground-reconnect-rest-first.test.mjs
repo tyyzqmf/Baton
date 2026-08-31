@@ -7,7 +7,7 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-test('REST status releases reconnect events and settles the turn', async () => {
+test('REST status releases reconnect events without settling before stream end', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-rest-first';
   const turnId = 'turn-foreground-rest-first';
@@ -65,10 +65,11 @@ test('REST status releases reconnect events and settles the turn', async () => {
   resolveRest({ messages: [], hasMore: false, status: 'completed' });
   await h.tick(40);
 
-  // The REST snapshot and status release live events and settle the turn.
+  // The REST snapshot releases live events, but status alone cannot settle
+  // a turn that has no stream_end.
   var text = h.document.querySelector('.messages').textContent;
   assert.equal(text.includes('partial draft'), false);
   assert.equal((text.match(/complete history/g) || []).length, 1);
-  assert.equal(text.includes('new block after reconnect'), false);
-  assert.equal(h.state.wsRunning, false);
+  assert.equal(text.includes('new block after reconnect'), true);
+  assert.equal(h.state.wsRunning, true);
 });

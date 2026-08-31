@@ -11,6 +11,9 @@ function createRenderer() {
   const renderer = new StreamingDomRenderer({
     document: dom.window.document,
     getContainer: () => dom.window.document.querySelector('.messages'),
+    findAnchor: (turnId) => dom.window.document.querySelector(
+      `[data-anchor="${turnId}"]`,
+    ),
     renderMarkdown: (element, text) => { element.textContent = text; },
     scheduleFrame: (callback) => {
       frames.push(callback);
@@ -27,6 +30,15 @@ function createRenderer() {
     frames,
     revealed,
     renderer,
+    ensureAnchor(turnId) {
+      const container = dom.window.document.querySelector('.messages');
+      if (!container.querySelector(`[data-anchor="${turnId}"]`)) {
+        container.insertAdjacentHTML(
+          'beforeend',
+          `<div class="msg-user" data-anchor="${turnId}">question</div>`,
+        );
+      }
+    },
     flushFrames() {
       while (frames.length) frames.shift()();
     },
@@ -34,6 +46,13 @@ function createRenderer() {
 }
 
 function createText(renderer, turnId = 'turn-1', blockId = 1) {
+  const container = renderer.getContainer();
+  if (!container.querySelector(`[data-anchor="${turnId}"]`)) {
+    container.insertAdjacentHTML(
+      'beforeend',
+      `<div class="msg-user" data-anchor="${turnId}">question</div>`,
+    );
+  }
   renderer.applyOperations([
     { type: 'createTurn', turnId },
     {
@@ -61,6 +80,7 @@ test('ordered delta operations append each character exactly once', () => {
 
 test('live thinking uses the collapsible Thinking component from its first frame', () => {
   const h = createRenderer();
+  h.ensureAnchor('turn-thinking');
   h.renderer.applyOperations([
     { type: 'createTurn', turnId: 'turn-thinking' },
     {
@@ -133,7 +153,8 @@ test('rebind restores a detached live turn after history render replacement', ()
   const h = createRenderer();
   createText(h.renderer);
   const turn = h.document.querySelector('[data-turn-id="turn-1"]');
-  h.document.querySelector('.messages').innerHTML = '<div class="msg-user">history</div>';
+  h.document.querySelector('.messages').innerHTML =
+    '<div class="msg-user" data-anchor="turn-1">history</div>';
 
   h.renderer.rebindRenderedHistory();
 

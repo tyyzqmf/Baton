@@ -23,6 +23,13 @@ function installMessageStatusFallback(h) {
 }
 
 async function completeStrictTurn(h, sessionId, turnId, options = {}) {
+  var userMessage = {
+    uuid: 'user-' + turnId,
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'question',
+    timestamp: '2026-08-22T00:00:00.000Z',
+  };
   var finalMessage = {
     uuid: 'assistant-' + turnId,
     nativeId: 'codex:item:' + turnId,
@@ -31,6 +38,10 @@ async function completeStrictTurn(h, sessionId, turnId, options = {}) {
     timestamp: '2026-08-22T00:00:01.000Z',
     ...(options.stopReason ? { stopReason: options.stopReason } : {}),
   };
+  h.document.querySelector('.messages').insertAdjacentHTML(
+    'beforeend',
+    `<div class="msg-user" data-anchor="${turnId}">question</div>`,
+  );
   var events = [
     event(sessionId, turnId, 0, 'stream_turn_start'),
     event(sessionId, turnId, 1, 'stream_block_start', { kind: 'text' }),
@@ -40,7 +51,7 @@ async function completeStrictTurn(h, sessionId, turnId, options = {}) {
   ];
   if (options.includeStreamEnd !== false) {
     events.push(event(sessionId, turnId, 5, 'stream_end', {
-      messages: [finalMessage],
+      messages: [userMessage, finalMessage],
     }));
   }
   for (var item of events) h.hooks.handleWsMessage(item);

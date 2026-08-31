@@ -823,6 +823,14 @@ test('Codex grouping does not mutate Claude turns', () => {
 test('strict no-op Edit input does not render an empty diff body', () => {
   reset();
   const turnId = 'turn-noop-edit';
+  const promptMessage = {
+    uuid: 'noop-edit-user',
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'edit the file',
+  };
+  document.querySelector('.messages').innerHTML =
+    `<div class="msg-user" data-anchor="${turnId}">edit the file</div>`;
   const input = {
     file_path: 'src/noop.js',
     old_string: 'const value = 1;',
@@ -863,7 +871,7 @@ test('strict no-op Edit input does not render an empty diff body', () => {
     {
       action: 'stream_end',
       seq: 6,
-      messages: [toolMessage, resultMessage],
+      messages: [promptMessage, toolMessage, resultMessage],
     },
   ];
   for (const index of [0, 1, 2, 3, 5, 4, 6]) {
@@ -884,6 +892,14 @@ test('strict no-op Edit input does not render an empty diff body', () => {
 test('structured Codex plan updates render immediately as one TodoWrite checklist', () => {
   reset();
   const turnId = 'turn-plan-update';
+  const promptMessage = {
+    uuid: 'plan-user-message',
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'update the plan',
+  };
+  document.querySelector('.messages').innerHTML =
+    `<div class="msg-user" data-anchor="${turnId}">update the plan</div>`;
   const input = {
     todos: [
       { content: 'Inspect', status: 'completed' },
@@ -936,7 +952,7 @@ test('structured Codex plan updates render immediately as one TodoWrite checklis
     {
       action: 'stream_end',
       seq: 6,
-      messages: [toolMessage, resultMessage],
+      messages: [promptMessage, toolMessage, resultMessage],
     },
   ];
   for (const event of events) {

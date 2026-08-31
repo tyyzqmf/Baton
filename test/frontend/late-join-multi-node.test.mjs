@@ -17,6 +17,14 @@ test('late join restores a missed node from authority and streams the next node'
   const sessionId = 'codex:late-join-multi-node';
   const turnId = 'turn-late-join-multi-node';
   resetSession(h, { sessionId });
+  const prompt = {
+    uuid: 'late-join-user',
+    nativeId: 'codex:user:' + turnId,
+    type: 'user',
+    content: 'continue',
+  };
+  h.document.querySelector('.messages').innerHTML =
+    `<div class="msg-user" data-anchor="${turnId}">continue</div>`;
   const event = (seq, action, extra = {}) => ({
     action,
     sessionId,
@@ -60,7 +68,7 @@ test('late join restores a missed node from authority and streams the next node'
   h.hooks.handleWsMessage(event(8, 'stream_block_stop'));
   h.hooks.handleWsMessage(event(9, 'messages', { messages: [nodeB] }));
   h.hooks.handleWsMessage(event(10, 'stream_end', {
-    messages: [nodeA, nodeB],
+    messages: [prompt, nodeA, nodeB],
   }));
   await waitFor(h, () =>
     h.document.querySelector(`[data-turn-id="${turnId}"]`)

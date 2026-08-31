@@ -22,7 +22,7 @@ function createAdapter(dom, state, extra = {}) {
   });
 }
 
-test('history DOM adapter preserves unchanged nodes and keeps pending bubbles last', () => {
+test('history DOM adapter preserves unchanged and pending bubble identities', () => {
   const dom = new JSDOM(
     '<div class="messages">'
       + '<div class="msg-user" data-message-id="one">one</div>'
@@ -52,8 +52,8 @@ test('history DOM adapter preserves unchanged nodes and keeps pending bubbles la
   }), true);
 
   assert.equal(container.children[0], unchanged);
-  assert.equal(container.children[2], pending);
   assert.equal(container.children[1].dataset.messageId, 'two');
+  assert.equal(container.children[2], pending);
 });
 
 test('metadata-only recovery does not rebuild visible history DOM', () => {

@@ -105,10 +105,10 @@ test('send reliability keeps receipt, retry, and failure states distinct', async
 
   assert.equal(orderedSent.length, 3);
   assert.equal(orderedSent[2].previousTurnId, firstPending.id);
-  assert.notEqual(orderedSent[2].turnId, retryPending.id);
+  assert.equal(orderedSent[2].turnId, retryPending.id);
   assert.equal(
     h.document.querySelector('.messages').lastElementChild.id,
-    orderedSent[2].turnId,
+    retryPending.id,
   );
   await failPendingTurns();
 

@@ -125,5 +125,6 @@ test('reconnect preserves a partial block until authority replaces it in place',
   assert.equal((text.match(/second block/g) || []).length, 1);
   assert.equal(h.state.wsRunning, false);
   assert.equal(h.document.querySelector('.stream-preview'), null);
-  assert.equal(partialBlock.isConnected, false);
+  assert.equal(partialBlock.isConnected, true);
+  assert.equal(partialBlock.textContent, 'final first block');
 });

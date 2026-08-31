@@ -22,8 +22,8 @@ export function mergeFetchWindow(options = {}) {
 }
 
 /**
- * @param {{localMessages?: object[], fetchedMessages?: object[]}} options
- * @returns {{messages: object[], inserted: object[], patched: object[], identityUpdated: object[], conflicts: object[]}}
+ * @param {{localMessages?: object[], fetchedMessages?: object[], authoritative?: boolean}} options
+ * @returns {{messages: object[], inserted: object[], patched: object[], identityUpdated: object[], conflicts: object[], reordered: boolean, authoritative: boolean}}
  */
 export function mergeLocalHistory(options = {}) {
   var messages = (options.localMessages || []).filter(isMessage).slice();
@@ -34,12 +34,14 @@ export function mergeLocalHistory(options = {}) {
   var patched = [];
   var identityUpdated = [];
   var conflicts = [];
+  var ambiguousUserIdentity = false;
 
   var fetchedMessages = options.fetchedMessages || [];
   for (var fetchedIndex = 0; fetchedIndex < fetchedMessages.length; fetchedIndex++) {
     var rawMessage = fetchedMessages[fetchedIndex];
     if (!isMessage(rawMessage) || rawMessage.truncated === true) continue;
     var incoming = cloneMessage(rawMessage);
+    if (options.authoritative) delete incoming._strictManaged;
     var matches = findExisting(index, incoming);
 
     if (!matches.length) {
@@ -61,6 +63,12 @@ export function mergeLocalHistory(options = {}) {
     });
     var existing = matches[0];
     if (matches.length > 1) {
+      if (incoming.type === 'user'
+        || matches.some(function (message) {
+          return message?.type === 'user';
+        })) {
+        ambiguousUserIdentity = true;
+      }
       conflicts.push({
         type: 'ambiguous-identity',
         incoming: incoming,
@@ -74,20 +82,28 @@ export function mergeLocalHistory(options = {}) {
       if (!identityReplacement.turnId && incoming.turnId) {
         identityReplacement.turnId = incoming.turnId;
       }
+      if (options.authoritative) delete identityReplacement._strictManaged;
       mergeAliases(identityReplacement, [existing, incoming]);
-      if (!sameAliases(existing, identityReplacement)) {
+      var presentationChanged =
+        existing._strictManaged !== identityReplacement._strictManaged;
+      var identityChanged = existing.turnId !== identityReplacement.turnId
+        || !sameAliases(existing, identityReplacement);
+      if (presentationChanged || identityChanged) {
         var identityIndex = replaceOne(messages, index, existing, identityReplacement);
-        identityUpdated.push({
+        var identityChange = {
           index: identityIndex,
           before: existing,
           after: identityReplacement,
-        });
+        };
+        if (presentationChanged) patched.push(identityChange);
+        else identityUpdated.push(identityChange);
       }
       continue;
     }
 
     if (isProvablyBetter(incoming, existing)) {
       var replacement = patchMessage(existing, incoming);
+      if (options.authoritative) delete replacement._strictManaged;
       mergeAliases(replacement, [existing, incoming]);
       var patchedIndex = replaceOne(messages, index, existing, replacement);
       patched.push({
@@ -105,12 +121,58 @@ export function mergeLocalHistory(options = {}) {
     });
   }
 
+  var reordered = false;
+  if (options.authoritative && !ambiguousUserIdentity) {
+    var orderedMatches = [];
+    var used = new Set();
+    var finalIndex = new Map();
+    for (var finalMessage of messages) indexMessage(finalIndex, finalMessage);
+    for (var fetchedMessage of fetchedMessages) {
+      var fetchedMatches = findExisting(finalIndex, fetchedMessage).filter(
+        function (message) { return !used.has(message); },
+      );
+      if (fetchedMatches.length !== 1) continue;
+      used.add(fetchedMatches[0]);
+      orderedMatches.push(fetchedMatches[0]);
+    }
+    var matchedIndexes = messages.map(function (message, index) {
+      return used.has(message) ? index : -1;
+    }).filter(function (index) {
+      return index >= 0;
+    });
+    var firstMatched = matchedIndexes.length
+      ? Math.min.apply(null, matchedIndexes)
+      : messages.length;
+    var lastMatched = matchedIndexes.length
+      ? Math.max.apply(null, matchedIndexes)
+      : firstMatched - 1;
+    var localWithin = messages.slice(firstMatched, lastMatched + 1).filter(
+      function (message) { return !used.has(message); },
+    );
+    var ordered = messages.slice(0, firstMatched)
+      .concat(orderedMatches, localWithin)
+      .concat(messages.slice(lastMatched + 1));
+    reordered = ordered.some(function (message, index) {
+      return message !== messages[index];
+    });
+    messages = ordered;
+    for (var insertion of inserted) {
+      insertion.index = messages.indexOf(insertion.message);
+    }
+    for (var patch of patched) patch.index = messages.indexOf(patch.after);
+    for (var update of identityUpdated) {
+      update.index = messages.indexOf(update.after);
+    }
+  }
+
   return {
     messages: messages,
     inserted: inserted,
     patched: patched,
     identityUpdated: identityUpdated,
     conflicts: conflicts,
+    reordered: reordered,
+    authoritative: !!options.authoritative,
   };
 }
 
@@ -129,17 +191,63 @@ function cloneMessage(message) {
 function matchKeys(message) {
   var keys = new Set();
   if (message.uuid) keys.add('uuid:' + message.uuid);
-  if (message.turnId) keys.add('turn:' + message.turnId);
-  if (message.type === 'user'
-    && typeof message.nativeId === 'string'
-    && message.nativeId.indexOf('codex:user:') === 0) {
-    keys.add('turn:' + message.nativeId.slice('codex:user:'.length));
+  var promptId = promptTurnId(message);
+  if (promptId) keys.add('prompt-turn:' + promptId);
+  if (typeof message.nativeId === 'string'
+    && (message.nativeId.indexOf('codex:user:') === 0
+      || message.nativeId.indexOf('live:user:') === 0
+      || message.nativeId.indexOf('codex:item:') === 0)) {
+    keys.add('native:' + message.nativeId);
   }
   for (var alias of message.identityAliases || []) {
-    if (alias) keys.add(String(alias));
+    if (!alias || /^(?:turn|pending):/.test(String(alias))) continue;
+    keys.add(String(alias));
   }
   if (!message.uuid && message.nativeId) keys.add('native:' + message.nativeId);
   return keys;
+}
+
+function promptTurnId(message) {
+  if (!isPromptUserMessage(message)) return '';
+  if (message.turnId) return String(message.turnId);
+  var nativeId = String(message.nativeId || '');
+  for (var prefix of ['codex:user:', 'live:user:']) {
+    if (nativeId.indexOf(prefix) === 0) return nativeId.slice(prefix.length);
+  }
+  for (var alias of message.identityAliases || []) {
+    var value = String(alias || '');
+    for (var aliasPrefix of ['prompt-turn:', 'pending:']) {
+      if (value.indexOf(aliasPrefix) === 0) {
+        return value.slice(aliasPrefix.length);
+      }
+    }
+  }
+  var uuid = String(message.uuid || '');
+  return uuid.indexOf('codex:user:') === 0
+    ? uuid.slice('codex:user:'.length)
+    : '';
+}
+
+function isPromptUserMessage(message) {
+  if (message?.type !== 'user') return false;
+  if (Array.isArray(message.content)
+    && message.content.length
+    && message.content.every(function (block) {
+      return block?.type === 'tool_result';
+    })) {
+    return false;
+  }
+  var text = typeof message.content === 'string'
+    ? message.content
+    : Array.isArray(message.content)
+      ? message.content.map(function (block) { return block?.text || ''; }).join('')
+      : '';
+  if (text === '[Request interrupted by user]'
+    || text === '[Request interrupted by user for tool use]') {
+    return false;
+  }
+  return !/^\s*<(?:subagent_notification|local-command-caveat|task-notification|system-reminder)/i
+    .test(text);
 }
 
 function identityKeys(message) {
@@ -169,6 +277,7 @@ function isProvablyBetter(incoming, existing) {
 function mergeAliases(canonical, sources) {
   var aliases = new Set();
   for (var source of sources) {
+    if (!canonical.turnId && source?.turnId) canonical.turnId = source.turnId;
     for (var key of identityKeys(source)) aliases.add(key);
   }
   if (canonical.nativeId) aliases.delete('native:' + canonical.nativeId);
@@ -272,7 +381,6 @@ function canonicalPayload(message) {
   return {
     type: message.type,
     content: message.content,
-    timestamp: message.timestamp,
     stopReason: message.stopReason,
     toolUseResult: message.toolUseResult,
     truncated: message.truncated,

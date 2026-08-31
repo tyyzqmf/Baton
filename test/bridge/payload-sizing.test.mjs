@@ -166,7 +166,7 @@ test('only an empty messages placeholder marks its turn for REST recovery', () =
     }],
   }, recoveryTurns, 1000);
   assert.equal(compactEnd.messages, undefined);
-  assert.equal(compactEnd.recoveryRequired, undefined);
+  assert.equal(compactEnd.recoveryRequired, true);
 
   const emptyMessage = prepareWsPayload({
     action: 'messages',

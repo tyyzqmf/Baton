@@ -13,7 +13,7 @@ function turnEvent(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-test('new-session REST and live user authority promote one optimistic bubble', async () => {
+test('new session adoption and sync_complete share one history fetch', async () => {
   const h = await makeHarness();
   resetSession(h, {
     sessionId: '__new__',
@@ -24,7 +24,11 @@ test('new-session REST and live user authority promote one optimistic bubble', a
   h.state.wsRequestId = 'request-1';
   h.state.wsSessionId = '';
   const request = deferred();
-  h.setApiHandler(() => request.promise);
+  let apiCalls = 0;
+  h.setApiHandler(() => {
+    apiCalls++;
+    return request.promise;
+  });
 
   h.hooks.handleWsMessage({
     action: 'send_message_result',
@@ -58,6 +62,16 @@ test('new-session REST and live user authority promote one optimistic bubble', a
   assert.equal(h.state.activeThreadId, 'codex:new-thread');
   assert.equal(h.state.sessionThreads.length, 1);
   assert.equal(h.state.sessionThreads[0].sessionId, 'codex:new-thread');
+  assert.equal(apiCalls, 1);
+
+  h.hooks.handleWsMessage({
+    action: 'sync_complete',
+    sessionId: 'codex:new-thread',
+    status: 'ok',
+    count: 1,
+  });
+  await h.tick(0);
+  assert.equal(apiCalls, 1);
 
   request.resolve({
     messages: [{

@@ -39,15 +39,24 @@ test('rapid identical turns stay attached to their own user anchors', async () =
   // own queue still waits for seq=1 before releasing later render events.
   for (const index of [3, 1, 2, 0]) {
     const turnId = turns[index].id;
+    const userMessage = {
+      uuid: `user-${index}`,
+      nativeId: 'codex:user:' + turnId,
+      type: 'user',
+      content: 'same question',
+      timestamp: new Date(turns[index].sentAt + 1).toISOString(),
+    };
+    const assistantMessage = {
+      uuid: `assistant-${index}`,
+      nativeId: `codex:item:assistant-${index}`,
+      type: 'assistant',
+      content: [{ type: 'text', text: answers[index] }],
+      timestamp: new Date(turns[index].sentAt + 2).toISOString(),
+    };
     const events = [
       turnEvent(sessionId, turnId, 0, 'stream_turn_start'),
       turnEvent(sessionId, turnId, 1, 'messages', {
-        messages: [{
-          uuid: `user-${index}`,
-          type: 'user',
-          content: 'same question',
-          timestamp: new Date(turns[index].sentAt + 1).toISOString(),
-        }],
+        messages: [userMessage],
       }),
       turnEvent(sessionId, turnId, 2, 'stream_block_start', {
         kind: 'text',
@@ -57,14 +66,11 @@ test('rapid identical turns stay attached to their own user anchors', async () =
       }),
       turnEvent(sessionId, turnId, 4, 'stream_block_stop'),
       turnEvent(sessionId, turnId, 5, 'messages', {
-        messages: [{
-          uuid: `assistant-${index}`,
-          type: 'assistant',
-          content: [{ type: 'text', text: answers[index] }],
-          timestamp: new Date(turns[index].sentAt + 2).toISOString(),
-        }],
+        messages: [assistantMessage],
       }),
-      turnEvent(sessionId, turnId, 6, 'stream_end'),
+      turnEvent(sessionId, turnId, 6, 'stream_end', {
+        messages: [userMessage, assistantMessage],
+      }),
     ];
     for (const eventIndex of [0, 2, 3, 4, 5, 6, 1]) {
       h.hooks.handleWsMessage(events[eventIndex]);
