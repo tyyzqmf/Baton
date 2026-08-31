@@ -342,6 +342,93 @@ test('Codex live and rollout copies use one canonical UUID for the same native i
   }
 });
 
+test('Codex user messages in one turn keep item-scoped UUIDs', () => {
+  const { root, target } = tempRollout();
+  try {
+    const turnId = 'turn-shared-user';
+    const entries = [{
+      timestamp: '2026-08-31T03:22:04.523Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id: 'response-user-one',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'first prompt' }],
+        internal_chat_message_metadata_passthrough: { turn_id: turnId },
+      },
+    }, {
+      timestamp: '2026-08-31T03:22:04.525Z',
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        turn_id: turnId,
+        item: {
+          type: 'UserMessage',
+          id: 'user-item-one',
+          content: [{ type: 'text', text: 'first prompt' }],
+        },
+      },
+    }, {
+      timestamp: '2026-08-31T03:22:34.496Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id: 'response-user-two',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'second prompt' }],
+        internal_chat_message_metadata_passthrough: { turn_id: turnId },
+      },
+    }, {
+      timestamp: '2026-08-31T03:22:34.497Z',
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        turn_id: turnId,
+        item: {
+          type: 'UserMessage',
+          id: 'user-item-two',
+          content: [{ type: 'text', text: 'second prompt' }],
+        },
+      },
+    }, {
+      timestamp: '2026-08-31T03:22:34.498Z',
+      type: 'event_msg',
+      payload: { type: 'token_count', info: {} },
+    }];
+    fs.writeFileSync(target, `${entries.map(JSON.stringify).join('\n')}\n`);
+
+    const persisted = extractCodexMessages(target, SESSION_ID).messages;
+    const liveItems = ['user-item-one', 'user-item-two'];
+    const live = liveItems.map((id, index) =>
+      codexCompletedLiveMessages({
+        id,
+        type: 'userMessage',
+        content: [{
+          type: 'text',
+          text: index === 0 ? 'first prompt' : 'second prompt',
+        }],
+      }, entries[index * 2 + 1].timestamp, '', {
+        turnId,
+        sessionId: SESSION_ID,
+      })[0]);
+
+    assert.deepEqual(
+      persisted.map((message) => message.uuid),
+      ['codex:item:user-item-one', 'codex:item:user-item-two'],
+    );
+    assert.deepEqual(
+      live.map((entry) => entry.message.uuid),
+      ['codex:item:user-item-one', 'codex:item:user-item-two'],
+    );
+    assert.deepEqual(
+      live.map((entry) => entry.liveKey),
+      ['item:user-item-one', 'item:user-item-two'],
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('Codex live and rollout command messages share canonical tool UUIDs', () => {
   const { root, target } = tempRollout();
   try {

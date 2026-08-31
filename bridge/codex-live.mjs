@@ -291,8 +291,10 @@ export function codexCompletedLiveMessages(
   if (item.type === 'userMessage') {
     const text = codexUserItemText(item);
     const liveKey = codexUserLiveKey(item.clientId)
+      || codexItemLiveKey(item.id)
       || codexTurnUserLiveKey(context.turnId);
     const nativeId = codexUserNativeId(item.clientId)
+      || codexItemNativeId(item.id)
       || codexTurnUserNativeId(context.turnId);
     if (!text || !liveKey) return [];
     return [{

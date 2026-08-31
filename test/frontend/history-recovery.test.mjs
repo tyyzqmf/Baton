@@ -378,6 +378,39 @@ test('mergeLocalHistory preserves different UUIDs that reuse one nativeId', () =
   );
 });
 
+test('history recovery preserves legacy user messages that reuse one turn UUID', () => {
+  const sharedId = 'codex:turn:turn-reused:user';
+  const fetched = [{
+    uuid: sharedId,
+    nativeId: sharedId,
+    type: 'user',
+    content: 'first prompt',
+    timestamp: '2026-08-31T03:22:04.523Z',
+  }, {
+    uuid: sharedId,
+    nativeId: sharedId,
+    type: 'user',
+    content: 'second prompt',
+    timestamp: '2026-08-31T03:22:34.496Z',
+  }];
+
+  const window = mergeFetchWindow({
+    restMessages: fetched,
+    historyBuffer: [],
+    restOk: true,
+  });
+  const result = mergeLocalHistory({
+    localMessages: [],
+    fetchedMessages: window.messages,
+    authoritative: true,
+  });
+
+  assert.deepEqual(
+    result.messages.map((item) => item.content),
+    ['first prompt', 'second prompt'],
+  );
+});
+
 test('mergeLocalHistory merges explicit aliases without creating a duplicate', () => {
   const local = message('local-user', '2026-08-27T02:00:00.000Z', {
     nativeId: 'codex:turn:turn-1:user',

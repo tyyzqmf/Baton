@@ -190,7 +190,9 @@ function cloneMessage(message) {
 
 function matchKeys(message) {
   var keys = new Set();
-  if (message.uuid) keys.add('uuid:' + message.uuid);
+  var legacyTurnUserKey = legacyTurnUserOccurrenceKey(message);
+  if (legacyTurnUserKey) keys.add(legacyTurnUserKey);
+  else if (message.uuid) keys.add('uuid:' + message.uuid);
   var promptId = promptTurnId(message);
   if (promptId) keys.add('prompt-turn:' + promptId);
   if (typeof message.nativeId === 'string'
@@ -201,10 +203,32 @@ function matchKeys(message) {
   }
   for (var alias of message.identityAliases || []) {
     if (!alias || /^(?:turn|pending):/.test(String(alias))) continue;
+    if (legacyTurnUserKey
+      && (alias === 'uuid:' + message.uuid
+        || alias === 'native:' + message.nativeId)) {
+      continue;
+    }
     keys.add(String(alias));
   }
-  if (!message.uuid && message.nativeId) keys.add('native:' + message.nativeId);
+  if (!legacyTurnUserKey && !message.uuid && message.nativeId) {
+    keys.add('native:' + message.nativeId);
+  }
   return keys;
+}
+
+function legacyTurnUserOccurrenceKey(message) {
+  var nativeId = String(message?.nativeId || '');
+  var uuid = String(message?.uuid || '');
+  var scope = /^codex:turn:.+:user$/.test(nativeId)
+    ? nativeId
+    : /^codex:turn:.+:user$/.test(uuid)
+      ? uuid
+      : '';
+  if (message?.type !== 'user' || !scope) return '';
+  var occurrence = message.orderKey
+    || message.timestamp
+    || stableJson(canonicalPayload(message));
+  return 'turn-user-occurrence:' + scope + ':' + occurrence;
 }
 
 function promptTurnId(message) {
@@ -252,7 +276,9 @@ function isPromptUserMessage(message) {
 
 function identityKeys(message) {
   var keys = matchKeys(message);
-  if (message.nativeId) keys.add('native:' + message.nativeId);
+  if (message.nativeId && !legacyTurnUserOccurrenceKey(message)) {
+    keys.add('native:' + message.nativeId);
+  }
   return keys;
 }
 

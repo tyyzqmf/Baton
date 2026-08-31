@@ -11,6 +11,7 @@ import {
   codexTurnUserLiveKey,
   codexTurnUserNativeId,
   codexUserLiveKey,
+  codexUserItemText,
   codexUserNativeId,
   tagCodexLiveSource,
 } from './codex-live.mjs';
@@ -250,6 +251,7 @@ function analyzeLines(lines) {
   const pendingPatchEnds = new Map();
   const skipped = new Set();
   const eventUserCounts = new Map();
+  const completedUserCounts = new Map();
   const userClientIdsByTurn = new Map();
   const completedWebSearchIds = new Set();
   const commandExecutions = new Map();
@@ -307,10 +309,20 @@ function analyzeLines(lines) {
     }
     if (entry.type === 'event_msg'
       && payload.type === 'item_completed'
-      && payload.item?.type === 'UserMessage'
-      && payload.turn_id
-      && payload.item.client_id) {
-      userClientIdsByTurn.set(String(payload.turn_id), String(payload.item.client_id));
+      && payload.item?.type === 'UserMessage') {
+      const text = codexUserItemText(payload.item).trim();
+      if (text) {
+        completedUserCounts.set(
+          text,
+          (completedUserCounts.get(text) || 0) + 1,
+        );
+      }
+      if (payload.turn_id && payload.item.client_id) {
+        userClientIdsByTurn.set(
+          String(payload.turn_id),
+          String(payload.item.client_id),
+        );
+      }
     }
     if (entry.type === 'event_msg'
       && payload.type === 'item_completed'
@@ -354,6 +366,7 @@ function analyzeLines(lines) {
   for (const calls of mcpToolCalls.values()) calls.reverse();
   return {
     commandExecutions,
+    completedUserCounts,
     completedWebSearchIds,
     eventUserCounts,
     hiddenPatchLines: hiddenPatchAttemptLines(patchCalls, patchFailures, patchLifecycles),
@@ -370,6 +383,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   const startLine = Math.min(options.startLine || 0, lines.length);
   const {
     commandExecutions,
+    completedUserCounts,
     completedWebSearchIds,
     eventUserCounts,
     hiddenPatchLines,
@@ -391,6 +405,20 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   let reviewPromptSeen = false;
   let activeTurnId = '';
   const releaseOwnershipKeys = new Set();
+  const responseUserMirrorCounts = new Map();
+  const completedUserMirrorCounts = new Map(eventUserCounts);
+  for (const text of new Set([
+    ...eventUserCounts.keys(),
+    ...completedUserCounts.keys(),
+  ])) {
+    responseUserMirrorCounts.set(
+      text,
+      Math.max(
+        eventUserCounts.get(text) || 0,
+        completedUserCounts.get(text) || 0,
+      ),
+    );
+  }
 
   const emit = (...items) => {
     const liveKey = codexTurnLiveKey(activeTurnId);
@@ -510,13 +538,42 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       continue;
     }
 
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
+      && payload.item?.type === 'UserMessage') {
+      const text = codexUserItemText(payload.item);
+      const duplicateCount = completedUserMirrorCounts.get(text) || 0;
+      if (duplicateCount > 0) {
+        if (duplicateCount === 1) completedUserMirrorCounts.delete(text);
+        else completedUserMirrorCounts.set(text, duplicateCount - 1);
+        continue;
+      }
+      if (shouldEmit && text && !isCodexInternalUserContext(text)) {
+        const turnId = payload.turn_id;
+        const clientId = payload.item.client_id
+          || userClientIdsByTurn.get(String(turnId || ''));
+        emit(tagCodexLiveSource({
+          uuid: stableId(sessionId, line, 'user', payload.item),
+          nativeId: codexUserNativeId(clientId)
+            || codexItemNativeId(payload.item.id)
+            || codexTurnUserNativeId(turnId),
+          type: 'user',
+          content: text,
+          timestamp,
+        }, codexUserLiveKey(clientId)
+          || codexItemLiveKey(payload.item.id)
+          || codexTurnUserLiveKey(turnId)));
+      }
+      continue;
+    }
+
     if (entry.type === 'response_item' && payload.type === 'message') {
       if (payload.role === 'user') {
         const text = codexResponseUserText(payload);
-        const duplicateCount = eventUserCounts.get(text) || 0;
+        const duplicateCount = responseUserMirrorCounts.get(text) || 0;
         if (duplicateCount > 0) {
-          if (duplicateCount === 1) eventUserCounts.delete(text);
-          else eventUserCounts.set(text, duplicateCount - 1);
+          if (duplicateCount === 1) responseUserMirrorCounts.delete(text);
+          else responseUserMirrorCounts.set(text, duplicateCount - 1);
           continue;
         }
         // Current Codex writes the response_item first, then the canonical
@@ -536,14 +593,14 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           emit(tagCodexLiveSource({
             uuid: stableId(sessionId, line, 'user', payload),
             nativeId: codexUserNativeId(clientId)
-              || codexTurnUserNativeId(turnId)
-              || codexItemNativeId(payload.id),
+              || codexItemNativeId(payload.id)
+              || codexTurnUserNativeId(turnId),
             type: 'user',
             content: text,
             timestamp,
           }, codexUserLiveKey(clientId)
-            || codexTurnUserLiveKey(turnId)
-            || codexItemLiveKey(payload.id)));
+            || codexItemLiveKey(payload.id)
+            || codexTurnUserLiveKey(turnId)));
         }
         continue;
       }
