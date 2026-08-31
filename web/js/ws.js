@@ -2999,7 +2999,7 @@ function applyCodexCommandAction(action) {
 
 // A durable echo belongs to a pending bubble only through its exact turn id.
 function messageMatchesPending(message, turnId) {
-  if (message.turnId === turnId
+  if (pendingTurnIdForMessage(message) === turnId
     || message.uuid === turnId
     || message.uuid === String(turnId).replace(/^sent-/, '')
     || message.nativeId === 'codex:user:' + turnId
@@ -3014,19 +3014,35 @@ function messageMatchesPending(message, turnId) {
     || aliases.has('native:live:user:' + turnId);
 }
 
+function pendingTurnIdForMessage(message) {
+  for (var alias of message?.identityAliases || []) {
+    var value = String(alias || '');
+    if (value.indexOf('pending:') === 0) {
+      return value.slice('pending:'.length);
+    }
+  }
+  var nativeId = String(message?.nativeId || '');
+  var uuid = String(message?.uuid || '');
+  if (nativeId.indexOf('codex:item:') === 0
+    || uuid.indexOf('codex:item:') === 0) {
+    return '';
+  }
+  if (message?.turnId) return String(message.turnId);
+  if (nativeId.indexOf('codex:user:') === 0) {
+    return nativeId.slice('codex:user:'.length);
+  }
+  if (nativeId.indexOf('live:user:') === 0) {
+    return nativeId.slice('live:user:'.length);
+  }
+  return '';
+}
+
 function findConfirmedPromptEcho(message) {
   if (message?.type !== 'user' || isInterruptMsg(message)
     || isToolResultOnly(message)) {
     return null;
   }
-  var turnId = message.turnId || '';
-  if (!turnId && typeof message.nativeId === 'string') {
-    if (message.nativeId.indexOf('codex:user:') === 0) {
-      turnId = message.nativeId.slice('codex:user:'.length);
-    } else if (message.nativeId.indexOf('live:user:') === 0) {
-      turnId = message.nativeId.slice('live:user:'.length);
-    }
-  }
+  var turnId = pendingTurnIdForMessage(message);
   if (!turnId) return null;
   return state.wsAllMessages.find(function (candidate) {
     return candidate.type === 'user'
@@ -3169,11 +3185,7 @@ function extractMsgText(msg) {
 function tryDedup(msg) {
   if (msg.type !== 'user') return false;
 
-  var exactTurnId = msg.turnId || '';
-  if (!exactTurnId && typeof msg.nativeId === 'string'
-    && msg.nativeId.indexOf('codex:user:') === 0) {
-    exactTurnId = msg.nativeId.slice('codex:user:'.length);
-  }
+  var exactTurnId = pendingTurnIdForMessage(msg);
   if (exactTurnId) {
     msg.turnId = exactTurnId;
     var byId = findPending(exactTurnId);

@@ -233,11 +233,6 @@ function legacyTurnUserOccurrenceKey(message) {
 
 function promptTurnId(message) {
   if (!isPromptUserMessage(message)) return '';
-  if (message.turnId) return String(message.turnId);
-  var nativeId = String(message.nativeId || '');
-  for (var prefix of ['codex:user:', 'live:user:']) {
-    if (nativeId.indexOf(prefix) === 0) return nativeId.slice(prefix.length);
-  }
   for (var alias of message.identityAliases || []) {
     var value = String(alias || '');
     for (var aliasPrefix of ['prompt-turn:', 'pending:']) {
@@ -246,7 +241,16 @@ function promptTurnId(message) {
       }
     }
   }
+  var nativeId = String(message.nativeId || '');
   var uuid = String(message.uuid || '');
+  if (nativeId.indexOf('codex:item:') === 0
+    || uuid.indexOf('codex:item:') === 0) {
+    return '';
+  }
+  if (message.turnId) return String(message.turnId);
+  for (var prefix of ['codex:user:', 'live:user:']) {
+    if (nativeId.indexOf(prefix) === 0) return nativeId.slice(prefix.length);
+  }
   return uuid.indexOf('codex:user:') === 0
     ? uuid.slice('codex:user:'.length)
     : '';

@@ -4,6 +4,13 @@
 
 - **Plan before code**: All code changes must be preceded by a detailed proposal (which files, what changes, why). Only modify code after explicit user confirmation.
 - **Concise comments**: Keep code comments minimal — only what's necessary to understand non-obvious logic. Detailed design/architecture notes belong in CLAUDE.md, not inline.
+- **Browser regression evidence workflow**: For ordering, missing-message, duplicate-message,
+  recovery, or spinner regressions, first enable DevTools Preserve log and export the complete HAR.
+  Copy the untouched HAR locally, extract every WebSocket frame and every messages API response,
+  then replay the exact captured payload through the real frontend test harness until the browser
+  result is reproduced exactly. Only after that may the root cause be reported or business code be
+  changed. Keep HARs and extracted diagnostics local and untracked; never commit API keys or other
+  captured credentials.
 
 ## What is this
 

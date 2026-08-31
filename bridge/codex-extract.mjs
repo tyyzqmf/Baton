@@ -550,8 +550,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       }
       if (shouldEmit && text && !isCodexInternalUserContext(text)) {
         const turnId = payload.turn_id;
-        const clientId = payload.item.client_id
-          || userClientIdsByTurn.get(String(turnId || ''));
+        const clientId = payload.item.client_id;
         emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'user', payload.item),
           nativeId: codexUserNativeId(clientId)
@@ -592,14 +591,14 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
           const clientId = userClientIdsByTurn.get(String(turnId || ''));
           emit(tagCodexLiveSource({
             uuid: stableId(sessionId, line, 'user', payload),
-            nativeId: codexUserNativeId(clientId)
-              || codexItemNativeId(payload.id)
+            nativeId: codexItemNativeId(payload.id)
+              || codexUserNativeId(clientId)
               || codexTurnUserNativeId(turnId),
             type: 'user',
             content: text,
             timestamp,
-          }, codexUserLiveKey(clientId)
-            || codexItemLiveKey(payload.id)
+          }, codexItemLiveKey(payload.id)
+            || codexUserLiveKey(clientId)
             || codexTurnUserLiveKey(turnId)));
         }
         continue;

@@ -342,10 +342,11 @@ test('Codex live and rollout copies use one canonical UUID for the same native i
   }
 });
 
-test('Codex user messages in one turn keep item-scoped UUIDs', () => {
+test('Codex user messages in one turn keep distinct ordered UUIDs', () => {
   const { root, target } = tempRollout();
   try {
     const turnId = 'turn-shared-user';
+    const clientId = 'shared-client-user';
     const entries = [{
       timestamp: '2026-08-31T03:22:04.523Z',
       type: 'response_item',
@@ -365,6 +366,7 @@ test('Codex user messages in one turn keep item-scoped UUIDs', () => {
         item: {
           type: 'UserMessage',
           id: 'user-item-one',
+          client_id: clientId,
           content: [{ type: 'text', text: 'first prompt' }],
         },
       },
@@ -392,20 +394,43 @@ test('Codex user messages in one turn keep item-scoped UUIDs', () => {
       },
     }, {
       timestamp: '2026-08-31T03:22:34.498Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id: 'response-user-three',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'third prompt' }],
+        internal_chat_message_metadata_passthrough: { turn_id: turnId },
+      },
+    }, {
+      timestamp: '2026-08-31T03:22:34.499Z',
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        turn_id: turnId,
+        item: {
+          type: 'UserMessage',
+          id: 'user-item-three',
+          content: [{ type: 'text', text: 'third prompt' }],
+        },
+      },
+    }, {
+      timestamp: '2026-08-31T03:22:34.500Z',
       type: 'event_msg',
       payload: { type: 'token_count', info: {} },
     }];
     fs.writeFileSync(target, `${entries.map(JSON.stringify).join('\n')}\n`);
 
     const persisted = extractCodexMessages(target, SESSION_ID).messages;
-    const liveItems = ['user-item-one', 'user-item-two'];
+    const liveItems = ['user-item-one', 'user-item-two', 'user-item-three'];
     const live = liveItems.map((id, index) =>
       codexCompletedLiveMessages({
         id,
         type: 'userMessage',
+        ...(index === 0 ? { clientId } : {}),
         content: [{
           type: 'text',
-          text: index === 0 ? 'first prompt' : 'second prompt',
+          text: ['first prompt', 'second prompt', 'third prompt'][index],
         }],
       }, entries[index * 2 + 1].timestamp, '', {
         turnId,
@@ -414,15 +439,27 @@ test('Codex user messages in one turn keep item-scoped UUIDs', () => {
 
     assert.deepEqual(
       persisted.map((message) => message.uuid),
-      ['codex:item:user-item-one', 'codex:item:user-item-two'],
+      [
+        `codex:user:${clientId}`,
+        'codex:item:user-item-two',
+        'codex:item:user-item-three',
+      ],
     );
     assert.deepEqual(
       live.map((entry) => entry.message.uuid),
-      ['codex:item:user-item-one', 'codex:item:user-item-two'],
+      [
+        `codex:user:${clientId}`,
+        'codex:item:user-item-two',
+        'codex:item:user-item-three',
+      ],
     );
     assert.deepEqual(
       live.map((entry) => entry.liveKey),
-      ['item:user-item-one', 'item:user-item-two'],
+      [`user:${clientId}`, 'item:user-item-two', 'item:user-item-three'],
+    );
+    assert.deepEqual(
+      persisted.map((message) => message.content),
+      ['first prompt', 'second prompt', 'third prompt'],
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
