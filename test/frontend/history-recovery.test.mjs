@@ -358,6 +358,71 @@ test('mergeLocalHistory keeps the local copy for an unresolvable content conflic
   assert.equal(result.conflicts[0].type, 'content-conflict');
 });
 
+test('history recovery merges canonical interrupt identity and authoritative stopReason', () => {
+  const interruptId = 'codex:turn:native-turn-1:interrupt';
+  const local = [
+    message('user-one', '2026-08-31T08:11:35.362Z', {
+      nativeId: 'codex:user:sent-one',
+      turnId: 'sent-one',
+      type: 'user',
+      content: 'question one',
+    }),
+    message(interruptId, '2026-08-31T08:11:43.910Z', {
+      nativeId: interruptId,
+      turnId: 'sent-one',
+      type: 'user',
+      content: [{ type: 'text', text: '[Request interrupted by user]' }],
+    }),
+    message('user-two', '2026-08-31T08:11:44.443Z', {
+      nativeId: 'codex:user:sent-two',
+      turnId: 'sent-two',
+      type: 'user',
+      content: 'question two',
+    }),
+    message('assistant-two', '2026-08-31T08:11:45.000Z', {
+      nativeId: 'codex:item:assistant-two',
+      content: [{ type: 'text', text: 'answer two' }],
+    }),
+  ];
+  const fetched = [
+    message('user-one', '2026-08-31T08:11:35.362Z', {
+      nativeId: 'codex:user:sent-one',
+      type: 'user',
+      content: 'question one',
+    }),
+    message(interruptId, '2026-08-31T08:11:43.925Z', {
+      nativeId: interruptId,
+      type: 'user',
+      content: [{ type: 'text', text: '[Request interrupted by user]' }],
+    }),
+    message('user-two', '2026-08-31T08:11:44.443Z', {
+      nativeId: 'codex:user:sent-two',
+      type: 'user',
+      content: 'question two',
+    }),
+    message('assistant-two', '2026-08-31T08:11:45.000Z', {
+      nativeId: 'codex:item:assistant-two',
+      content: [{ type: 'text', text: 'answer two' }],
+      stopReason: 'end_turn',
+    }),
+  ];
+
+  const result = mergeLocalHistory({
+    localMessages: local,
+    fetchedMessages: fetched,
+    authoritative: true,
+  });
+
+  assert.deepEqual(
+    result.messages.map((item) => item.uuid),
+    ['user-one', interruptId, 'user-two', 'assistant-two'],
+  );
+  assert.equal(result.messages[1].turnId, 'sent-one');
+  assert.equal(result.messages[3].stopReason, 'end_turn');
+  assert.equal(result.messages.filter((item) => item.uuid === interruptId).length, 1);
+  assert.equal(result.conflicts.length, 0);
+});
+
 test('mergeLocalHistory preserves different UUIDs that reuse one nativeId', () => {
   const result = mergeLocalHistory({
     localMessages: [message('local-user', '2026-08-27T02:00:00.000Z', {

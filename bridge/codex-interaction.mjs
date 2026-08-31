@@ -5,6 +5,7 @@ import {
   codexPreviewBlocks,
   isCodexToolItem,
   codexTurnErrorLiveMessage,
+  codexTurnInterruptMessage,
   codexTurnLiveKey,
 } from './codex-live.mjs';
 import {
@@ -1867,6 +1868,20 @@ export class CodexInteraction {
           },
         );
       }
+      const interruptMessage = subtype === 'interrupted'
+        ? codexTurnInterruptMessage(turn.turnId, completedAtMs)
+        : null;
+      if (interruptMessage) {
+        turn.callbacks.onMessage?.(
+          turn.streamId,
+          interruptMessage,
+          {
+            normalized: true,
+            runtime: 'codex',
+            liveKey: codexTurnLiveKey(turn.turnId),
+          },
+        );
+      }
       turn.framer.finish();
       turn.ended = true;
       turn.callbacks.onResult?.(
@@ -1875,6 +1890,7 @@ export class CodexInteraction {
           is_error: !!(errorMessage || subtype),
           subtype,
           status: params.turn?.status,
+          ...(interruptMessage ? { interruptAuthority: true } : {}),
         },
       );
       this.turns.delete(this.#turnKey(

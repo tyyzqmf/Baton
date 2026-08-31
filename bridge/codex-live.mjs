@@ -32,6 +32,10 @@ export function codexTurnErrorNativeId(turnId) {
   return turnId ? `codex:turn:${turnId}:error` : '';
 }
 
+export function codexTurnInterruptNativeId(turnId) {
+  return turnId ? `codex:turn:${turnId}:interrupt` : '';
+}
+
 export function codexUserNativeId(clientId) {
   return clientId ? `codex:user:${clientId}` : '';
 }
@@ -263,6 +267,18 @@ export function codexTurnErrorLiveMessage(turnId, error, at, uuid = '') {
       timestamp: timestamp(at),
       stopReason: 'end_turn',
     },
+  };
+}
+
+export function codexTurnInterruptMessage(turnId, at) {
+  const nativeId = codexTurnInterruptNativeId(turnId);
+  if (!nativeId) return null;
+  return {
+    uuid: codexMessageUuid(nativeId),
+    nativeId,
+    type: 'user',
+    content: [{ type: 'text', text: '[Request interrupted by user]' }],
+    timestamp: timestamp(at),
   };
 }
 

@@ -1041,7 +1041,8 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     onResult: (sid, result) => {
       authorityQueue.finally(() => {
         if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
-        const interrupted = shouldCreateFinalInterrupt(options.runtime, result);
+        const interrupted = !result.interruptAuthority
+          && shouldCreateFinalInterrupt(options.runtime, result);
         finishTurn({
           error: result.is_error ? (result.subtype || 'error') : undefined,
           interrupted,

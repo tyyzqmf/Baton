@@ -82,20 +82,25 @@ export function mergeLocalHistory(options = {}) {
       if (!identityReplacement.turnId && incoming.turnId) {
         identityReplacement.turnId = incoming.turnId;
       }
+      var metadataChanged = mergeAuthoritativeMetadata(
+        identityReplacement,
+        incoming,
+        options.authoritative,
+      );
       if (options.authoritative) delete identityReplacement._strictManaged;
       mergeAliases(identityReplacement, [existing, incoming]);
       var presentationChanged =
         existing._strictManaged !== identityReplacement._strictManaged;
       var identityChanged = existing.turnId !== identityReplacement.turnId
         || !sameAliases(existing, identityReplacement);
-      if (presentationChanged || identityChanged) {
+      if (presentationChanged || metadataChanged || identityChanged) {
         var identityIndex = replaceOne(messages, index, existing, identityReplacement);
         var identityChange = {
           index: identityIndex,
           before: existing,
           after: identityReplacement,
         };
-        if (presentationChanged) patched.push(identityChange);
+        if (presentationChanged || metadataChanged) patched.push(identityChange);
         else identityUpdated.push(identityChange);
       }
       continue;
@@ -411,13 +416,21 @@ function canonicalPayload(message) {
   return {
     type: message.type,
     content: message.content,
-    stopReason: message.stopReason,
     toolUseResult: message.toolUseResult,
     truncated: message.truncated,
     provisional: message.provisional,
     revision: message.revision,
     orderKey: message.orderKey,
   };
+}
+
+function mergeAuthoritativeMetadata(target, incoming, authoritative) {
+  if (!authoritative || !Object.hasOwn(incoming, 'stopReason')
+    || target.stopReason === incoming.stopReason) {
+    return false;
+  }
+  target.stopReason = incoming.stopReason;
+  return true;
 }
 
 function sameCanonicalContent(left, right) {

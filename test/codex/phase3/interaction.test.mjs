@@ -1192,19 +1192,24 @@ test('Codex interrupted turns complete unfinished tools before reporting the fin
 
   assert.deepEqual(
     cb.messages.map(({ message }) => message.type),
-    ['assistant', 'user'],
+    ['assistant', 'user', 'user'],
   );
   const use = cb.messages[0].message.content[0];
   const result = cb.messages[1].message.content[0];
+  const interrupt = cb.messages[2].message;
   assert.equal(use.type, 'tool_use');
   assert.equal(use.name, 'Bash');
   assert.equal(result.type, 'tool_result');
   assert.equal(result.tool_use_id, use.id);
   assert.equal(result.content, 'Interrupted');
   assert.equal(result.is_error, true);
+  assert.equal(interrupt.uuid, 'codex:turn:turn-1:interrupt');
+  assert.equal(interrupt.nativeId, 'codex:turn:turn-1:interrupt');
+  assert.equal(interrupt.content[0].text, '[Request interrupted by user]');
   assert.equal(cb.results.length, 1);
   assert.equal(cb.results[0].result.status, 'interrupted');
   assert.equal(cb.results[0].result.subtype, 'interrupted');
+  assert.equal(cb.results[0].result.interruptAuthority, true);
 });
 
 test('Codex approval requests preserve native ordered decisions', async () => {

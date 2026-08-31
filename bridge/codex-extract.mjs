@@ -7,6 +7,7 @@ import {
   codexToolMessageNativeId,
   codexToolUseId,
   codexTurnErrorLiveMessage,
+  codexTurnInterruptNativeId,
   codexTurnLiveKey,
   codexTurnUserLiveKey,
   codexTurnUserNativeId,
@@ -927,8 +928,11 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     }
 
     if (entry.type === 'event_msg' && payload.type === 'turn_aborted' && shouldEmit) {
+      const nativeId = codexTurnInterruptNativeId(payload.turn_id);
       emit({
-        uuid: stableId(sessionId, line, 'interrupt', payload),
+        uuid: codexMessageUuid(nativeId)
+          || stableId(sessionId, line, 'interrupt', payload),
+        nativeId,
         type: 'user',
         content: [{ type: 'text', text: '[Request interrupted by user]' }],
         timestamp,
