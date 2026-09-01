@@ -7,6 +7,7 @@ import {
   codexSessionIdFromPath,
   discoverCodexSessions,
   inspectCodexSession,
+  isCodexInternalUserContext,
   readCodexThreadNames,
   scanCodexRollout,
 } from '../../../bridge/codex-session.mjs';
@@ -209,6 +210,33 @@ test('shared session inspection returns the same status used by runtime and writ
   assert.equal(session?.status, 'completed');
 });
 
+test('Codex internal user context matches the TUI contextual fragment set', () => {
+  const hidden = [
+    '# AGENTS.md instructions for /tmp\n\n<INSTRUCTIONS>\nbody\n</INSTRUCTIONS>',
+    '<environment_context><cwd>/tmp</cwd></environment_context>',
+    '<external_ticket>private context</external_ticket>',
+    '<skill><name>demo</name></skill>',
+    '<user_shell_command><command>pwd</command></user_shell_command>',
+    '<turn_aborted>interrupted</turn_aborted>',
+    '<subagent_notification>{}</subagent_notification>',
+    '<codex_internal_context source="extension">steering</codex_internal_context>',
+    '<goal_context>legacy goal</goal_context>',
+    '<recommended_plugins>- Demo (demo@remote)</recommended_plugins>',
+    'Warning: The maximum number of unified exec processes you can keep open is 4.',
+    'Warning: apply_patch was requested via exec_command. '
+      + 'Use the apply_patch tool instead of exec_command.',
+    'Warning: Your account was flagged for potentially high-risk cyber activity.',
+  ];
+
+  for (const text of hidden) {
+    assert.equal(isCodexInternalUserContext(text), true, text);
+  }
+  assert.equal(
+    isCodexInternalUserContext('<project_context>visible</project_context>'),
+    false,
+  );
+});
+
 test('response-only user messages provide metadata preview without exposing internal context', () => {
   const { root, target } = tempRollout();
   try {
@@ -309,6 +337,96 @@ test('response-only user messages provide metadata preview without exposing inte
       legacyDuplicate.messages.filter((message) => message.type === 'user'
         && message.content === 'Why is this session missing?').length,
       1,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex hook prompts render once as lightweight system events', () => {
+  const { root, target } = tempRollout();
+  try {
+    const entries = [{
+      timestamp: '2026-08-09T12:00:00.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id: 'hook-prompt-1',
+        role: 'user',
+        content: [{
+          type: 'input_text',
+          text: '<environment_context><cwd>/tmp</cwd></environment_context>',
+        }, {
+          type: 'input_text',
+          text: '<hook_prompt hook_run_id="hook-1">'
+            + 'Retry with care &amp; joy.</hook_prompt>',
+        }, {
+          type: 'input_text',
+          text: '<hook_prompt hook_run_id="hook-2">'
+            + 'Then summarize cleanly.</hook_prompt>',
+        }],
+      },
+    }, {
+      timestamp: '2026-08-09T12:00:00.001Z',
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        item: {
+          type: 'HookPrompt',
+          id: 'hook-prompt-1',
+          fragments: [{
+            text: 'Retry with care & joy.',
+            hook_run_id: 'hook-1',
+          }, {
+            text: 'Then summarize cleanly.',
+            hook_run_id: 'hook-2',
+          }],
+        },
+      },
+    }, {
+      timestamp: '2026-08-09T12:00:01.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id: 'user-after-hook',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'Continue with the task.' }],
+      },
+    }, {
+      timestamp: '2026-08-09T12:00:02.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id: 'assistant-after-hook',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'Continuing.' }],
+      },
+    }];
+    fs.writeFileSync(target, `${entries.map(JSON.stringify).join('\n')}\n`);
+
+    const extracted = extractCodexMessages(target, SESSION_ID);
+    assert.deepEqual(extracted.messages.map((message) => ({
+      type: message.type,
+      content: message.content,
+    })), [{
+      type: 'system_event',
+      content: 'Hook prompt: Retry with care & joy.',
+    }, {
+      type: 'system_event',
+      content: 'Hook prompt: Then summarize cleanly.',
+    }, {
+      type: 'user',
+      content: 'Continue with the task.',
+    }, {
+      type: 'assistant',
+      content: [{ type: 'text', text: 'Continuing.' }],
+    }]);
+    assert.deepEqual(
+      extracted.messages.slice(0, 2).map((message) => message.nativeId),
+      [
+        'codex:item:hook-prompt-1:hook-prompt:0',
+        'codex:item:hook-prompt-1:hook-prompt:1',
+      ],
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

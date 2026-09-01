@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import {
+  codexCompletedLiveMessages,
   codexItemNativeId,
   codexItemLiveKey,
   codexMessageUuid,
@@ -17,8 +18,10 @@ import {
   tagCodexLiveSource,
 } from './codex-live.mjs';
 import {
+  codexResponseHookPromptFragments,
   codexResponseUserText,
-  isCodexInternalUserContext,
+  isCodexContextualUserText,
+  parseCodexHookPromptFragment,
 } from './codex-session.mjs';
 import { normalizeCodexPlanInput } from './codex-plan.mjs';
 
@@ -306,7 +309,9 @@ function analyzeLines(lines) {
     }
     if (entry.type === 'event_msg' && payload.type === 'user_message') {
       const text = String(payload.message || '').trim();
-      if (text) eventUserCounts.set(text, (eventUserCounts.get(text) || 0) + 1);
+      if (text && !isCodexContextualUserText(text)) {
+        eventUserCounts.set(text, (eventUserCounts.get(text) || 0) + 1);
+      }
     }
     if (entry.type === 'event_msg'
       && payload.type === 'item_completed'
@@ -406,6 +411,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   let reviewPromptSeen = false;
   let activeTurnId = '';
   const releaseOwnershipKeys = new Set();
+  const emittedHookPromptNativeIds = new Set();
   const responseUserMirrorCounts = new Map();
   const completedUserMirrorCounts = new Map(eventUserCounts);
   for (const text of new Set([
@@ -426,6 +432,15 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     for (const item of items) {
       if (item?.nativeId) item.uuid = codexMessageUuid(item.nativeId);
       messages.push(liveKey ? tagCodexLiveSource(item, liveKey) : item);
+    }
+  };
+
+  const emitHookPromptItem = (item, timestamp) => {
+    for (const complete of codexCompletedLiveMessages(item, timestamp)) {
+      const nativeId = complete.message.nativeId || '';
+      if (nativeId && emittedHookPromptNativeIds.has(nativeId)) continue;
+      if (nativeId) emittedHookPromptNativeIds.add(nativeId);
+      emit(complete.message);
     }
   };
 
@@ -523,10 +538,21 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
 
     if (entry.type === 'event_msg' && payload.type === 'user_message') {
       const text = String(payload.message || '');
+      const hookPrompt = parseCodexHookPromptFragment(text);
+      if (hookPrompt) {
+        if (shouldEmit) {
+          emitHookPromptItem({
+            id: String(payload.client_id || `hook-prompt-line-${line}`),
+            type: 'hookPrompt',
+            fragments: [hookPrompt],
+          }, timestamp);
+        }
+        continue;
+      }
       const isReviewPrompt = !!reviewPrompt && text === reviewPrompt;
       const duplicateReviewPrompt = isReviewPrompt && reviewPromptSeen;
       if (isReviewPrompt) reviewPromptSeen = true;
-      if (shouldEmit && text.trim() && !isCodexInternalUserContext(text)
+      if (shouldEmit && text.trim() && !isCodexContextualUserText(text)
         && !duplicateReviewPrompt) {
         emit(tagCodexLiveSource({
           uuid: stableId(sessionId, line, 'user', payload.message),
@@ -541,6 +567,13 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
 
     if (entry.type === 'event_msg'
       && payload.type === 'item_completed'
+      && ['HookPrompt', 'hookPrompt'].includes(payload.item?.type)) {
+      if (shouldEmit) emitHookPromptItem(payload.item, timestamp);
+      continue;
+    }
+
+    if (entry.type === 'event_msg'
+      && payload.type === 'item_completed'
       && payload.item?.type === 'UserMessage') {
       const text = codexUserItemText(payload.item);
       const duplicateCount = completedUserMirrorCounts.get(text) || 0;
@@ -549,7 +582,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         else completedUserMirrorCounts.set(text, duplicateCount - 1);
         continue;
       }
-      if (shouldEmit && text && !isCodexInternalUserContext(text)) {
+      if (shouldEmit && text && !isCodexContextualUserText(text)) {
         const turnId = payload.turn_id;
         const clientId = payload.item.client_id;
         emit(tagCodexLiveSource({
@@ -569,6 +602,17 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
 
     if (entry.type === 'response_item' && payload.type === 'message') {
       if (payload.role === 'user') {
+        const hookPrompts = codexResponseHookPromptFragments(payload);
+        if (hookPrompts.length) {
+          if (shouldEmit) {
+            emitHookPromptItem({
+              id: String(payload.id || `hook-prompt-line-${line}`),
+              type: 'hookPrompt',
+              fragments: hookPrompts,
+            }, timestamp);
+          }
+          continue;
+        }
         const text = codexResponseUserText(payload);
         const duplicateCount = responseUserMirrorCounts.get(text) || 0;
         if (duplicateCount > 0) {

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { isCodexInternalUserContext } from './codex-session.mjs';
+import { isCodexContextualUserText } from './codex-session.mjs';
 import { normalizeCodexPlanInput } from './codex-plan.mjs';
 
 export const CODEX_LIVE_SOURCE = Symbol('codexLiveSource');
@@ -283,15 +283,39 @@ export function codexTurnInterruptMessage(turnId, at) {
 }
 
 export function codexUserItemText(item) {
-  return (item?.content || []).map((part) => {
+  const content = item?.content || [];
+  if (content.some((part) =>
+    part?.type === 'text' && isCodexContextualUserText(part.text || ''))) {
+    return '';
+  }
+  return content.map((part) => {
     if (part?.type === 'text') {
-      const text = part.text || '';
-      return isCodexInternalUserContext(text) ? '' : text;
+      return part.text || '';
     }
     if (part?.type === 'localImage') return `![Image](${part.path || ''})`;
     if (part?.type === 'image') return `![Image](${part.url || ''})`;
     return '';
   }).filter(Boolean).join('\n');
+}
+
+function codexHookPromptMessages(item, at) {
+  if (!['hookPrompt', 'HookPrompt'].includes(item?.type)) return [];
+  const liveKey = codexItemLiveKey(item.id);
+  return (item.fragments || []).flatMap((fragment, index) => {
+    const text = String(fragment?.text || '').trim();
+    if (!text) return [];
+    const nativeId = `${codexItemNativeId(item.id)}:hook-prompt:${index}`;
+    return [{
+      liveKey,
+      message: {
+        uuid: codexMessageUuid(nativeId),
+        nativeId,
+        type: 'system_event',
+        content: `Hook prompt: ${text}`,
+        timestamp: at,
+      },
+    }];
+  });
 }
 
 export function codexCompletedLiveMessages(
@@ -302,6 +326,8 @@ export function codexCompletedLiveMessages(
 ) {
   if (!item?.id) return [];
   const at = timestamp(completedAtMs);
+  const hookPrompts = codexHookPromptMessages(item, at);
+  if (hookPrompts.length) return hookPrompts;
   const completedTools = completedToolMessages(item, completedAtMs, context);
   if (completedTools.length) return completedTools;
   if (item.type === 'userMessage') {

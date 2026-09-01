@@ -71,22 +71,96 @@ function codexHomeForSessionFile(filePath, homes) {
 
 export function isCodexInternalUserContext(text) {
   const value = text.trim();
-  return /^<environment_context>[\s\S]*<\/environment_context>$/i.test(value)
+  const externalContext = /^<external_([^>]+)>[\s\S]*<\/external_\1>$/.test(value);
+  return /^# AGENTS\.md instructions[\s\S]*<\/INSTRUCTIONS>$/i.test(value)
+    || /^<environment_context>[\s\S]*<\/environment_context>$/i.test(value)
+    || externalContext
+    || /^<skill>[\s\S]*<\/skill>$/i.test(value)
+    || /^<user_shell_command>[\s\S]*<\/user_shell_command>$/i.test(value)
     || /^<turn_aborted>[\s\S]*<\/turn_aborted>$/i.test(value)
     || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/i.test(value)
     || /^<codex_internal_context source="[a-z][a-z0-9_]*">[\s\S]*<\/codex_internal_context>$/i
       .test(value)
-    || /^<goal_context>[\s\S]*<\/goal_context>$/i.test(value);
+    || /^<goal_context>[\s\S]*<\/goal_context>$/i.test(value)
+    || /^<recommended_plugins>[\s\S]*<\/recommended_plugins>$/i.test(value)
+    || value.startsWith(
+      'Warning: The maximum number of unified exec processes you can keep open is',
+    )
+    || (
+      value.startsWith('Warning: apply_patch was requested via ')
+      && value.endsWith('Use the apply_patch tool instead of exec_command.')
+    )
+    || value.startsWith(
+      'Warning: Your account was flagged for potentially high-risk cyber activity',
+    );
+}
+
+function decodeXmlText(value) {
+  return value.replace(
+    /&(amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);/gi,
+    (entity, code) => {
+      const named = {
+        amp: '&',
+        lt: '<',
+        gt: '>',
+        quot: '"',
+        apos: "'",
+      };
+      const lower = code.toLowerCase();
+      if (named[lower]) return named[lower];
+      const radix = lower.startsWith('#x') ? 16 : 10;
+      const digits = lower.slice(radix === 16 ? 2 : 1);
+      const point = Number.parseInt(digits, radix);
+      return Number.isFinite(point) && point >= 0 && point <= 0x10ffff
+        ? String.fromCodePoint(point)
+        : entity;
+    },
+  );
+}
+
+export function parseCodexHookPromptFragment(text) {
+  const match = /^<hook_prompt hook_run_id="([^"]+)">([\s\S]*)<\/hook_prompt>$/
+    .exec(String(text || '').trim());
+  if (!match) return null;
+  const hookRunId = decodeXmlText(match[1]).trim();
+  if (!hookRunId) return null;
+  return {
+    text: decodeXmlText(match[2]),
+    hookRunId,
+  };
+}
+
+export function codexResponseHookPromptFragments(payload) {
+  if (payload?.type !== 'message' || payload.role !== 'user' || !Array.isArray(payload.content)) {
+    return [];
+  }
+  const fragments = [];
+  for (const block of payload.content) {
+    if (block?.type !== 'input_text' || typeof block.text !== 'string') return [];
+    const fragment = parseCodexHookPromptFragment(block.text);
+    if (fragment) {
+      fragments.push(fragment);
+      continue;
+    }
+    if (!isCodexInternalUserContext(block.text)) return [];
+  }
+  return fragments;
+}
+
+export function isCodexContextualUserText(text) {
+  return isCodexInternalUserContext(text) || !!parseCodexHookPromptFragment(text);
 }
 
 export function codexResponseUserText(payload) {
   if (payload?.type !== 'message' || payload.role !== 'user' || !Array.isArray(payload.content)) {
     return '';
   }
-  return payload.content
+  const texts = payload.content
     .filter((block) => block?.type === 'input_text' && typeof block.text === 'string')
-    .map((block) => block.text.trim())
-    .filter((text) => text && !isCodexInternalUserContext(text))
+    .map((block) => block.text.trim());
+  if (texts.some(isCodexContextualUserText)) return '';
+  return texts
+    .filter(Boolean)
     .join('\n');
 }
 

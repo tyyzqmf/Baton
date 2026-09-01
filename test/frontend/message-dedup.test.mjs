@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { dedupeCodexUserMessages } from '../../web/js/message-dedup.js';
+import {
+  dedupeCodexUserMessages,
+  isCodexContextMessage,
+} from '../../web/js/message-dedup.js';
 
 function user(nativeId, timestamp, content = '你是我吗') {
   return {
@@ -32,4 +35,26 @@ test('intentional repeated user messages remain distinct', () => {
   ]);
 
   assert.equal(messages.length, 4);
+});
+
+test('cached Codex contextual user rows stay hidden', () => {
+  const internal = user(
+    'codex:item:recommended-plugins',
+    '2026-09-01T10:00:00.000Z',
+    '<recommended_plugins>\n- Demo (demo@remote)\n</recommended_plugins>',
+  );
+  const hookPrompt = user(
+    'codex:item:hook-prompt',
+    '2026-09-01T10:00:01.000Z',
+    '<hook_prompt hook_run_id="hook-1">Retry carefully.</hook_prompt>',
+  );
+  const visible = user(
+    'codex:user:visible',
+    '2026-09-01T10:00:02.000Z',
+    'Continue.',
+  );
+
+  assert.equal(isCodexContextMessage(internal), true);
+  assert.equal(isCodexContextMessage(hookPrompt), true);
+  assert.deepEqual(dedupeCodexUserMessages([internal, hookPrompt, visible]), [visible]);
 });
