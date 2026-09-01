@@ -38,6 +38,7 @@ import {
   isSupportedCodexCommand,
   parseCodexSlashCommand,
 } from './codex-commands.mjs';
+import { inspectCodexSession } from './codex-session.mjs';
 import {
   updateSessionStatus,
   knownProjects,
@@ -1377,6 +1378,11 @@ async function newAdapterSession(
       text,
       streamId: liveTurnId,
       onCreated: async ({ nativeSessionId, sessionId }) => {
+        void syncInteractionStatus(sessionId, 'running', '', adapter.runtime, {
+          waitForFile: true,
+          registerNew: true,
+          fileReady: (filePath) => !!inspectCodexSession(nativeSessionId, { filePath }),
+        });
         callbacks = createStreamCallbacks(sessionId, liveTurnId, cwd, (_ok, error) => {
           ack(false, sessionId, error);
         }, {
