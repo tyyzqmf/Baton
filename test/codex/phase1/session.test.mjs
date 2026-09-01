@@ -7,6 +7,7 @@ import {
   codexSessionIdFromPath,
   discoverCodexSessions,
   inspectCodexSession,
+  readCodexThreadNames,
   scanCodexRollout,
 } from '../../../bridge/codex-session.mjs';
 import {
@@ -57,6 +58,50 @@ test('metadata scan selects matching session_meta and ignores injected previews'
   assert.equal(result.session.status, 'completed');
   assert.equal(result.malformedLines, 1);
   assert.equal(result.trailingMalformed, true);
+});
+
+test('Codex session index title overrides the rollout prompt and keeps the latest rename', () => {
+  const { root, target } = tempRollout();
+  try {
+    const indexPath = path.join(root, 'session_index.jsonl');
+    fs.writeFileSync(indexPath, [
+      JSON.stringify({
+        id: SESSION_ID,
+        thread_name: 'Inspect the repository',
+        updated_at: '2026-08-06T00:00:04.000Z',
+      }),
+      JSON.stringify({
+        id: SESSION_ID,
+        thread_name: 'Review repository structure',
+        updated_at: '2026-08-06T00:00:05.000Z',
+      }),
+    ].join('\n') + '\n');
+
+    let discovered = discoverCodexSessions({
+      codexHomes: [root],
+      runningInfo: { projects: new Set(), sessions: new Set() },
+    });
+    assert.equal(discovered.sessions[0].preview, 'Review repository structure');
+    assert.equal(readCodexThreadNames(root).get(SESSION_ID), 'Review repository structure');
+
+    fs.appendFileSync(indexPath, `${JSON.stringify({
+      id: SESSION_ID,
+      thread_name: 'Manual session name',
+      updated_at: '2026-08-06T00:00:06.000Z',
+    })}\n`);
+    discovered = discoverCodexSessions({
+      codexHomes: [root],
+      runningInfo: { projects: new Set(), sessions: new Set() },
+    });
+    assert.equal(discovered.sessions[0].preview, 'Manual session name');
+    assert.equal(inspectCodexSession(SESSION_ID, {
+      filePath: target,
+      codexHomes: [root],
+      runningInfo: { projects: new Set(), sessions: new Set() },
+    })?.preview, 'Manual session name');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('subagent metadata keeps the native parent and thread identity', () => {

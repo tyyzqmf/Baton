@@ -9,6 +9,7 @@ import { readableProjectName } from './session.mjs';
 
 const UUID_AT_END = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 const codexFileIndex = new Map();
+export const CODEX_SESSION_INDEX = 'session_index.jsonl';
 
 export function codexSessionIdFromPath(filePath) {
   return UUID_AT_END.exec(path.basename(filePath))?.[1] || '';
@@ -33,6 +34,39 @@ function previewText(value) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 200 ? `${text.slice(0, 200).trim()}...` : text;
+}
+
+export function readCodexThreadNames(codexHome) {
+  const names = new Map();
+  const filePath = path.join(codexHome, CODEX_SESSION_INDEX);
+  try {
+    scanJsonlLines(filePath, (raw) => {
+      if (!raw.trim()) return;
+      let entry;
+      try {
+        entry = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      const id = String(entry?.id || '');
+      if (!id) return;
+      const name = previewText(entry.thread_name);
+      if (name) names.set(id, name);
+      else names.delete(id);
+    });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  return names;
+}
+
+function isInside(filePath, root) {
+  const relative = path.relative(root, filePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function codexHomeForSessionFile(filePath, homes) {
+  return homes.find((home) => isInside(filePath, path.join(home, 'sessions'))) || '';
 }
 
 export function isCodexInternalUserContext(text) {
@@ -188,9 +222,10 @@ export function scanCodexRollout(filePath, options = {}) {
   const pathTitle = previewText(
     agentPath.split('/').filter(Boolean).pop()?.replace(/[_-]+/g, ' ') || '',
   );
-  const preview = visibleSubagent
+  const threadName = previewText(options.threadName);
+  const preview = threadName || (visibleSubagent
     ? (prompts[1] || pathTitle || prompts[0] || '')
-    : (prompts[0] || '');
+    : (prompts[0] || ''));
   if (!preview) return { session: null, malformedLines, trailingMalformed, reason: 'no_user_message' };
 
   const processInfoKnown = options.runningInfo !== undefined;
@@ -252,7 +287,17 @@ export function discoverCodexSessions(options = {}) {
   const homes = options.codexHomes || resolveCodexHomes();
   const files = [];
   const errors = [];
-  for (const home of homes) walkJsonl(path.join(home, 'sessions'), files, errors);
+  const threadNames = new Map();
+  for (const home of homes) {
+    const homeFiles = [];
+    walkJsonl(path.join(home, 'sessions'), homeFiles, errors);
+    for (const filePath of homeFiles) files.push({ filePath, home });
+    try {
+      threadNames.set(home, readCodexThreadNames(home));
+    } catch (error) {
+      errors.push({ path: path.join(home, CODEX_SESSION_INDEX), error: error.message });
+    }
+  }
 
   const runningInfo = options.runningInfo || getCodexRunningInfo();
   const byId = new Map();
@@ -266,11 +311,13 @@ export function discoverCodexSessions(options = {}) {
   };
   let complete = errors.length === 0;
 
-  for (const filePath of files) {
+  for (const { filePath, home } of files) {
+    const nativeSessionId = codexSessionIdFromPath(filePath);
     const result = scanCodexRollout(filePath, {
       ...options,
       runningInfo,
-      nativeSessionId: codexSessionIdFromPath(filePath),
+      nativeSessionId,
+      threadName: threadNames.get(home)?.get(nativeSessionId),
     });
     diagnostics.malformedLines += result.malformedLines || 0;
     if (result.trailingMalformed) diagnostics.trailingMalformedFiles++;
@@ -328,8 +375,19 @@ export function findCodexSessionFile(nativeSessionId, options = {}) {
 export function inspectCodexSession(nativeSessionId, options = {}) {
   const filePath = options.filePath || findCodexSessionFile(nativeSessionId, options);
   if (!filePath) return null;
+  let threadName = options.threadName;
+  if (threadName === undefined) {
+    const homes = options.codexHomes || resolveCodexHomes();
+    const home = codexHomeForSessionFile(filePath, homes);
+    if (home) {
+      try {
+        threadName = readCodexThreadNames(home).get(nativeSessionId);
+      } catch {}
+    }
+  }
   return scanCodexRollout(filePath, {
     ...options,
     nativeSessionId,
+    threadName,
   }).session;
 }

@@ -160,6 +160,39 @@ test('Codex watcher sends new lines once and preserves a partial trailing line',
   assert.equal(h.delivered.length, 3);
 });
 
+test('Codex watcher syncs generated and manual titles without rollout changes', async (t) => {
+  const home = createHome(t);
+  const filePath = rolloutPath(home, IDS[0]);
+  writeLines(filePath, baseLines(IDS[0], home));
+  const indexPath = path.join(home, 'session_index.jsonl');
+  fs.writeFileSync(indexPath, `${JSON.stringify({
+    id: IDS[0],
+    thread_name: 'hello',
+    updated_at: '2026-08-09T12:00:03.000Z',
+  })}\n`);
+  const h = watcherHarness([home]);
+  t.after(() => h.watcher.stop());
+
+  await h.watcher.scanNow({ initial: true });
+  assert.equal(h.posts.at(-1).body.sessions[0].preview, 'hello');
+
+  fs.appendFileSync(indexPath, `${JSON.stringify({
+    id: IDS[0],
+    thread_name: 'Generated title',
+    updated_at: '2026-08-09T12:00:06.000Z',
+  })}\n`);
+  await h.watcher.scanNow();
+  assert.equal(h.posts.at(-1).body.sessions[0].preview, 'Generated title');
+
+  fs.appendFileSync(indexPath, `${JSON.stringify({
+    id: IDS[0],
+    thread_name: 'Manual title',
+    updated_at: '2026-08-09T12:00:07.000Z',
+  })}\n`);
+  await h.watcher.scanNow();
+  assert.equal(h.posts.at(-1).body.sessions[0].preview, 'Manual title');
+});
+
 test('Codex watcher keeps its watermark when delivery fails', async (t) => {
   const home = createHome(t);
   const filePath = rolloutPath(home, IDS[1]);

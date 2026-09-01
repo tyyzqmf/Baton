@@ -9,8 +9,10 @@ import {
 } from './config.mjs';
 import { syncCodexMessages } from './codex-extract.mjs';
 import {
+  CODEX_SESSION_INDEX,
   codexSessionIdFromPath,
   getCodexRunningInfo,
+  readCodexThreadNames,
   scanCodexRollout,
 } from './codex-session.mjs';
 import { codexLiveSource } from './codex-live.mjs';
@@ -71,6 +73,14 @@ function metadataSignature(session) {
   ]);
 }
 
+function changedThreadNames(previous, current) {
+  const changed = new Set();
+  for (const id of new Set([...previous.keys(), ...current.keys()])) {
+    if (previous.get(id) !== current.get(id)) changed.add(id);
+  }
+  return changed;
+}
+
 function insideRoot(filePath, root) {
   const relative = path.relative(root, filePath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -110,6 +120,7 @@ export class CodexWatcher {
     this.subscribeFn = options.subscribeFn
       || ((root, callback) => parcelWatcher.subscribe(root, callback));
     this.watchFileFn = options.watchFileFn || ((filePath, callback) => fs.watch(filePath, callback));
+    this.readThreadNamesFn = options.readThreadNamesFn || readCodexThreadNames;
     this.recentFileWatchLimit = options.recentFileWatchLimit
       ?? CODEX_RECENT_FILE_WATCH_LIMIT;
     this.rescanMs = options.rescanMs ?? CODEX_WATCH_RESCAN_MS;
@@ -127,6 +138,8 @@ export class CodexWatcher {
     this.watchHandles = new Map();
     this.watchPromises = new Map();
     this.fileWatchers = new Map();
+    this.threadNameWatchers = new Map();
+    this.threadNameWatchRetryTimers = new Map();
     this.desiredFileWatchers = new Set();
     this.fileWatchRetryTimers = new Map();
     this.metadataSignatures = new Map((options.initialSessions || [])
@@ -141,6 +154,9 @@ export class CodexWatcher {
         storageSessionId('codex', session.nativeSessionId || session.id),
         session.threadKind || 'main',
       ]));
+    this.threadNames = new Map();
+    this.threadNameStats = new Map();
+    for (const home of this.homes) this.loadThreadNames(home);
     this.timers = [];
     this.stopped = false;
     this.readyPromise = Promise.resolve();
@@ -150,13 +166,17 @@ export class CodexWatcher {
     this.stopped = false;
     console.log(`[watcher] Codex: ${this.roots.join(', ')}`);
     this.readyPromise = this.scanNow({ initial: true })
-      .then(() => this.ensureWatchers())
+      .then(() => Promise.all([
+        this.ensureWatchers(),
+        this.ensureThreadNameWatchers(),
+      ]))
       // Close the small gap between the initial scan and native subscription.
       .then(() => this.scanNow())
       .then(() => {
         console.log(
           `[watcher] Codex ready: ${this.watchHandles.size} roots, `
-          + `${this.fileWatchers.size} active/recent rollouts`,
+          + `${this.fileWatchers.size} active/recent rollouts, `
+          + `${this.threadNameWatchers.size} title indexes`,
         );
       })
       .catch((error) => {
@@ -165,7 +185,10 @@ export class CodexWatcher {
     const safety = setInterval(() => {
       this.scanNow()
         .catch((error) => console.error(`[watcher] Codex rescan failed: ${error.message}`))
-        .finally(() => this.ensureWatchers().catch(() => {}));
+        .finally(() => Promise.all([
+          this.ensureWatchers(),
+          this.ensureThreadNameWatchers(),
+        ]).catch(() => {}));
     }, this.rescanMs);
     safety.unref();
     this.timers.push(safety);
@@ -178,21 +201,123 @@ export class CodexWatcher {
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     for (const timer of this.watchRetryTimers.values()) clearTimeout(timer);
     for (const timer of this.fileWatchRetryTimers.values()) clearTimeout(timer);
+    for (const timer of this.threadNameWatchRetryTimers.values()) clearTimeout(timer);
     for (const timer of this.statusTimers.values()) clearTimeout(timer);
     for (const root of this.watchHandles.keys()) this.closeWatcher(root);
     for (const filePath of this.fileWatchers.keys()) this.closeFileWatcher(filePath);
+    for (const home of this.threadNameWatchers.keys()) this.closeThreadNameWatcher(home);
     this.timers = [];
     this.retryTimers.clear();
     this.watchRetryTimers.clear();
     this.fileWatchRetryTimers.clear();
+    this.threadNameWatchRetryTimers.clear();
     this.statusTimers.clear();
     this.watchHandles.clear();
     this.fileWatchers.clear();
+    this.threadNameWatchers.clear();
     this.desiredFileWatchers.clear();
   }
 
   async ensureWatchers() {
     await Promise.all(this.roots.map((root) => this.ensureWatcher(root)));
+  }
+
+  async ensureThreadNameWatchers() {
+    for (const home of this.homes) this.ensureThreadNameWatcher(home);
+  }
+
+  loadThreadNames(home) {
+    const filePath = path.join(home, CODEX_SESSION_INDEX);
+    let stat = null;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {}
+    let names = new Map();
+    try {
+      names = this.readThreadNamesFn(home);
+    } catch (error) {
+      console.error(`[watcher] Codex title index failed for ${home}: ${error.message}`);
+    }
+    this.threadNames.set(home, names);
+    this.threadNameStats.set(home, stat
+      ? { size: stat.size, mtimeMs: stat.mtimeMs }
+      : null);
+    return names;
+  }
+
+  threadNameFor(filePath, nativeSessionId) {
+    const rootIndex = this.roots.findIndex((root) => insideRoot(filePath, root));
+    if (rootIndex < 0) return '';
+    return this.threadNames.get(this.homes[rootIndex])?.get(nativeSessionId) || '';
+  }
+
+  async scanThreadNames(homes = this.homes) {
+    for (const home of homes) {
+      const filePath = path.join(home, CODEX_SESSION_INDEX);
+      let stat = null;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {}
+      const previousStat = this.threadNameStats.get(home);
+      if ((!stat && !previousStat)
+        || (stat && previousStat
+          && stat.size === previousStat.size
+          && stat.mtimeMs === previousStat.mtimeMs)) {
+        continue;
+      }
+      const previous = this.threadNames.get(home) || new Map();
+      const current = this.loadThreadNames(home);
+      for (const nativeSessionId of changedThreadNames(previous, current)) {
+        const file = this.preferredPath(nativeSessionId);
+        if (file) this.queueFile(file, { forceMetadata: true });
+      }
+    }
+    await this.flush();
+  }
+
+  ensureThreadNameWatcher(home) {
+    if (this.stopped || this.threadNameWatchers.has(home)) return false;
+    const filePath = path.join(home, CODEX_SESSION_INDEX);
+    try {
+      if (!fs.statSync(filePath).isFile()) return false;
+      const watcher = this.watchFileFn(filePath, (eventType) => {
+        if (eventType === 'rename') {
+          this.closeThreadNameWatcher(home);
+          this.scheduleThreadNameWatcherRetry(home);
+        }
+        this.scanThreadNames([home]).catch(() => {});
+      });
+      watcher.on?.('error', () => {
+        this.closeThreadNameWatcher(home);
+        this.scheduleThreadNameWatcherRetry(home);
+      });
+      this.threadNameWatchers.set(home, watcher);
+      const retry = this.threadNameWatchRetryTimers.get(home);
+      if (retry) clearTimeout(retry);
+      this.threadNameWatchRetryTimers.delete(home);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  closeThreadNameWatcher(home) {
+    const watcher = this.threadNameWatchers.get(home);
+    this.threadNameWatchers.delete(home);
+    try {
+      watcher?.close();
+    } catch {}
+  }
+
+  scheduleThreadNameWatcherRetry(home) {
+    if (this.stopped || this.threadNameWatchRetryTimers.has(home)) return;
+    const timer = setTimeout(() => {
+      this.threadNameWatchRetryTimers.delete(home);
+      this.ensureThreadNameWatcher(home);
+      this.scanThreadNames([home]).catch(() => {});
+    }, this.watchRetryMs);
+    timer.unref();
+    this.threadNameWatchRetryTimers.set(home, timer);
   }
 
   async ensureWatcher(root) {
@@ -275,6 +400,7 @@ export class CodexWatcher {
   }
 
   async scanNow(options = {}) {
+    await this.scanThreadNames();
     const roots = options.roots || this.roots;
     const found = new Set();
     for (const root of roots) {
@@ -483,20 +609,28 @@ export class CodexWatcher {
     if (active) {
       active.pending = true;
       active.forceStatus ||= !!options.forceStatus;
+      active.forceMetadata ||= !!options.forceMetadata;
       return active.promise;
     }
 
-    const state = { pending: true, forceStatus: !!options.forceStatus, promise: null };
+    const state = {
+      pending: true,
+      forceStatus: !!options.forceStatus,
+      forceMetadata: !!options.forceMetadata,
+      promise: null,
+    };
     this.busy.set(nativeSessionId, state);
     state.promise = Promise.resolve().then(async () => {
       do {
         state.pending = false;
         const forceStatus = state.forceStatus;
+        const forceMetadata = state.forceMetadata;
         state.forceStatus = false;
+        state.forceMetadata = false;
         const currentPath = this.preferredPath(nativeSessionId);
         if (!currentPath) break;
         try {
-          const result = await this.processFile(currentPath, { forceStatus });
+          const result = await this.processFile(currentPath, { forceStatus, forceMetadata });
           state.pending ||= result.fileChanged;
           this.clearRetry(nativeSessionId);
         } catch (error) {
@@ -526,6 +660,7 @@ export class CodexWatcher {
     if (!this.threadKinds.has(sessionId)) {
       scannedSession = this.scanRollout(filePath, {
         nativeSessionId,
+        threadName: this.threadNameFor(filePath, nativeSessionId),
         runtimeOwned: this.runtimeOwnsFn(nativeSessionId),
         ...(options.forceStatus ? { runningInfo: this.runningInfoFn() } : {}),
       }).session;
@@ -576,11 +711,13 @@ export class CodexWatcher {
     }
 
     const needsSessionScan = options.forceStatus
+      || options.forceMetadata
       || extracted.needsSessionScan
       || !this.metadataSignatures.has(sessionId);
     if (needsSessionScan) {
       const session = scannedSession || this.scanRollout(filePath, {
         nativeSessionId,
+        threadName: this.threadNameFor(filePath, nativeSessionId),
         runtimeOwned: this.runtimeOwnsFn(nativeSessionId),
         ...(options.forceStatus ? { runningInfo: this.runningInfoFn() } : {}),
       }).session;

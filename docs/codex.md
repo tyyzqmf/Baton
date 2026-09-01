@@ -283,7 +283,10 @@ Bridge 递归扫描：
 - native ID 取 rollout 文件名末尾 UUID。
 - 存在多条 `session_meta` 时，优先选择 ID 与文件名匹配的 metadata。
 - cwd、provider、originator/source 和 CLI version 来自 `session_meta`。
-- preview 取首个 `event_msg/user_message`。
+- preview 优先取 `<CODEX_HOME>/session_index.jsonl` 中该 thread 最后一条
+  `thread_name`，与 Codex `/resume` 一致；没有索引标题时回退到首个
+  `event_msg/user_message`。自动标题和用户 `/rename` 都更新同一个
+  `thread_name`，不需要区分来源。
 - model 取最新有效 `turn_context.model`。
 - lastActive 和 size 来自文件 stat。
 - 空文件、无用户消息或缺少必要 metadata 的文件不产生 Session。
