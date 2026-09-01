@@ -1145,8 +1145,8 @@ async function loadDevices() {
     });
   }
 
-  var preload = window.__preload;
-  if (preload) window.__preload = null;
+  var preload = wasHome ? window.__preload : null;
+  window.__preload = null;
   var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
   var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
   return window.__loadHome(activePromise, devicesPromise, {
