@@ -68,3 +68,54 @@ test('history keeps Interrupted with the first answer before the next question',
   assert.equal(children[1].querySelectorAll('.msg-interrupt').length, 1);
   assert.equal(children[2].textContent.includes('question two'), true);
 });
+
+test('history keeps Interrupted at the end when its row arrives first', () => {
+  const html = window.renderMessages([
+    {
+      uuid: 'user-one',
+      type: 'user',
+      content: 'question one',
+    },
+    {
+      uuid: 'interrupt-one',
+      type: 'user',
+      content: [{
+        type: 'text',
+        text: '[Request interrupted by user]',
+      }],
+    },
+    {
+      uuid: 'assistant-one',
+      type: 'assistant',
+      content: [{ type: 'text', text: 'partial answer' }],
+    },
+  ], 'codex');
+
+  document.body.innerHTML = `<div class="messages">${html}</div>`;
+  const turn = document.querySelector('.assistant-turn');
+
+  assert.equal(turn.textContent, 'partial answerInterrupted');
+  assert.equal(turn.lastElementChild.classList.contains('msg-interrupt'), true);
+});
+
+test('assistant group exposes turnId only when every item shares it', () => {
+  const html = window.renderMessages([
+    {
+      uuid: 'assistant-scoped',
+      type: 'assistant',
+      turnId: 'turn-one',
+      content: [{ type: 'text', text: 'scoped' }],
+    },
+    {
+      uuid: 'assistant-unscoped',
+      type: 'assistant',
+      content: [{ type: 'text', text: 'unscoped' }],
+    },
+  ], 'codex');
+
+  document.body.innerHTML = `<div class="messages">${html}</div>`;
+  assert.equal(
+    document.querySelector('.assistant-turn').hasAttribute('data-turn-id'),
+    false,
+  );
+});

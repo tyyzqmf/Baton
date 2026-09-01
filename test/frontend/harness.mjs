@@ -89,7 +89,32 @@ export async function makeHarness(options = {}) {
       + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
       + ' data-ts="' + (m.timestamp || '') + '">' + t + '</div>' : '';
   });
-  G('renderMessages', (msgs) => msgs.map(m => {
+  G('renderMessages', (msgs, runtime = 'codex') => {
+    const results = new Map();
+    for (const message of msgs) {
+      if (!Array.isArray(message.content)) continue;
+      for (const block of message.content) {
+        if (block?.type === 'tool_result' && block.tool_use_id) {
+          results.set(block.tool_use_id, block);
+        }
+      }
+    }
+    return msgs.map(m => {
+    if (isInterrupt(m)) {
+      return '<div class="assistant-turn"'
+        + (m.turnId ? ' data-turn-id="' + m.turnId + '"' : '')
+        + '><div class="tl-item msg-interrupt"'
+        + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+        + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
+        + ' data-ts="' + (m.timestamp || '') + '">'
+        + INTERRUPT_MAP[m.content[0].text] + '</div></div>';
+    }
+    if (m.type === 'user'
+      && Array.isArray(m.content)
+      && m.content.length
+      && m.content.every(block => block?.type === 'tool_result')) {
+      return '';
+    }
     if (m.type === 'user') return '<div class="msg-user"'
       + (m.turnId ? ' data-anchor="' + m.turnId + '"' : '')
       + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
@@ -98,14 +123,39 @@ export async function makeHarness(options = {}) {
       + '>' + textOf(m.content) + '</div>';
     if (m.type === 'assistant') {
       if (m._strictManaged) return '';
-      const t = textOf(m.content);
-      return t ? '<div class="assistant-turn"><div class="tl-item assistant-text"'
-        + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
-        + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
-        + ' data-ts="' + (m.timestamp || '') + '">' + t + '</div></div>' : '';
+      const items = [];
+      if (Array.isArray(m.content)) {
+        for (const block of m.content) {
+          if (block?.type === 'text' && block.text) {
+            items.push('<div class="tl-item assistant-text"'
+              + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+              + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
+              + ' data-ts="' + (m.timestamp || '') + '">' + block.text + '</div>');
+          } else if (block?.type === 'tool_use' && block.id) {
+            items.push('<div class="tl-item tool-node" data-tool-id="' + block.id + '"'
+              + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+              + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
+              + ' data-ts="' + (m.timestamp || '') + '">'
+              + w.renderToolNode(block, results.get(block.id) || null, runtime)
+              + '</div>');
+          }
+        }
+      } else {
+        const t = textOf(m.content);
+        if (t) {
+          items.push('<div class="tl-item assistant-text"'
+            + (m.uuid ? ' data-message-id="' + m.uuid + '"' : '')
+            + (m.nativeId ? ' data-native-id="' + m.nativeId + '"' : '')
+            + ' data-ts="' + (m.timestamp || '') + '">' + t + '</div>');
+        }
+      }
+      return items.length ? '<div class="assistant-turn"'
+        + (m.turnId ? ' data-turn-id="' + m.turnId + '"' : '')
+        + '>' + items.join('') + '</div>' : '';
     }
     return '';
-  }).join(''));
+    }).join('');
+  });
   G('isInterruptMsg', isInterrupt); // real logic — an interrupt row must render as msg-interrupt, not be skipped
   ['isToolResultOnly', 'isLocalCommandStdout'].forEach(k => G(k, () => false));
   G('deriveRunning', () => false);

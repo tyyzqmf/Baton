@@ -47,6 +47,7 @@ var _preAdoptionTurnEvents = new Map();
 var _agentThreadRefreshTimer = null;
 var _agentThreadRefreshVersion = 0;
 var _historyFetchBarriers = new FetchBarrierCoordinator();
+var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
 var _appliedLifecycleVersion = 0;
@@ -597,7 +598,6 @@ function routeTurnEvent(message) {
     return;
   }
   var ordered = _turnEventQueue.push(message);
-  drainLateJoinUpdates();
   var orderedEnd = ordered.some(function (event) {
     return event.action === 'stream_end';
   });
@@ -677,7 +677,7 @@ function handleGappedTurnCompletion(completion) {
   // terminal authority as one anchored historical turn.
   _strictStatusAuthority = true;
   _streamCoordinator.settleTurn(completion.turnId);
-  drainStrictStreamOperations();
+  _streamCoordinator.takeOperations();
   _strictStreamRenderer?.discardTurn(completion.turnId);
   _queuedTurnIds.delete(completion.turnId);
   _checkpointResumedTurns.delete(completion.turnId);
@@ -695,6 +695,16 @@ function handleGappedTurnCompletion(completion) {
 function resumeLateJoinAtCheckpoint(turnId) {
   var recovery = _turnEventQueue.resumeAtNextCheckpoint(turnId);
   if (!recovery) return false;
+  if (!document.querySelector('[data-anchor="' + turnId + '"]')) {
+    var container = document.querySelector('.messages');
+    if (container) {
+      var recoveryAnchor = document.createElement('span');
+      recoveryAnchor.hidden = true;
+      recoveryAnchor.dataset.anchor = turnId;
+      recoveryAnchor.dataset.streamRecoveryAnchor = '1';
+      container.appendChild(recoveryAnchor);
+    }
+  }
   _checkpointResumedTurns.add(turnId);
   mergeLateJoinAuthority({
     sessionId: recovery.events[0]?.sessionId || state.wsSessionId,
@@ -702,15 +712,7 @@ function resumeLateJoinAtCheckpoint(turnId) {
     messages: recovery.messages,
   }, false);
   for (var event of recovery.events) dispatchWsMessage(event);
-  drainLateJoinUpdates();
   return true;
-}
-
-function drainLateJoinUpdates() {
-  var updates = _turnEventQueue.takeLateJoinUpdates();
-  for (var index = 0; index < updates.length; index++) {
-    mergeLateJoinAuthority(updates[index], false);
-  }
 }
 
 // WS message dispatch — extracted from onmessage for the jsdom test harness.
@@ -729,28 +731,30 @@ function dispatchWsMessage(msg) {
         fetchBarrier.captureHistory(msg.messages);
         return;
       }
-      var appendedMessages = [];
-      for (var i = 0; i < msg.messages.length; i++) {
-        var m = msg.messages[i];
-        var confirmedPrompt = findConfirmedPromptEcho(m);
-        if (confirmedPrompt) {
-          var aliases = new Set(confirmedPrompt.identityAliases || []);
-          if (m.uuid) {
-            aliases.add('uuid:' + m.uuid);
-            state.wsMessageUuids.add(m.uuid);
-          }
-          if (m.nativeId) aliases.add('native:' + m.nativeId);
-          confirmedPrompt.identityAliases = Array.from(aliases);
-          continue;
+      var activeStrictTurnId = _streamCoordinator.activeTurnId || '';
+      var completeMessages = msg.messages.map(function (message) {
+        if (!activeStrictTurnId
+          || message.turnId
+          || (message.type !== 'assistant' && message.type !== 'summary')) {
+          return message;
         }
-        if (!trackMessageUuid(m)) continue;
-        state.wsAllMessages.push(m);
-        appendedMessages.push(m);
-        state.wsMessageCount++;
-        if (m.timestamp) state.wsLastTimestamp = m.timestamp;
-      }
-      updateLastTurn(appendedMessages, { appendToTail: true });
-      showStats(state.wsMessageCount + ' messages (' + msg.messages.length + ' new via WS)');
+        return {
+          ...message,
+          turnId: activeStrictTurnId,
+          _strictLifecycle: true,
+        };
+      });
+      var startsExternalTurn = completeMessages.some(function (message) {
+        return message.type === 'user'
+          && !isInterruptMsg(message)
+          && !isToolResultOnly(message);
+      });
+      if (startsExternalTurn) _strictStatusAuthority = false;
+      var merged = commitWsAuthority(completeMessages, {
+        liveStateChanged: _strictStatusAuthority && !startsExternalTurn,
+      });
+      showStats(state.wsMessageCount + ' messages ('
+        + merged.mergeResult.inserted.length + ' new via WS)');
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
@@ -1032,6 +1036,9 @@ function renderStrictToolBlock(element, block) {
     var exploreClass = isLiveCodexExplore(toolUse.name, input) ? ' codex-explore' : '';
     element.className = 'tl-item tool-node ' + toolState + exploreClass;
     if (block.toolUseId) element.dataset.toolId = block.toolUseId;
+    if (toolUse.name === 'TodoWrite') {
+      element.dataset.codexPlan = '1';
+    }
     scheduleAgentThreadRefresh(toolUse.name);
     return;
   }
@@ -1044,6 +1051,80 @@ function renderStrictToolBlock(element, block) {
   element.innerHTML = '<div class="tool-header"><span class="tool-name">'
     + esc(displayLabel) + '</span><span class="tool-desc">'
     + esc(description) + '</span><span class="tool-status">running</span></div>';
+}
+
+function applyToolResultMessages(messages) {
+  var resultMessages = (messages || []).filter(isToolResultOnly);
+  if (!resultMessages.length) return false;
+  var container = document.querySelector('.messages');
+  if (!container) return false;
+
+  var toolUses = new Map();
+  for (var message of state.wsAllMessages) {
+    if (!Array.isArray(message?.content)) continue;
+    for (var block of message.content) {
+      if (block?.type === 'tool_use' && block.id) {
+        toolUses.set(block.id, block);
+      }
+    }
+  }
+
+  var changed = false;
+  for (var resultMessage of resultMessages) {
+    for (var source of resultMessage.content || []) {
+      if (source?.type !== 'tool_result'
+        || !source.tool_use_id
+        || source.codexSuperseded) {
+        continue;
+      }
+      var toolUse = toolUses.get(source.tool_use_id);
+      var node = container.querySelector(
+        '[data-tool-id="' + source.tool_use_id + '"]',
+      );
+      if (!toolUse || !node) continue;
+
+      var result = {
+        ...source,
+        ...(resultMessage.toolUseResult
+          ? { _agentMeta: resultMessage.toolUseResult }
+          : {}),
+      };
+      var collapsed = node.classList.contains('tool-details-collapsed');
+      var committed = node.classList.contains('stream-block-committed');
+      window._lastToolState = '';
+      node.innerHTML = renderToolNode(
+        toolUse,
+        result,
+        state.appState.runtime,
+        { collapsed: collapsed },
+      );
+
+      var classes = ['tl-item', 'tool-node'];
+      if (committed) classes.push('stream-block-committed');
+      if (state.appState.runtime === 'codex'
+        && window.isCodexExploreTool?.(toolUse, result)) {
+        classes.push('codex-explore');
+      }
+      if (state.appState.runtime === 'codex'
+        && toolUse.name === 'WriteStdin'
+        && !String(toolUse.input?.chars || '').length) {
+        classes.push('codex-terminal-wait');
+      }
+      if (result.codexBackground === 'complete') {
+        classes.push('codex-background-complete');
+      }
+      if (window._lastToolState) classes.push(window._lastToolState);
+      node.className = classes.join(' ');
+      if (toolUse.name === 'TodoWrite') node.dataset.codexPlan = '1';
+      window.setToolDetailsCollapsed?.(node, collapsed);
+      if (result.codexProcessId) {
+        node.dataset.codexProcess = result.codexProcessId;
+      }
+      changed = true;
+    }
+  }
+  if (changed) window.afterToolDomMutation?.(container);
+  return changed;
 }
 
 function scheduleAgentThreadRefresh(toolName) {
@@ -1103,14 +1184,15 @@ function drainStrictStreamOperations() {
   if (!operations.length) return;
   var completedTurn = false;
   getStrictStreamRenderer().applyOperations(operations);
-  if (removeHistoryCoveredByStrictTurns()) {
-    markTurnAdjacency(document.querySelector('.messages'));
-  }
   for (var operation of operations) {
     if (operation.type === 'createTurn') {
       state.wsRunning = true;
     } else if (operation.type === 'completeTurn') {
       completedTurn = true;
+      document.querySelector(
+        '[data-stream-recovery-anchor="1"][data-anchor="'
+          + operation.turnId + '"]',
+      )?.remove();
       _queuedTurnIds.delete(operation.turnId);
       _checkpointResumedTurns.delete(operation.turnId);
       _reconnectingTurns.delete(operation.turnId);
@@ -1123,43 +1205,6 @@ function drainStrictStreamOperations() {
     window.markSpinnerTurnEnd();
   }
   updateSendBtn();
-}
-
-function removeHistoryCoveredByStrictTurns() {
-  var container = document.querySelector('.messages');
-  if (!container) return false;
-  var strictMessageIds = new Set();
-  var strictNativeIds = new Set();
-  for (var turn of Array.from(container.children)) {
-    if (!turn.classList.contains('assistant-turn') || !turn.dataset?.turnId) {
-      continue;
-    }
-    for (var node of turn.querySelectorAll('[data-message-id]')) {
-      strictMessageIds.add(node.dataset.messageId);
-    }
-    for (var node of turn.querySelectorAll('[data-native-id]')) {
-      strictNativeIds.add(node.dataset.nativeId);
-    }
-  }
-  if (!strictMessageIds.size && !strictNativeIds.size) return false;
-  var removed = false;
-  for (var node of container.querySelectorAll(
-    '[data-message-id], [data-native-id]',
-  )) {
-    var matchesMessage = !!node.dataset.messageId
-      && strictMessageIds.has(node.dataset.messageId);
-    var matchesNative = !!node.dataset.nativeId
-      && strictNativeIds.has(node.dataset.nativeId);
-    if ((!matchesMessage && !matchesNative)
-      || node.closest('[data-turn-id]')) continue;
-    var parent = node.parentElement;
-    node.remove();
-    removed = true;
-    if (parent?.classList.contains('assistant-turn') && !parent.children.length) {
-      parent.remove();
-    }
-  }
-  return removed;
 }
 
 function handleStrictTurnStart(message) {
@@ -1211,7 +1256,6 @@ function handleStrictTurnEnd(message) {
       terminal: true,
     });
   }
-  renderFailedTurnAuthority(message, endMessages);
   _streamCoordinator.endTurn(message);
   drainStrictStreamOperations();
   _turnEventQueue.closeTurn(message.turnId);
@@ -1227,34 +1271,6 @@ function handleStrictTurnEnd(message) {
   if (message.recoveryRequired) {
     scheduleTurnEndRecovery(message.sessionId);
   }
-}
-
-function renderFailedTurnAuthority(end, messages) {
-  if (end.error !== 'failed' || !messages.length) return false;
-  var turn = _streamCoordinator.getTurn(end.turnId);
-  if (!turn?.unassignedAuthorityBlocks.length) return false;
-  var visible = [];
-  for (var source of messages) {
-    if ((source.type !== 'assistant' && source.type !== 'summary')
-      || source.stopReason !== 'end_turn'
-      || !Array.isArray(source.content)
-      || !source.content.some(function (block) {
-        return block.type === 'text' && /^Error:\s*/.test(block.text || '');
-      })) {
-      continue;
-    }
-    var existing = state.wsAllMessages.find(function (candidate) {
-      return (source.nativeId && candidate.nativeId === source.nativeId)
-        || (source.uuid && candidate.uuid === source.uuid);
-    });
-    if (!existing || !existing._strictManaged) continue;
-    existing._strictManaged = false;
-    visible.push(existing);
-  }
-  if (!visible.length) return false;
-  updateLastTurn(visible);
-  _strictStreamRenderer?.attachTurnToAnchor(end.turnId);
-  return true;
 }
 
 function scheduleTurnEndRecovery(sessionId, attempt) {
@@ -1338,12 +1354,14 @@ function mergeLateJoinAuthority(completion, completed, terminal) {
     for (var bufferedMessage of incoming) {
       bufferedMessage.turnId = bufferedMessage.turnId || completion.turnId || '';
       bufferedMessage._strictLifecycle = true;
-      bufferedMessage._strictManaged = false;
     }
     if (terminal) {
       fetchBarrier.replaceStrictTurn(completion.turnId, incoming);
     } else {
       fetchBarrier.captureStrictMessages(incoming);
+    }
+    if (completed || terminal) {
+      fetchBarrier.completeStrictTurn(completion.turnId);
     }
     applyResolvedLiveActivity(
       hasOutstandingTurns() ? 'running' : 'completed',
@@ -1351,74 +1369,21 @@ function mergeLateJoinAuthority(completion, completed, terminal) {
     updateSendBtn();
     return;
   }
-  var messages = [];
-  for (var message of incoming) {
-    var existing = state.wsAllMessages.find(function (candidate) {
-      return candidate.type === message.type
-        && sameMessageIdentity(candidate, message);
-    });
-    if (existing) {
-      var existingAliases = existing.identityAliases;
-      Object.assign(existing, message, {
-        turnId: completion.turnId,
-        _strictManaged: false,
-      });
-      if (existingAliases?.length && !existing.identityAliases) {
-        existing.identityAliases = existingAliases;
-      }
-      continue;
-    }
-    if (!trackMessageUuid(message)) continue;
-    message._strictManaged = false;
-    messages.push(message);
-    insertStrictStateMessage(message);
-  }
-  if (terminal && incoming.length) {
-    commitTerminalTurnState(completion.turnId, incoming);
-  }
-  var renderedTurn = document.querySelector(
-    '[data-turn-id="' + completion.turnId + '"]',
-  );
-  var messagesToRender = messages;
-  if (terminal && !renderedTurn && incoming.length) {
-    var promptAuthority = incoming.filter(function (message) {
-      return message?.type === 'user'
-        && !isInterruptMsg(message)
-        && !isToolResultOnly(message);
-    });
-    if (promptAuthority.length) updateLastTurn(promptAuthority);
-    _strictStreamRenderer?.attachTurnToAnchor(completion.turnId);
-    renderedTurn = document.querySelector(
-      '[data-turn-id="' + completion.turnId + '"]',
-    );
-    messagesToRender = incoming.filter(function (message) {
-      if (promptAuthority.includes(message)) return false;
-      if ((message?.type !== 'assistant' && message?.type !== 'summary')
-        || !renderedTurn) {
-        return true;
-      }
-      return !Array.from(renderedTurn.querySelectorAll(
-        '[data-message-id], [data-native-id]',
-      )).some(function (node) {
-        return (message.uuid && node.dataset.messageId === message.uuid)
-          || (message.nativeId && node.dataset.nativeId === message.nativeId);
-      });
-    });
-  }
-  if (messagesToRender.length) {
-    updateLastTurn(messagesToRender);
-  }
+  var merged = commitWsAuthority(incoming, {
+    authoritative: terminal,
+    preserveStreamPreviews: _streamCoordinator.hasActiveTurns()
+      || !!document.querySelector('.stream-preview'),
+  });
   _strictStreamRenderer?.attachTurnToAnchor(completion.turnId);
   if (completed) {
-    _strictStreamRenderer?.applyOperation({
+    var renderer = getStrictStreamRenderer();
+    renderer.createTurn({ turnId: completion.turnId });
+    renderer.applyOperation({
       type: 'completeTurn',
       turnId: completion.turnId,
     });
   }
-  if (removeHistoryCoveredByStrictTurns()) {
-    markTurnAdjacency(document.querySelector('.messages'));
-  }
-  if (messagesToRender.length) {
+  if (merged.mergeResult.inserted.length || merged.mergeResult.patched.length) {
     showStats(state.wsMessageCount + ' messages (late join)');
   }
   applyResolvedLiveActivity(
@@ -1429,7 +1394,7 @@ function mergeLateJoinAuthority(completion, completed, terminal) {
 
 function handleStrictMessages(envelope) {
   var remaining = [];
-  var addedMessages = [];
+  var completeMessages = [];
   var identities = [];
   var fetchBarrier = _historyFetchBarriers.current(envelope.sessionId);
   for (var index = 0; index < envelope.messages.length; index++) {
@@ -1441,46 +1406,11 @@ function handleStrictMessages(envelope) {
     }
     Object.assign(message, identity, {
       _strictLifecycle: true,
-      _strictManaged: message.type === 'assistant' || message.type === 'summary',
     });
     identities.push(identity);
+    completeMessages.push(message);
     if (fetchBarrier && !envelope.terminal) {
       fetchBarrier.captureStrictMessages([message]);
-    }
-    var matchingAuthority = !fetchBarrier
-      ? state.wsAllMessages.find(function (candidate) {
-        return candidate !== message
-          && candidate.type === message.type
-          && candidate.nativeId
-          && candidate.nativeId === message.nativeId
-          && (envelope.terminal
-            || JSON.stringify(candidate.content) === JSON.stringify(message.content));
-      })
-      : null;
-    if (matchingAuthority) {
-      if (envelope.terminal) {
-        var previousAliases = matchingAuthority.identityAliases;
-        Object.assign(matchingAuthority, message, {
-          turnId: identity.turnId,
-          _strictLifecycle: true,
-          _strictManaged: message._strictManaged,
-        });
-        if (previousAliases?.length && !matchingAuthority.identityAliases) {
-          matchingAuthority.identityAliases = previousAliases;
-        }
-      } else {
-        matchingAuthority.turnId = matchingAuthority.turnId || identity.turnId;
-        matchingAuthority._strictLifecycle = true;
-        matchingAuthority._strictManaged = message._strictManaged;
-      }
-      var aliases = new Set(matchingAuthority.identityAliases || []);
-      aliases.add('uuid:' + message.uuid);
-      aliases.add('turn:' + identity.turnId);
-      matchingAuthority.identityAliases = Array.from(aliases);
-      if (message.uuid) state.wsMessageUuids.add(message.uuid);
-    } else if (!fetchBarrier && trackMessageUuid(message)) {
-      insertStrictStateMessage(message);
-      addedMessages.push(message);
     }
     _streamCoordinator.ingestAuthoritative({
       ...identity,
@@ -1489,17 +1419,47 @@ function handleStrictMessages(envelope) {
   }
   if (fetchBarrier && envelope.terminal) {
     fetchBarrier.replaceStrictTurn(envelope.turnId, envelope.messages);
-  } else if (!fetchBarrier && envelope.terminal) {
-    commitTerminalTurnState(envelope.turnId, envelope.messages);
+    fetchBarrier.completeStrictTurn(envelope.turnId);
+    drainStrictStreamOperations();
+  } else if (!fetchBarrier && completeMessages.length) {
+    var needsInterruptDom = completeMessages.some(function (message) {
+      return isInterruptMsg(message);
+    });
+    var needsPromptAnchor = completeMessages.some(function (message) {
+      return message.type === 'user'
+        && !isInterruptMsg(message)
+        && !isToolResultOnly(message);
+    }) && !document.querySelector(
+      '[data-anchor="' + envelope.turnId + '"]',
+    );
+    var hasRenderedTurn = !!document.querySelector(
+      '[data-turn-id="' + envelope.turnId + '"]',
+    );
+    var streamTurn = _streamCoordinator.getTurn(envelope.turnId);
+    var hasRenderableBlocks = !!streamTurn
+      && streamTurn.orderedBlocks().some(function (block) {
+        return block.isRenderable();
+      });
+    var streamOwnsTurn = hasRenderedTurn || hasRenderableBlocks;
+    commitWsAuthority(completeMessages, {
+      authoritative: !!envelope.terminal,
+      preserveStreamPreviews: true,
+      deferDom: !needsInterruptDom
+        && !needsPromptAnchor
+        && (!envelope.terminal || streamOwnsTurn),
+      streamTurnIds: streamOwnsTurn
+        ? undefined
+        : [],
+    });
+  } else {
+    drainStrictStreamOperations();
   }
-  drainStrictStreamOperations();
-  if (addedMessages.length) updateLastTurn(addedMessages);
   if (_strictStreamRenderer) {
     for (var identity of identities) {
       _strictStreamRenderer.attachTurnToAnchor(identity.turnId);
     }
   }
-  if (addedMessages.length) {
+  if (completeMessages.length) {
     showStats(state.wsMessageCount + ' messages (strict live)');
   }
   return remaining;
@@ -1507,6 +1467,7 @@ function handleStrictMessages(envelope) {
 
 function resetStreamSessionState() {
   _historyFetchBarriers.invalidate();
+  _messagePaginationGeneration++;
   if (_strictStreamRenderer) _strictStreamRenderer.reset();
   _strictStreamRenderer = null;
   _streamCoordinator.resetSession('');
@@ -1635,88 +1596,10 @@ function ensureWsAndSend(data) {
   wsSendReliable(data);
 }
 
-/**
- * Find insertion point: scan from end, return first element with data-ts > timestamp.
- * Skips elements without data-ts (pending messages). Returns null = insert at end of real messages.
- */
-function findInsertBefore(container, timestamp) {
-  if (!timestamp) return null;
-  var kids = container.children;
-  var result = null;
-  for (var i = kids.length - 1; i >= 0; i--) {
-    var ts = kids[i].dataset.ts;
-    if (!ts) continue; // skip pending (no data-ts)
-    if (ts > timestamp) {
-      result = kids[i];
-    } else {
-      break; // found ts <= ours, stop
-    }
-  }
-  return result;
-}
-
-/** Insert html at correct timestamp position, before any pending messages. */
-function insertAtTimestamp(container, html, timestamp) {
-  var before = findInsertBefore(container, timestamp);
-  if (before) {
-    before.insertAdjacentHTML('beforebegin', html);
-  } else {
-    // Append after all real messages, before pending
-    var firstPending = container.querySelector('[data-pending]');
-    if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
-    else container.insertAdjacentHTML('beforeend', html);
-  }
-}
-
-function appendBeforePending(container, html) {
-  var firstPending = container.querySelector('[data-pending]');
-  if (firstPending) firstPending.insertAdjacentHTML('beforebegin', html);
-  else container.insertAdjacentHTML('beforeend', html);
-}
-
-function appendAssistantAtTail(container, html) {
-  var row = '<div class="assistant-turn">' + html + '</div>';
-  appendBeforePending(container, row);
-}
-
-function insertAssistantItemAtTimestamp(container, html, timestamp) {
-  var items = container.querySelectorAll('[data-ts]');
-  var target = null;
-  for (var i = items.length - 1; i >= 0; i--) {
-    if (items[i].dataset.ts > timestamp) target = items[i];
-    else break;
-  }
-  if (target && target.classList.contains('tl-item')) {
-    target.insertAdjacentHTML('beforebegin', html);
-  } else {
-    var row = '<div class="assistant-turn" data-ts="' + (timestamp || '') + '">' + html + '</div>';
-    if (target) target.insertAdjacentHTML('beforebegin', row);
-    else {
-      var firstPending = container.querySelector('[data-pending]');
-      if (firstPending) firstPending.insertAdjacentHTML('beforebegin', row);
-      else container.insertAdjacentHTML('beforeend', row);
-    }
-  }
-}
-
-function insertAssistantItemForTurn(container, html, turnId) {
-  if (!turnId) {
-    insertAssistantItemAtTimestamp(container, html, '');
-    return;
-  }
-  var turn = getStrictStreamRenderer().createTurn({ turnId: turnId });
-  if (!turn) return;
-  turn.insertAdjacentHTML('beforeend', html);
-  markTurnAdjacency(container);
-  var content = document.getElementById('content');
-  if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
-}
-
 var _latestTurnId = '';
 var _latestTurnOrder = -1;
 var _latestSendFailed = false;
 var _interruptedTurns = {};
-var _lastThinkSecs = 0; // seconds the live preview measured for the latest thinking block
 var _strictStatusAuthority = false;
 var STRICT_TERMINAL_STOP_REASONS = new Set([
   'end_turn',
@@ -1847,249 +1730,6 @@ function markTurnAdjacency(container) {
 }
 window.markTurnAdjacency = markTurnAdjacency;
 
-function buildToolIndexes(messages) {
-  var uses = {};
-  var results = {};
-  for (var i = 0; i < messages.length; i++) {
-    var message = messages[i];
-    if (!Array.isArray(message.content)) continue;
-    for (var j = 0; j < message.content.length; j++) {
-      var block = message.content[j];
-      if (block.type === 'tool_use' && block.id) {
-        uses[block.id] = { block: block, message: message };
-      } else if (block.type === 'tool_result' && block.tool_use_id
-        && !block.codexSuperseded) {
-        results[block.tool_use_id] = {
-          block: block,
-          timestamp: message.timestamp || '',
-        };
-      }
-    }
-  }
-
-  return { uses: uses, results: results };
-}
-
-// Authoritative thinking has no duration; use the seconds the live preview measured.
-function applyThinkSecs(html) {
-  if (!_lastThinkSecs || html.indexOf('thinking-toggle') === -1) return html;
-  return html.replace(/(<div class="thinking-toggle"[^>]*>)Thinking( <span)/, '$1Thought for ' + _lastThinkSecs + 's$2');
-}
-
-function updateLastTurn(explicitMessages, options) {
-  options = options || {};
-  var container = document.querySelector('.messages');
-  if (!container) return;
-
-  var newMessages = Array.isArray(explicitMessages)
-    ? explicitMessages.slice()
-    : state.wsAllMessages.slice(state.wsRenderedCount);
-  state.wsRenderedCount = state.wsAllMessages.length;
-  if (!newMessages.length) return;
-
-  var content = document.getElementById('content');
-  var hasToolResults = newMessages.some(isToolResultOnly);
-  var toolIndexes = hasToolResults
-    ? buildToolIndexes(state.wsAllMessages)
-    : null;
-  for (var i = 0; i < newMessages.length; i++) {
-    var msg = newMessages[i];
-    if (msg._strictManaged) continue;
-    // tool_result → update matching tool_use node
-    if (isToolResultOnly(msg)) {
-      if (Array.isArray(msg.content)) {
-        for (var ri = 0; ri < msg.content.length; ri++) {
-          var rb = msg.content[ri];
-          if (rb.type !== 'tool_result' || !rb.tool_use_id) continue;
-          if (rb.codexSuperseded) continue;
-          var node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
-          var toolEntry = toolIndexes?.uses[rb.tool_use_id];
-          var toolUseBlock = toolEntry?.block;
-          var toolUseMessage = toolEntry?.message;
-          if (!toolUseBlock) continue;
-          if (msg.toolUseResult) rb._agentMeta = msg.toolUseResult;
-          var hidden = state.appState.runtime === 'codex'
-            && !msg.turnId
-            && window.isCodexHiddenTool?.(toolUseBlock, rb);
-          if (hidden) {
-            if (node) {
-              var emptyRow = node.parentElement;
-              node.remove();
-              if (emptyRow?.classList.contains('assistant-turn') && !emptyRow.children.length) {
-                emptyRow.remove();
-              }
-            }
-            continue;
-          }
-          if (!node && toolUseMessage && !msg.turnId) {
-            var restoredHtml = renderSingleMessage(toolUseMessage, state.wsAllMessages, state.appState.runtime);
-            if (restoredHtml) insertAssistantItemAtTimestamp(container, restoredHtml, msg.timestamp);
-            node = container.querySelector('[data-tool-id="' + rb.tool_use_id + '"]');
-          }
-          if (!node) continue;
-          var toolDetailsCollapsed = node.classList.contains('tool-details-collapsed');
-          window._lastToolState = '';
-          node.innerHTML = renderToolNode(toolUseBlock, rb, state.appState.runtime, {
-            collapsed: toolDetailsCollapsed,
-          });
-          var toolStateClass = window._lastToolState || '';
-          var exploreClass = state.appState.runtime === 'codex'
-            && window.isCodexExploreTool?.(toolUseBlock, rb) ? ' codex-explore' : '';
-          var waitClass = state.appState.runtime === 'codex'
-            && toolUseBlock.name === 'WriteStdin'
-            && !String(toolUseBlock.input?.chars || '').length ? ' codex-terminal-wait' : '';
-          var backgroundClass = rb.codexBackground === 'complete'
-            ? ' codex-background-complete' : '';
-          node.className = 'tl-item tool-node' + exploreClass + waitClass + backgroundClass
-            + (toolStateClass ? ' ' + toolStateClass : '');
-          window.setToolDetailsCollapsed?.(node, toolDetailsCollapsed);
-          if (rb.codexProcessId) node.dataset.codexProcess = rb.codexProcessId;
-        }
-      }
-      continue;
-    }
-
-    // Local command stdout (e.g. /compact result): render as cmd-output.
-    if (window.isLocalCommandStdout && window.isLocalCommandStdout(msg)) {
-      if (tryDedup(msg)) continue;
-      var stdoutHtml = window.renderLocalCommandStdout(msg);
-      if (stdoutHtml) {
-        if (options.appendToTail) appendBeforePending(container, stdoutHtml);
-        else insertAtTimestamp(container, stdoutHtml, msg.timestamp);
-      }
-      continue;
-    }
-
-    // Codex injects child completion into the parent as a user-role protocol
-    // message. It is internal context, not a user prompt or visible timeline row.
-    if (window.isSubagentNotificationMsg?.(msg)) continue;
-
-    // User message
-    if (msg.type === 'user' && !isInterruptMsg(msg)) {
-      if (tryDedup(msg)) {
-        if (msg.turnId) _strictStreamRenderer?.attachTurnToAnchor(msg.turnId);
-        updateTitleFromMessages();
-        continue;
-      }
-      var userHtml = renderUserBubble(
-        msg,
-        isInheritedAgentContext(msg, state.wsAllMessages) ? 'agent-context' : '',
-      );
-      if (userHtml) {
-        if (msg.turnId || options.appendToTail) appendBeforePending(container, userHtml);
-        else insertAtTimestamp(container, userHtml, msg.timestamp);
-        if (msg.turnId) _strictStreamRenderer?.attachTurnToAnchor(msg.turnId);
-      }
-      // Trivial-first-message sessions get no ai-title (last-prompt lands only on shutdown) → fall title back to first user prompt (idempotent; tier won't downgrade).
-      updateTitleFromMessages();
-      continue;
-    }
-
-    // Metadata types: update title only, don't render
-    if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
-      updateTitleFromMessages();
-      continue;
-    }
-
-    if (msg.type === 'system_event') {
-      var eventHtml = renderSystemEvent(msg);
-      if (eventHtml) {
-        if (options.appendToTail) appendBeforePending(container, eventHtml);
-        else insertAtTimestamp(container, eventHtml, msg.timestamp);
-      }
-      continue;
-    }
-
-    if (isInterruptMsg(msg)) {
-      if (msg.turnId) _interruptedTurns[msg.turnId] = true;
-      var interruptHtml = renderSingleMessage(
-        msg,
-        state.wsAllMessages,
-        state.appState.runtime,
-      );
-      if (!interruptHtml) continue;
-      if (msg.turnId) {
-        insertAssistantItemForTurn(container, interruptHtml, msg.turnId);
-      } else if (options.appendToTail) {
-        appendAssistantAtTail(container, interruptHtml);
-      } else {
-        insertAssistantItemAtTimestamp(container, interruptHtml, msg.timestamp);
-      }
-      continue;
-    }
-
-    // Assistant message
-    if (msg.type !== 'assistant' && msg.type !== 'summary') continue;
-
-    // The watcher/REST copy can arrive without turnId while the strict live
-    // turn is still revealing the same assistant response. Keep the row in
-    // state for persistence/dedup, but do not render a second historical turn;
-    // strict authority (messages/stream_end) patches the existing live turn.
-    if (!msg.turnId
-      && _strictStatusAuthority
-      && _streamCoordinator.hasActiveTurns()
-      && _reconnectingTurns.size === 0) {
-      msg._strictLifecycle = true;
-      msg._strictManaged = true;
-      continue;
-    }
-
-    var html = renderSingleMessage(msg, state.wsAllMessages, state.appState.runtime);
-    if (!html) continue;
-    html = applyThinkSecs(html); // carry live-measured thinking seconds into the empty authoritative node
-
-    if (msg.turnId) {
-      insertAssistantItemForTurn(container, html, msg.turnId);
-    } else if (options.appendToTail) {
-      appendAssistantAtTail(container, html);
-    } else {
-      insertAssistantItemAtTimestamp(container, html, msg.timestamp);
-    }
-  }
-  markTurnAdjacency(container); // turns may have been added this batch
-  var nonStrictMessages = state.wsAllMessages.filter(function (message) {
-    return !message._strictLifecycle;
-  });
-  var derived = deriveRunning(nonStrictMessages, null, state.appState.runtime);
-  var nonStrictTurnFrames = newMessages.filter(function (message) {
-    return !message._strictLifecycle
-      && (message.type === 'assistant'
-        || (message.type === 'user'
-          && !window.isSubagentNotificationMsg?.(message)));
-  });
-  var startsExternalTurn = nonStrictTurnFrames.some(function (message) {
-    return message.type === 'user'
-      && !isInterruptMsg(message)
-      && !isToolResultOnly(message);
-  });
-  if (startsExternalTurn) _strictStatusAuthority = false;
-  if (hasOutstandingTurns()) {
-    applyResolvedLiveActivity('running');
-  }
-  else if (!_strictStatusAuthority && nonStrictTurnFrames.length) {
-    applyResolvedLiveActivity(derived ? 'running' : 'completed');
-  }
-  updateSendBtn();
-
-  // Don't dismiss a prompt still awaiting the user's answer (prompts are bridge-driven).
-  var promptEl = document.getElementById('permission-prompt');
-  if (promptEl && !(typeof hasActivePermissionPrompt === 'function' && hasActivePermissionPrompt())) {
-    dismissPermissionPrompt();
-  } else if (promptEl && promptEl !== container.lastElementChild) {
-    container.appendChild(promptEl); // keep the prompt pinned below the AskUserQuestion card that just landed
-  }
-  // turnEnded (real frame brought CC to idle) → clean queued msgs that never echoed.
-  reconcileEchoedPending();
-
-  // Clamp before scrolling so scrollTop uses the collapsed final height.
-  loadImages(container);
-  clampOverflow(container);
-  if (window.renderMermaidBlocks) renderMermaidBlocks(container);
-  if (window.renderKatexBlocks) renderKatexBlocks(container);
-  if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
-  showStats(state.wsMessageCount + ' messages (live)');
-}
-
 function startWs(sessionId) {
   state._syncedOnce = null;
   if (!state.ws) {
@@ -2100,115 +1740,6 @@ function startWs(sessionId) {
   // Prefetch slash commands. When ws already exists this sends now; on a fresh
   // connect the socket isn't OPEN yet so this no-ops and onopen handles it.
   if (window.prefetchCommands) window.prefetchCommands();
-}
-
-function trackMessageUuid(message) {
-  if (!message) return true;
-  var keys = new Set((message.identityAliases || []).filter(function (alias) {
-    return !/^(?:turn|pending):/.test(String(alias));
-  }));
-  if (message.uuid) keys.add(message.uuid);
-  else if (message.nativeId) keys.add('native:' + message.nativeId);
-  for (var key of keys) {
-    if (state.wsMessageUuids.has(String(key))) return false;
-  }
-  for (var keyToAdd of keys) state.wsMessageUuids.add(String(keyToAdd));
-  return true;
-}
-
-function sameMessageIdentity(left, right) {
-  if (!left || !right) return false;
-  return !!(
-    (left.uuid && right.uuid && left.uuid === right.uuid)
-    || (left.nativeId && right.nativeId && left.nativeId === right.nativeId)
-  );
-}
-
-function insertStrictStateMessage(message) {
-  var insertionIndex = state.wsAllMessages.length;
-  if (message?.turnId) {
-    var sendOrder = _turnSendOrder.get(message.turnId);
-    if (Number.isInteger(sendOrder)) {
-      for (var orderedIndex = 0;
-        orderedIndex < state.wsAllMessages.length;
-        orderedIndex++) {
-        var candidateOrder = _turnSendOrder.get(
-          state.wsAllMessages[orderedIndex]?.turnId,
-        );
-        if (Number.isInteger(candidateOrder) && candidateOrder > sendOrder) {
-          insertionIndex = orderedIndex;
-          break;
-        }
-      }
-    }
-    for (var index = state.wsAllMessages.length - 1; index >= 0; index--) {
-      if (state.wsAllMessages[index]?.turnId === message.turnId) {
-        insertionIndex = index + 1;
-        break;
-      }
-    }
-  }
-  state.wsAllMessages.splice(insertionIndex, 0, message);
-  state.wsMessageCount++;
-  state.wsRenderedCount = state.wsAllMessages.length;
-  if (message.timestamp
-    && (!state.wsLastTimestamp || message.timestamp > state.wsLastTimestamp)) {
-    state.wsLastTimestamp = message.timestamp;
-  }
-}
-
-function rebuildLiveMessageIndex() {
-  var index = new Set();
-  for (var message of state.wsAllMessages) {
-    if (message?.uuid) index.add(message.uuid);
-    else if (message?.nativeId) index.add('native:' + message.nativeId);
-    for (var alias of message?.identityAliases || []) {
-      if (!/^(?:turn|pending):/.test(String(alias))) index.add(String(alias));
-    }
-  }
-  state.wsMessageUuids = index;
-}
-
-function commitTerminalTurnState(turnId, terminalMessages) {
-  if (!turnId || !Array.isArray(terminalMessages)
-    || !terminalMessages.length) {
-    return false;
-  }
-  var existingTurnMessages = state.wsAllMessages.filter(function (message) {
-    return message?.turnId === turnId;
-  });
-  var canonical = [];
-  for (var terminalMessage of terminalMessages) {
-    var existing = existingTurnMessages.find(function (message) {
-      return sameMessageIdentity(message, terminalMessage);
-    });
-    canonical.push(existing || terminalMessage);
-  }
-  state.wsAllMessages = state.wsAllMessages.filter(function (message) {
-    return message?.turnId !== turnId;
-  });
-  var firstIndex = state.wsAllMessages.length;
-  var sendOrder = _turnSendOrder.get(turnId);
-  if (Number.isInteger(sendOrder)) {
-    for (var index = 0; index < state.wsAllMessages.length; index++) {
-      var candidateOrder = _turnSendOrder.get(
-        state.wsAllMessages[index]?.turnId,
-      );
-      if (Number.isInteger(candidateOrder) && candidateOrder > sendOrder) {
-        firstIndex = index;
-        break;
-      }
-    }
-  }
-  state.wsAllMessages.splice(
-    Math.min(firstIndex, state.wsAllMessages.length),
-    0,
-    ...canonical,
-  );
-  state.wsMessageCount = state.wsAllMessages.length;
-  state.wsRenderedCount = state.wsAllMessages.length;
-  rebuildLiveMessageIndex();
-  return true;
 }
 
 function currentActivity() {
@@ -2243,6 +1774,11 @@ function createRecoveryDomAdapter(options) {
       return renderMessages(messages, runtime, renderOptions);
     },
     preserveStreamPreviews: !!options.preserveStreamPreviews,
+    preserveUnmatchedHistory: !!options.preserveUnmatchedHistory,
+    streamTurnIds: options.streamTurnIds !== undefined
+      ? options.streamTurnIds
+      : _streamCoordinator.activeTurnIds(),
+    renderOptions: options.renderOptions,
     isCurrentBarrier: options.isCurrentBarrier,
     promotePending: promoteEchoedBubble,
     reportConflict: function (conflict) {
@@ -2263,6 +1799,141 @@ function createRecoveryDomAdapter(options) {
     markSpinnerTurnEnd: window.markSpinnerTurnEnd,
     updateSendBtn: updateSendBtn,
     updateSpinner: window.updateSpinner,
+  });
+}
+
+function prepareCompleteMessages(messages) {
+  return dedupeCodexUserMessages((messages || []).filter(Boolean).map(
+    function (message) {
+      if (!Object.hasOwn(message, '_strictManaged')) return message;
+      var confirmed = { ...message };
+      delete confirmed._strictManaged;
+      return confirmed;
+    },
+  ));
+}
+
+function commitAuthorityMessages(messages, options) {
+  options = options || {};
+  var wasFollowingBottom = state.stickBottom;
+  var fetched = mergeFetchWindow({
+    restMessages: prepareCompleteMessages(messages),
+    historyBuffer: [],
+    restOk: true,
+  });
+  var mergeResult = mergeLocalHistory({
+    localMessages: state.wsAllMessages,
+    fetchedMessages: fetched.messages,
+    authoritative: !!options.authoritative,
+    replaceConflicts: !!options.replaceConflicts,
+  });
+  var preserveStreamPreviews = options.preserveStreamPreviews;
+  if (preserveStreamPreviews === undefined) {
+    preserveStreamPreviews = _streamCoordinator.hasActiveTurns()
+      || !!document.querySelector('.stream-preview');
+  }
+  var adapter = createRecoveryDomAdapter({
+    preserveStreamPreviews: preserveStreamPreviews,
+    streamTurnIds: options.streamTurnIds !== undefined
+      ? options.streamTurnIds
+      : _streamCoordinator.activeTurnIds(),
+    renderOptions: {
+      realtimeOrder: options.realtimeOrder !== false,
+      ...(options.collapseToolDetails !== undefined
+        ? { collapseToolDetails: !!options.collapseToolDetails }
+        : {}),
+    },
+    applyStreamOperations: options.applyStreamOperations === false
+      ? undefined
+      : function () {
+        drainStrictStreamOperations();
+      },
+  });
+  var activeStreamTurnIds = new Set(
+    options.streamTurnIds !== undefined
+      ? options.streamTurnIds
+      : _streamCoordinator.activeTurnIds(),
+  );
+  var adoptsActiveStreamTurn = mergeResult.patched
+    .concat(mergeResult.identityUpdated)
+    .some(function (change) {
+      return !change.before?.turnId
+        && !!change.after?.turnId
+        && activeStreamTurnIds.has(change.after.turnId);
+    });
+  if (options.deferDom && !adoptsActiveStreamTurn) {
+    adapter.applyHistoryChanges = function () {
+      return false;
+    };
+  }
+  var committed = commitHistoryRecovery({
+    mergeResult: mergeResult,
+    pendingMessages: state.pendingSentMessages.slice(),
+    restResult: {
+      ok: true,
+      status: options.status || '',
+    },
+    activitySnapshot: {
+      liveStateChanged: !!options.liveStateChanged,
+      liveActivity: currentActivity(),
+      activityBeforeFetch: currentActivity(),
+      runtime: state.appState.runtime,
+      hasOutstandingTurns: hasOutstandingTurns(),
+      outstandingTurnIds: outstandingTurnIds(),
+    },
+    adapter: adapter,
+  });
+  applyToolResultMessages(messages);
+  if (options.restoreBottom !== false) {
+    restoreBottomAfterRecovery(wasFollowingBottom);
+  }
+  return {
+    mergeResult: mergeResult,
+    activity: committed.activity,
+  };
+}
+
+function commitWsAuthority(messages, options) {
+  return commitAuthorityMessages(messages, {
+    ...(options || {}),
+    realtimeOrder: true,
+    replaceConflicts: true,
+  });
+}
+
+function commitRestAuthority(messages, options) {
+  return commitAuthorityMessages(messages, {
+    ...(options || {}),
+    realtimeOrder: false,
+  });
+}
+
+function commitPaginatedMessageState(messages) {
+  state.wsAllMessages = messages;
+  var index = new Set();
+  for (var message of messages) {
+    if (message?.uuid) index.add(message.uuid);
+    for (var alias of message?.identityAliases || []) {
+      if (!/^(?:turn|pending):/.test(String(alias))) {
+        index.add(String(alias));
+      }
+    }
+    if (!message?.uuid && message?.nativeId) {
+      index.add('native:' + message.nativeId);
+    }
+  }
+  state.wsMessageUuids = index;
+  state.wsMessageCount = messages.length;
+  state.wsLastTimestamp = messages.length
+    ? messages[messages.length - 1].timestamp || ''
+    : '';
+}
+
+function insertLocalMessage(message, options) {
+  return commitAuthorityMessages([message], {
+    ...(options || {}),
+    realtimeOrder: true,
+    replaceConflicts: true,
   });
 }
 
@@ -2336,21 +2007,7 @@ async function bufferAndFetch(sessionId, after, options) {
     }
     barrier.beginCommit();
 
-    var strictMessages = dedupeCodexUserMessages(barrier.strictMessages).map(
-      function (message) {
-        if ((message.type !== 'assistant' && message.type !== 'summary')
-          || !message.turnId) {
-          return message;
-        }
-        var streamTurn = document.querySelector(
-          '[data-turn-id="' + message.turnId + '"]',
-        );
-        if (!_streamCoordinator.getTurn(message.turnId) && !streamTurn) {
-          return message;
-        }
-        return { ...message, _strictManaged: true };
-      },
-    );
+    var strictMessages = prepareCompleteMessages(barrier.strictMessages);
     var fetched = mergeFetchWindow({
       restMessages: dedupeCodexUserMessages(data.messages || []),
       historyBuffer: dedupeCodexUserMessages(
@@ -2364,6 +2021,7 @@ async function bufferAndFetch(sessionId, after, options) {
       localMessages: barrier.localMessages,
       fetchedMessages: fetched.messages,
       authoritative: authoritative,
+      reorderFetched: false,
     });
     var liveLifecycleChanged =
       _appliedLifecycleVersion !== barrier.lifecycleVersion
@@ -2372,6 +2030,7 @@ async function bufferAndFetch(sessionId, after, options) {
       });
     var adapter = createRecoveryDomAdapter({
       preserveStreamPreviews: _streamCoordinator.hasActiveTurns(),
+      preserveUnmatchedHistory: true,
       isCurrentBarrier: function () {
         return _historyFetchBarriers.isCurrent(barrier);
       },
@@ -2380,6 +2039,14 @@ async function bufferAndFetch(sessionId, after, options) {
       },
       applyStreamOperations: function () {
         drainStrictStreamOperations();
+        for (var completedTurnId of barrier.completedTurnIds) {
+          var renderer = getStrictStreamRenderer();
+          renderer.createTurn({ turnId: completedTurnId });
+          renderer.applyOperation({
+            type: 'completeTurn',
+            turnId: completedTurnId,
+          });
+        }
       },
     });
     var committed = commitHistoryRecovery({
@@ -2451,26 +2118,35 @@ function resolveSessionRunningAfterFetch(result, messages, runtime) {
  */
 async function loadOlderMessages(sessionId) {
   if (state.wsLoadingOlder || !state.wsHasMore || !state.wsOldestTimestamp) return null;
+  if (state.wsSessionId !== sessionId) return null;
+  var generation = _messagePaginationGeneration;
   state.wsLoadingOlder = true;
   try {
     var data = await api('/api/bridge/messages', { session: sessionId, before: state.wsOldestTimestamp });
+    if (generation !== _messagePaginationGeneration
+      || state.wsSessionId !== sessionId) {
+      return null;
+    }
     var msgs = dedupeCodexUserMessages(data.messages || []);
     state.wsHasMore = data.hasMore;
     state.wsOldestTimestamp = data.oldestTimestamp || '';
-    // Dedup and prepend
-    var newMsgs = [];
-    for (var i = 0; i < msgs.length; i++) {
-      if (!trackMessageUuid(msgs[i])) continue;
-      newMsgs.push(msgs[i]);
-      state.wsMessageCount++;
-    }
-    if (newMsgs.length) {
-      state.wsAllMessages = newMsgs.concat(state.wsAllMessages);
-      state.wsRenderedCount += newMsgs.length;
-    }
-    return newMsgs;
+    var firstConfirmed = state.wsAllMessages[0];
+    var pageWindow = firstConfirmed
+      ? msgs.concat([firstConfirmed])
+      : msgs;
+    var mergeResult = mergeLocalHistory({
+      localMessages: state.wsAllMessages,
+      fetchedMessages: pageWindow,
+    });
+    commitPaginatedMessageState(mergeResult.messages);
+    return mergeResult.inserted.map(function (entry) {
+      return entry.message;
+    });
   } finally {
-    state.wsLoadingOlder = false;
+    if (generation === _messagePaginationGeneration
+      && state.wsSessionId === sessionId) {
+      state.wsLoadingOlder = false;
+    }
   }
 }
 
@@ -2941,10 +2617,9 @@ function confirmCodexTakeover() {
   scheduleSendTimeout(pending.id);
 }
 
-// Single terminal state for an ack. Success: stamp the bubble with a time and
-// mark delivered — the bubble stays as the timestamped anchor; when the echoed
-// copy arrives, tryDedup finds this delivered pending and drops the duplicate
-// (see tryDedup). Failure: red "Not delivered · Retry" and stop the spinner.
+// Single terminal state for an ack. Success stamps the existing optimistic
+// bubble; its exact turn echo later promotes that same anchor in place.
+// Failure shows "Not delivered · Retry" and stops the spinner.
 function resolvePending(pending, ok, error) {
   clearTimeout(pending.transportTimer);
   pending.queued = false;
@@ -2980,11 +2655,9 @@ function completeLocalCommand(pending, result) {
       ? Object.assign({ rawText: output }, result.commandPanel)
       : null,
   };
-  if (trackMessageUuid(message)) {
-    state.wsAllMessages.push(message);
-    state.wsMessageCount++;
-    updateLastTurn([message]);
-  }
+  insertLocalMessage(message, {
+    liveStateChanged: true,
+  });
   applyResolvedLiveActivity(
     hasOutstandingTurns() ? 'running' : 'completed',
   );
@@ -3171,42 +2844,6 @@ async function retryPendingSend(msgId) {
   scheduleSendTimeout(pending.id);
 }
 
-// ---- Message dedup utilities ----
-
-/** Extract plain text from a message's content field */
-function extractMsgText(msg) {
-  if (!msg.content) return '';
-  if (typeof msg.content === 'string') return msg.content;
-  if (Array.isArray(msg.content)) {
-    var tb = msg.content.find(function (c) { return c.type === 'text'; });
-    return tb ? (tb.text || '') : '';
-  }
-  return '';
-}
-
-/** Match a user echo to its pending bubble and promote in place. Returns true when handled (caller skips insert). */
-function tryDedup(msg) {
-  if (msg.type !== 'user') return false;
-
-  var exactTurnId = pendingTurnIdForMessage(msg);
-  if (exactTurnId) {
-    msg.turnId = exactTurnId;
-    var byId = findPending(exactTurnId);
-    if (byId) { promoteEchoedBubble(byId, msg); return true; }
-    var anchor = document.querySelector('[data-anchor="' + exactTurnId + '"]');
-    // The rollout and live Codex user rows can use different native ids
-    // (turn id vs client id). Once either has promoted this exact stream's
-    // durable anchor, the other is only a duplicate echo.
-    if (anchor && !anchor.hasAttribute('data-pending')) return true;
-    // A scoped echo belongs to another tab or its ack mapping has not arrived
-    // yet. Never text-match it against a different pending send.
-    return false;
-  }
-
-  // Unscoped echoes are never allowed to claim an optimistic bubble.
-  return false;
-}
-
 // Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
 function promoteEchoedBubble(pending, msg) {
   clearTimeout(pending.transportTimer);
@@ -3236,10 +2873,9 @@ Object.assign(window, {
   resumeSessionForeground,
   startWs, bufferAndFetch, loadOlderMessages, recoverMissing,
   resolveSessionRunningAfterFetch,
-  findInsertBefore, insertAtTimestamp, updateLastTurn,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
-  extractMsgText, tryDedup, retryPendingSend, isInheritedAgentContext,
+  retryPendingSend, isInheritedAgentContext,
 });
 
 // Test-only hook for replaying the real WS dispatcher.
@@ -3250,6 +2886,6 @@ if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
     resumeLateJoinAtCheckpoint: resumeLateJoinAtCheckpoint,
     beginSessionConnectionRecovery: beginSessionConnectionRecovery,
     startSessionConnectionRecovery: startSessionConnectionRecovery,
-    updateLastTurn: updateLastTurn,
+    commitWsAuthority: commitWsAuthority,
   };
 }

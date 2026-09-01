@@ -743,21 +743,14 @@ import { state } from '../state.js';
 
   // Main: render a tool_use + tool_result pair (wrapping tl-item div is in render.js)
   window.detectLang = detectLang;
-  const TOOL_DETAIL_POLICIES = Object.freeze({
-    codex: Object.freeze({
-      enabled: true,
-      historyCollapsed: true,
-      realtimeCollapsed: false,
-    }),
-  });
-  const DEFAULT_TOOL_DETAIL_POLICY = Object.freeze({
-    enabled: false,
-    historyCollapsed: false,
+  const TOOL_DETAIL_POLICY = Object.freeze({
+    enabled: true,
+    historyCollapsed: true,
     realtimeCollapsed: false,
   });
 
-  window.getToolDetailPolicy = function (runtime) {
-    return TOOL_DETAIL_POLICIES[runtime] || DEFAULT_TOOL_DETAIL_POLICY;
+  window.getToolDetailPolicy = function () {
+    return TOOL_DETAIL_POLICY;
   };
 
   window.setToolDetailsCollapsed = function (node, collapsed) {

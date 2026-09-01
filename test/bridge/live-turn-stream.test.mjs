@@ -147,6 +147,28 @@ test('an explicit interrupt is emitted once and remains in terminal authority', 
   );
 });
 
+test('a final runtime interrupt cannot duplicate an earlier client interrupt', () => {
+  const { turn, sent } = createTurn();
+  turn.start();
+  assert.ok(turn.sendInterrupt('2026-08-22T00:00:00.000Z'));
+  assert.equal(turn.sendAuthoritative({
+    uuid: 'codex:turn:runtime-turn:interrupt',
+    nativeId: 'codex:turn:runtime-turn:interrupt',
+    type: 'user',
+    content: [{
+      type: 'text',
+      text: '[Request interrupted by user]',
+    }],
+  }), false);
+  turn.sendEnd();
+
+  assert.equal(sent.at(-1).messages.length, 1);
+  assert.equal(
+    sent.at(-1).messages[0].uuid,
+    'live_interrupt_turn-1',
+  );
+});
+
 test('every runtime final interrupted status synthesizes interrupt authority', () => {
   assert.equal(
     shouldCreateFinalInterrupt('codex', { status: 'interrupted' }),

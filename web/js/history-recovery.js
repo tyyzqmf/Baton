@@ -22,19 +22,33 @@ export function mergeFetchWindow(options = {}) {
 }
 
 /**
- * @param {{localMessages?: object[], fetchedMessages?: object[], authoritative?: boolean}} options
+ * @param {{localMessages?: object[], fetchedMessages?: object[], authoritative?: boolean, replaceConflicts?: boolean, reorderFetched?: boolean}} options
  * @returns {{messages: object[], inserted: object[], patched: object[], identityUpdated: object[], conflicts: object[], reordered: boolean, authoritative: boolean}}
  */
 export function mergeLocalHistory(options = {}) {
-  var messages = (options.localMessages || []).filter(isMessage).slice();
-  var index = new Map();
-  for (var localMessage of messages) indexMessage(index, localMessage);
-
   var inserted = [];
   var patched = [];
   var identityUpdated = [];
   var conflicts = [];
   var ambiguousUserIdentity = false;
+  var messages = [];
+  var index = new Map();
+  for (var localMessage of options.localMessages || []) {
+    if (!isMessage(localMessage)) continue;
+    var confirmedMessage = localMessage;
+    if (localMessage._strictManaged) {
+      confirmedMessage = cloneMessage(localMessage);
+      delete confirmedMessage._strictManaged;
+      recordPatch(
+        patched,
+        messages.length,
+        localMessage,
+        confirmedMessage,
+      );
+    }
+    messages.push(confirmedMessage);
+    indexMessage(index, confirmedMessage);
+  }
 
   var fetchedMessages = options.fetchedMessages || [];
   for (var fetchedIndex = 0; fetchedIndex < fetchedMessages.length; fetchedIndex++) {
@@ -100,34 +114,57 @@ export function mergeLocalHistory(options = {}) {
           before: existing,
           after: identityReplacement,
         };
-        if (presentationChanged || metadataChanged) patched.push(identityChange);
+        if (presentationChanged || metadataChanged) {
+          recordPatch(
+            patched,
+            identityChange.index,
+            identityChange.before,
+            identityChange.after,
+          );
+        }
         else identityUpdated.push(identityChange);
       }
       continue;
     }
 
-    if (isProvablyBetter(incoming, existing)) {
-      var replacement = patchMessage(existing, incoming);
-      if (options.authoritative) delete replacement._strictManaged;
-      mergeAliases(replacement, [existing, incoming]);
-      var patchedIndex = replaceOne(messages, index, existing, replacement);
-      patched.push({
-        index: patchedIndex,
-        before: existing,
-        after: replacement,
-      });
+    if (isProvablyBetter(existing, incoming)
+      || (!options.replaceConflicts
+        && !isProvablyBetter(incoming, existing))) {
+      var preserved = cloneMessage(existing);
+      if (!preserved.turnId && incoming.turnId) {
+        preserved.turnId = incoming.turnId;
+      }
+      mergeAliases(preserved, [existing, incoming]);
+      var preservedIdentityChanged = existing.turnId !== preserved.turnId
+        || !sameAliases(existing, preserved);
+      if (preservedIdentityChanged) {
+        var preservedIndex = replaceOne(messages, index, existing, preserved);
+        identityUpdated.push({
+          index: preservedIndex,
+          before: existing,
+          after: preserved,
+        });
+      }
+      if (!isProvablyBetter(existing, incoming)) {
+        conflicts.push({
+          type: 'content-conflict',
+          existing: existing,
+          incoming: incoming,
+        });
+      }
       continue;
     }
 
-    conflicts.push({
-      type: 'content-conflict',
-      existing: existing,
-      incoming: incoming,
-    });
+    var replacement = patchMessage(existing, incoming);
+    mergeAliases(replacement, [existing, incoming]);
+    var patchedIndex = replaceOne(messages, index, existing, replacement);
+    recordPatch(patched, patchedIndex, existing, replacement);
   }
 
   var reordered = false;
-  if (options.authoritative && !ambiguousUserIdentity) {
+  if (options.authoritative
+    && options.reorderFetched !== false
+    && !ambiguousUserIdentity) {
     var orderedMatches = [];
     var used = new Set();
     var finalIndex = new Map();
@@ -197,15 +234,12 @@ function matchKeys(message) {
   var keys = new Set();
   var legacyTurnUserKey = legacyTurnUserOccurrenceKey(message);
   if (legacyTurnUserKey) keys.add(legacyTurnUserKey);
-  else if (message.uuid) keys.add('uuid:' + message.uuid);
+  else {
+    if (message.uuid) keys.add('uuid:' + message.uuid);
+    if (message.nativeId) keys.add('native:' + message.nativeId);
+  }
   var promptId = promptTurnId(message);
   if (promptId) keys.add('prompt-turn:' + promptId);
-  if (typeof message.nativeId === 'string'
-    && (message.nativeId.indexOf('codex:user:') === 0
-      || message.nativeId.indexOf('live:user:') === 0
-      || message.nativeId.indexOf('codex:item:') === 0)) {
-    keys.add('native:' + message.nativeId);
-  }
   for (var alias of message.identityAliases || []) {
     if (!alias || /^(?:turn|pending):/.test(String(alias))) continue;
     if (legacyTurnUserKey
@@ -214,9 +248,6 @@ function matchKeys(message) {
       continue;
     }
     keys.add(String(alias));
-  }
-  if (!legacyTurnUserKey && !message.uuid && message.nativeId) {
-    keys.add('native:' + message.nativeId);
   }
   return keys;
 }
@@ -454,8 +485,31 @@ function replaceOne(messages, index, existing, replacement) {
 
 function patchMessage(existing, incoming) {
   var replacement = { ...existing, ...incoming };
-  for (var key of ['truncated', 'provisional', 'codexProvisional']) {
+  for (var key of [
+    'truncated',
+    'provisional',
+    'codexProvisional',
+    '_strictManaged',
+  ]) {
     if (!Object.hasOwn(incoming, key)) delete replacement[key];
   }
   return replacement;
+}
+
+function recordPatch(patched, index, before, after) {
+  var previous = patched.find(function (entry) {
+    return entry.after === before;
+  });
+  if (previous) {
+    previous.index = index;
+    previous.after = after;
+    return previous;
+  }
+  var patch = {
+    index: index,
+    before: before,
+    after: after,
+  };
+  patched.push(patch);
+  return patch;
 }

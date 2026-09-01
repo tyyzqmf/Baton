@@ -258,12 +258,12 @@ test('an OUT update on an earlier tool still keeps the whole view at the bottom'
       content: 'done',
     }],
   };
-  h.state.wsAllMessages = [toolUse, toolResult];
+  h.state.wsAllMessages = [toolUse];
   h.state.wsRenderedCount = 1;
   h.state.stickBottom = true;
   content.scrollTop = 400;
 
-  h.hooks.updateLastTurn([toolResult]);
+  h.hooks.commitWsAuthority([toolResult]);
   assert.equal(
     container.querySelector('[data-tool-id="tool-1"]').textContent,
     'completed output',

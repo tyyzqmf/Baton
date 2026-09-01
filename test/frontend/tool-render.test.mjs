@@ -117,6 +117,56 @@ test('Update Plan renders aligned status icons for completed, active, and pendin
   assert.match(css, /html\.native-mobile \.plan-item-text \{ font-size: 14px; line-height: 21px; \}/);
 });
 
+test('Codex history preserves distinct plan snapshots in one turn', () => {
+  const plan = (suffix, text) => ({
+    uuid: `plan-${suffix}`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: `plan-tool-${suffix}`,
+      name: 'TodoWrite',
+      input: {
+        todos: [{ content: text, status: 'in_progress' }],
+      },
+    }],
+  });
+  const html = window.renderMessages([
+    plan('first', 'First plan'),
+    plan('latest', 'Latest plan'),
+  ], 'codex');
+
+  document.body.innerHTML = html;
+  assert.equal(document.querySelectorAll('[data-codex-plan="1"]').length, 2);
+  assert.match(document.body.textContent, /First plan/);
+  assert.match(document.body.textContent, /Latest plan/);
+});
+
+test('Codex recovery hides only Plan copies covered by the live preview', () => {
+  document.body.innerHTML = `<div class="messages">
+    <div class="assistant-turn">
+      <div class="tl-item tool-node" data-codex-plan="1">Recovered plan 1</div>
+      <div class="tl-item tool-node" data-codex-plan="1">Recovered plan 2</div>
+    </div>
+    <div class="assistant-turn stream-preview">
+      <div class="tl-item tool-node" data-codex-plan="1">Live plan 1</div>
+      <div class="tl-item tool-node" data-codex-plan="1">Live plan 2</div>
+    </div>
+    <div class="msg-user">next turn</div>
+    <div class="assistant-turn">
+      <div class="tl-item tool-node" data-codex-plan="1">Next plan</div>
+    </div>
+  </div>`;
+  const container = document.querySelector('.messages');
+
+  window.normalizeCodexTimeline(container);
+
+  assert.deepEqual(
+    Array.from(container.querySelectorAll('[data-codex-plan="1"]'))
+      .map((node) => node.textContent),
+    ['Live plan 1', 'Live plan 2', 'Next plan'],
+  );
+});
+
 test('Bash headers stay muted while IN keeps shell syntax highlighting', () => {
   const command = `brandnew-cli --mode=fast "green value" && next-tool -3 $HOME/a/longer/path/to/file.txt`;
   const html = window.renderToolNode({
@@ -244,6 +294,36 @@ test('failed commands keep the error dot without a redundant status label', () =
   assert.equal(document.querySelector('.tool-status'), null);
   assert.doesNotMatch(html, />Exit 255</);
   assert.doesNotMatch(html, />Failed</);
+});
+
+test('message rendering does not mutate source tool result blocks', () => {
+  const messages = [{
+    uuid: 'immutable-use',
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'immutable-tool',
+      name: 'Bash',
+      input: { command: 'echo immutable' },
+    }],
+    timestamp: '2026-09-01T00:00:00.000Z',
+  }, {
+    uuid: 'immutable-result',
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'immutable-tool',
+      content: 'immutable output',
+      is_error: false,
+    }],
+    toolUseResult: { durationMs: 12 },
+    timestamp: '2026-09-01T00:00:01.000Z',
+  }];
+  const before = structuredClone(messages);
+
+  window.renderMessages(messages, 'codex');
+
+  assert.deepEqual(messages, before);
 });
 
 test('Codex ignores the legacy Waited label on Bash results', () => {
@@ -454,7 +534,7 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.match(css, /\.tool-detail-chevron \{\s*display: inline-block; align-self: center;/);
 });
 
-test('tool detail policy collapses Codex history while realtime and Claude stay expanded', () => {
+test('tool detail policy collapses all history while realtime stays expanded', () => {
   const message = {
     uuid: 'bash-use',
     type: 'assistant',
@@ -488,8 +568,26 @@ test('tool detail policy collapses Codex history while realtime and Claude stay 
 
   document.body.innerHTML = `<div class="messages">${window.renderMessages([message], 'claude')}</div>`;
   const claudeNode = document.querySelector('.tool-node');
-  assert.equal(claudeNode.classList.contains('tool-details-collapsed'), false);
-  assert.equal(claudeNode.querySelector('.tool-detail-chevron'), null);
+  assert.equal(claudeNode.classList.contains('tool-details-collapsed'), true);
+  assert.equal(
+    claudeNode.querySelector('.tool-header').getAttribute('aria-expanded'),
+    'false',
+  );
+  assert.ok(claudeNode.querySelector('.tool-detail-chevron'));
+
+  document.body.innerHTML = `<div class="messages">${
+    window.renderSingleMessage(message, [message], 'claude')
+  }</div>`;
+  const claudeRealtimeNode = document.querySelector('.tool-node');
+  assert.equal(
+    claudeRealtimeNode.classList.contains('tool-details-collapsed'),
+    false,
+  );
+  assert.equal(
+    claudeRealtimeNode.querySelector('.tool-header')
+      .getAttribute('aria-expanded'),
+    'true',
+  );
 });
 
 test('Codex Explored title toggles every detail body in the group', () => {

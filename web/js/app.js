@@ -1826,7 +1826,8 @@ async function loadOlderAndPrepend() {
   var anchor = loader ? loader.nextElementSibling : container.firstElementChild;
   var prevTop = anchor ? anchor.getBoundingClientRect().top : 0;
 
-  // Prepend after the loader so it stays the first child.
+  // Prepend after the loader so it stays the first child. Pagination updates
+  // message state without reconciling the existing DOM, keeping this atomic.
   var html = renderMessages(msgs, state.appState.runtime);
   if (loader) loader.insertAdjacentHTML('afterend', html);
   else container.insertAdjacentHTML('afterbegin', html);
@@ -1836,7 +1837,7 @@ async function loadOlderAndPrepend() {
   if (window.renderMermaidBlocks) renderMermaidBlocks(container);
   if (window.renderKatexBlocks) renderKatexBlocks(container);
 
-  if (anchor) content.scrollTop += Math.round(anchor.getBoundingClientRect().top - prevTop);
+  if (anchor) content.scrollTop += anchor.getBoundingClientRect().top - prevTop;
 
   if (_pinRo) { _pinRo.disconnect(); _pinRo = null; }
   clearTimeout(_pinRoTimer);
@@ -1845,7 +1846,7 @@ async function loadOlderAndPrepend() {
     var lastSet = content.scrollTop;
     _pinRo = new ResizeObserver(function () {
       if (Math.abs(content.scrollTop - lastSet) > 2) { _pinRo.disconnect(); _pinRo = null; return; }
-      var delta = Math.round(anchor.getBoundingClientRect().top - pinTop);
+      var delta = anchor.getBoundingClientRect().top - pinTop;
       if (delta) {
         content.scrollTop += delta;
         lastSet = content.scrollTop;

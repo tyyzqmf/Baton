@@ -1700,24 +1700,26 @@ export class CodexInteraction {
     }
     if (state.completed) return;
     state.completed = true;
-    for (const complete of codexCompletedLiveMessages(
-      completedItem,
-      completedAtMs,
-      state.text,
-      {
-        turnId: turn.turnId,
-        sessionId: turn.session.nativeSessionId,
-      },
-    )) {
-      turn.callbacks.onMessage?.(
-        turn.streamId,
-        complete.message,
+    if (options.publishMessages !== false) {
+      for (const complete of codexCompletedLiveMessages(
+        completedItem,
+        completedAtMs,
+        state.text,
         {
-          normalized: true,
-          runtime: 'codex',
-          liveKey: codexTurnLiveKey(turn.turnId),
+          turnId: turn.turnId,
+          sessionId: turn.session.nativeSessionId,
         },
-      );
+      )) {
+        turn.callbacks.onMessage?.(
+          turn.streamId,
+          complete.message,
+          {
+            normalized: true,
+            runtime: 'codex',
+            liveKey: codexTurnLiveKey(turn.turnId),
+          },
+        );
+      }
     }
   }
 
@@ -1775,7 +1777,9 @@ export class CodexInteraction {
         status: 'completed',
       };
       this.#itemState(turn, item);
-      this.#completeItem(turn, item, Date.now());
+      this.#completeItem(turn, item, Date.now(), {
+        publishMessages: false,
+      });
       return;
     }
 

@@ -341,21 +341,86 @@ test('mergeLocalHistory patches better fetched copies at the original position',
   assert.equal(local[1].content[0].text, 'partial');
 });
 
-test('mergeLocalHistory keeps the local copy for an unresolvable content conflict', () => {
+test('mergeLocalHistory updates the same identity for live authority', () => {
   const local = message('shared', '2026-08-27T02:00:00.000Z', {
-    content: [{ type: 'text', text: 'local visible copy' }],
+    content: [{
+      type: 'tool_use',
+      id: 'tool-shared',
+      name: 'Bash',
+      input: { command: '/bin/bash -lc "echo ok"' },
+    }],
+    _strictManaged: true,
   });
   const result = mergeLocalHistory({
     localMessages: [local],
+    replaceConflicts: true,
     fetchedMessages: [message('shared', '2026-08-27T02:00:00.000Z', {
-      content: [{ type: 'text', text: 'different fetched copy' }],
+      content: [{
+        type: 'tool_use',
+        id: 'tool-shared',
+        name: 'Bash',
+        input: { command: 'echo ok' },
+      }],
     })],
+  });
+
+  assert.equal(result.messages.length, 1);
+  assert.equal(
+    result.messages[0].content[0].input.command,
+    'echo ok',
+  );
+  assert.equal(result.messages[0]._strictManaged, undefined);
+  assert.equal(result.patched.length, 1);
+  assert.equal(result.patched[0].index, 0);
+  assert.equal(result.conflicts.length, 0);
+});
+
+test('mergeLocalHistory keeps complete local content on a REST conflict', () => {
+  const local = message('shared-rest-conflict', '2026-08-27T02:00:00.000Z', {
+    content: [{ type: 'text', text: 'complete local content' }],
+  });
+  const result = mergeLocalHistory({
+    localMessages: [local],
+    fetchedMessages: [message(
+      'shared-rest-conflict',
+      '2026-08-27T02:00:00.000Z',
+      {
+        content: [{ type: 'text', text: 'different REST content' }],
+      },
+    )],
   });
 
   assert.equal(result.messages[0], local);
   assert.equal(result.patched.length, 0);
   assert.equal(result.conflicts.length, 1);
   assert.equal(result.conflicts[0].type, 'content-conflict');
+});
+
+test('mergeLocalHistory never downgrades complete content with a provisional copy', () => {
+  const local = message('shared-complete', '2026-08-27T02:00:00.000Z', {
+    nativeId: 'codex:item:shared-complete',
+    content: [{ type: 'text', text: 'complete REST content' }],
+  });
+  const result = mergeLocalHistory({
+    localMessages: [local],
+    fetchedMessages: [message(
+      'shared-complete',
+      '2026-08-27T02:00:00.000Z',
+      {
+        nativeId: 'codex:item:shared-complete',
+        turnId: 'turn-shared-complete',
+        content: [{
+          type: 'text',
+          text: 'partial WS content',
+          codexProvisional: true,
+        }],
+      },
+    )],
+  });
+
+  assert.equal(result.messages[0].content[0].text, 'complete REST content');
+  assert.equal(result.messages[0].turnId, 'turn-shared-complete');
+  assert.equal(result.patched.length, 0);
 });
 
 test('history recovery merges canonical interrupt identity and authoritative stopReason', () => {
@@ -440,6 +505,27 @@ test('mergeLocalHistory preserves different UUIDs that reuse one nativeId', () =
   assert.deepEqual(
     result.messages.map((item) => item.uuid),
     ['local-user', 'fetched-user'],
+  );
+});
+
+test('strict lifecycle preserves distinct UUIDs with identical content', () => {
+  const shared = {
+    turnId: 'turn-identical-assistants',
+    _strictLifecycle: true,
+    content: [{ type: 'text', text: 'same answer' }],
+  };
+  const result = mergeFetchWindow({
+    restMessages: [],
+    historyBuffer: [
+      message('assistant-one', '', shared),
+      message('assistant-two', '', shared),
+    ],
+    restOk: true,
+  });
+
+  assert.deepEqual(
+    result.messages.map((item) => item.uuid),
+    ['assistant-one', 'assistant-two'],
   );
 });
 

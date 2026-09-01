@@ -206,3 +206,127 @@ test('completed recovery cannot reuse a stale stream turn for another answer', (
     '[data-message-id="' + answer8 + '"]',
   ).length, 1);
 });
+
+test('recovery patches but never deletes local stream-committed children', () => {
+  const turnId = 'turn-committed';
+  const dom = new JSDOM(
+    '<div class="messages">'
+      + '<div class="msg-user" data-anchor="' + turnId + '"'
+      + ' data-message-id="user">question</div>'
+      + '<div class="assistant-turn stream-committed" data-turn-id="'
+      + turnId + '">'
+      + '<div class="tl-item tool-node" data-message-id="local-only">local</div>'
+      + '<div class="tl-item assistant-text" data-message-id="shared">old</div>'
+      + '</div>'
+      + '</div>',
+  );
+  const container = dom.window.document.querySelector('.messages');
+  const committed = container.lastElementChild;
+  const localOnly = committed.firstElementChild;
+  const shared = committed.lastElementChild;
+  const messages = [{
+    uuid: 'user',
+    turnId,
+    type: 'user',
+    content: 'question',
+  }, {
+    uuid: 'shared',
+    turnId,
+    type: 'assistant',
+    content: 'new',
+  }];
+  const state = {
+    wsAllMessages: messages,
+    wsMessageUuids: new Set(['user', 'shared']),
+    wsMessageCount: messages.length,
+    wsLastTimestamp: '',
+    wsRenderedCount: messages.length,
+    pendingSentMessages: [],
+    wsRunning: false,
+  };
+  const adapter = createHistoryRecoveryDomAdapter({
+    state,
+    document: dom.window.document,
+    runtime: () => 'codex',
+    renderMessages: () =>
+      '<div class="msg-user" data-anchor="' + turnId + '"'
+      + ' data-message-id="user">question</div>'
+      + '<div class="assistant-turn" data-turn-id="' + turnId + '">'
+      + '<div class="tl-item assistant-text" data-message-id="shared">new</div>'
+      + '</div>',
+  });
+
+  adapter.setMessages(messages);
+  adapter.applyHistoryChanges({
+    messages,
+    inserted: [],
+    patched: [{
+      before: { uuid: 'shared', type: 'assistant', content: 'old' },
+      after: messages[1],
+    }],
+    identityUpdated: [],
+    conflicts: [],
+    reordered: false,
+    authoritative: true,
+  }, { promoted: [], remaining: [] }, 'completed');
+
+  assert.equal(container.lastElementChild, committed);
+  assert.equal(localOnly.isConnected, true);
+  assert.equal(
+    committed.querySelector('[data-message-id="shared"]'),
+    shared,
+  );
+  assert.equal(
+    committed.querySelector('[data-message-id="shared"]').textContent,
+    'new',
+  );
+});
+
+test('append-only recovery patches ordinary nodes in place without removing local rows', () => {
+  const dom = new JSDOM(
+    '<div class="messages">'
+      + '<div class="msg-user" data-message-id="shared">old</div>'
+      + '<div class="assistant-turn" data-local-only="1">local row</div>'
+      + '</div>',
+  );
+  const container = dom.window.document.querySelector('.messages');
+  const shared = container.firstElementChild;
+  const localOnly = container.lastElementChild;
+  const message = { uuid: 'shared', type: 'user', content: 'new' };
+  const state = {
+    wsAllMessages: [message],
+    wsMessageUuids: new Set(['shared']),
+    wsMessageCount: 1,
+    wsLastTimestamp: '',
+    wsRenderedCount: 1,
+    pendingSentMessages: [],
+    wsRunning: false,
+  };
+  const adapter = createHistoryRecoveryDomAdapter({
+    state,
+    document: dom.window.document,
+    runtime: () => 'codex',
+    preserveUnmatchedHistory: true,
+    renderMessages: () =>
+      '<div class="msg-user" data-message-id="shared">new</div>',
+  });
+
+  adapter.setMessages([message]);
+  adapter.applyHistoryChanges({
+    messages: [message],
+    inserted: [],
+    patched: [{
+      before: { uuid: 'shared', type: 'user', content: 'old' },
+      after: message,
+    }],
+    identityUpdated: [],
+    conflicts: [],
+    reordered: false,
+    authoritative: true,
+  }, { promoted: [], remaining: [] }, 'completed');
+
+  assert.equal(container.firstElementChild, shared);
+  assert.equal(shared.textContent, 'new');
+  assert.equal(localOnly.isConnected, true);
+  assert.equal(container.lastElementChild, localOnly);
+});

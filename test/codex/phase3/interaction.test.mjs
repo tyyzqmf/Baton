@@ -427,16 +427,15 @@ test('structured plan updates render as TodoWrite while duplicate snapshots are 
     ],
     explanation: 'Initial plan',
   });
-  assert.equal(cb.messages.length, 2);
-  const toolUse = cb.messages[0].message.content[0];
-  const toolResult = cb.messages[1].message.content[0];
-  assert.equal(toolUse.name, 'TodoWrite');
-  assert.equal(toolResult.tool_use_id, toolUse.id);
-  assert.equal(cb.messages[0].meta.liveKey, 'runtime-turn:turn-plan');
+  assert.equal(
+    cb.messages.length,
+    0,
+    'JSONL watcher owns the durable plan messages',
+  );
 
   notify(client, 'turn/plan/updated', first);
   assert.equal(cb.frames.length, 3);
-  assert.equal(cb.messages.length, 2);
+  assert.equal(cb.messages.length, 0);
 
   notify(client, 'turn/plan/updated', {
     ...first,
@@ -447,7 +446,7 @@ test('structured plan updates render as TodoWrite while duplicate snapshots are 
     })),
   });
   assert.equal(cb.frames.filter((frame) => frame.t === 'start').length, 2);
-  assert.equal(cb.messages.length, 4);
+  assert.equal(cb.messages.length, 0);
 });
 
 test('legacy plan item deltas remain streamed plan text', async () => {

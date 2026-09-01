@@ -7,6 +7,15 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
+async function waitFor(h, predicate, timeoutMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await h.tick(10);
+  }
+  return predicate();
+}
+
 test('REST status releases reconnect events without settling before stream end', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:foreground-rest-first';
@@ -63,7 +72,12 @@ test('REST status releases reconnect events without settling before stream end',
   );
 
   resolveRest({ messages: [], hasMore: false, status: 'completed' });
-  await h.tick(40);
+  assert.equal(
+    await waitFor(h, () =>
+      h.document.querySelector('.messages').textContent
+        .includes('new block after reconnect')),
+    true,
+  );
 
   // The REST snapshot releases live events, but status alone cannot settle
   // a turn that has no stream_end.

@@ -78,6 +78,14 @@ function createInterruptMessage(
   };
 }
 
+function isInterruptMessage(message) {
+  return message?.type === 'user'
+    && Array.isArray(message.content)
+    && message.content.length === 1
+    && message.content[0]?.type === 'text'
+    && message.content[0].text === '[Request interrupted by user]';
+}
+
 export function isPromptUserMessage(message) {
   if (message?.type !== 'user') return false;
   if (typeof message.content === 'string') return !!message.content.trim();
@@ -178,8 +186,11 @@ export class LiveTurnStream {
   }
 
   sendAuthoritative(message, options = {}) {
+    var interrupt = isInterruptMessage(message);
+    if (interrupt && this.interruptSent) return false;
     const event = this.createMessagesEvent([message], options);
     if (!event) return false;
+    if (interrupt) this.interruptSent = true;
     this.send(event);
     return event;
   }
@@ -194,7 +205,6 @@ export class LiveTurnStream {
 
   #sendInterrupt(timestamp) {
     if (this.ended || this.interruptSent) return false;
-    this.interruptSent = true;
     return this.sendAuthoritative(
       createInterruptMessage(this.turnId, timestamp),
       { noCache: true },

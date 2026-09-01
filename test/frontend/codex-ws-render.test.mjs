@@ -205,6 +205,70 @@ test('unrelated tool results do not dismiss the active permission prompt', () =>
   assert.equal(document.getElementById('permission-prompt'), null);
 });
 
+test('strict tool results update OUT before stream_end', () => {
+  reset();
+  const turnId = 'turn-live-out';
+  document.querySelector('.messages').innerHTML =
+    `<div class="msg-user" data-anchor="${turnId}">run it</div>`;
+  const event = (seq, action, extra = {}) => ({
+    action,
+    sessionId: state.wsSessionId,
+    turnId,
+    seq,
+    ...extra,
+  });
+  const toolUse = {
+    uuid: 'live-out-use',
+    nativeId: 'codex:item:live-out:tool-use',
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'live-out-tool',
+      name: 'Bash',
+      input: { command: 'printf done' },
+    }],
+  };
+  const toolResult = {
+    uuid: 'live-out-result',
+    nativeId: 'codex:item:live-out:tool-result',
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'live-out-tool',
+      content: 'done',
+      is_error: false,
+    }],
+  };
+
+  for (const item of [
+    event(0, 'stream_turn_start'),
+    event(1, 'stream_block_start', { kind: 'tool_use', name: 'Bash' }),
+    event(2, 'stream_tool_input', {
+      chunk: JSON.stringify(toolUse.content[0].input),
+    }),
+    event(3, 'stream_block_stop'),
+    event(4, 'messages', { messages: [toolUse] }),
+    event(5, 'messages', { messages: [toolResult] }),
+  ]) {
+    window.__wsTest.handleWsMessage(item);
+  }
+
+  const tool = document.querySelector('[data-tool-id="live-out-tool"]');
+  assert.ok(tool);
+  assert.match(tool.textContent, /OUT/);
+  assert.match(tool.textContent, /done/);
+  assert.equal(state.wsRunning, true);
+
+  window.__wsTest.handleWsMessage(event(6, 'stream_end', {
+    messages: [toolUse, toolResult],
+  }));
+  send([{
+    uuid: 'live-out-next-user',
+    type: 'user',
+    content: 'next',
+  }]);
+});
+
 test('Goal resume resolution starts the spinner before the first turn update arrives', () => {
   reset();
   state.wsRunning = false;
@@ -974,4 +1038,82 @@ test('structured Codex plan updates render immediately as one TodoWrite checklis
   assert.ok(plan.querySelector('.plan-item-completed'));
   assert.ok(plan.querySelector('.plan-item-in_progress'));
   assert.ok(plan.querySelector('.plan-item-pending'));
+});
+
+test('Codex preserves distinct live plan updates before and after stream_end', () => {
+  reset();
+  const turnId = 'turn-plan-replacement';
+  document.querySelector('.messages').innerHTML =
+    `<div class="msg-user" data-anchor="${turnId}">plan</div>`;
+  const event = (seq, action, extra = {}) => ({
+    action,
+    sessionId: state.wsSessionId,
+    turnId,
+    seq,
+    ...extra,
+  });
+  const planMessage = (suffix, text) => ({
+    uuid: `plan-use-${suffix}`,
+    nativeId: `codex:item:plan-${suffix}:tool-use`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: `plan-tool-${suffix}`,
+      name: 'TodoWrite',
+      input: {
+        todos: [{ content: text, status: 'in_progress' }],
+      },
+    }],
+  });
+  const resultMessage = (suffix) => ({
+    uuid: `plan-result-${suffix}`,
+    nativeId: `codex:item:plan-${suffix}:tool-result`,
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: `plan-tool-${suffix}`,
+      content: 'Plan updated',
+      is_error: false,
+    }],
+  });
+  const firstUse = planMessage('first', 'First plan');
+  const firstResult = resultMessage('first');
+  const secondUse = planMessage('second', 'Latest plan');
+  const secondResult = resultMessage('second');
+
+  for (const item of [
+    event(0, 'stream_turn_start'),
+    event(1, 'stream_block_start', { kind: 'tool_use', name: 'TodoWrite' }),
+    event(2, 'stream_tool_input', {
+      chunk: JSON.stringify(firstUse.content[0].input),
+    }),
+    event(3, 'stream_block_stop'),
+    event(4, 'messages', { messages: [firstUse] }),
+    event(5, 'messages', { messages: [firstResult] }),
+    event(6, 'stream_block_start', { kind: 'tool_use', name: 'TodoWrite' }),
+    event(7, 'stream_tool_input', {
+      chunk: JSON.stringify(secondUse.content[0].input),
+    }),
+    event(8, 'stream_block_stop'),
+    event(9, 'messages', { messages: [secondUse] }),
+    event(10, 'messages', { messages: [secondResult] }),
+  ]) {
+    window.__wsTest.handleWsMessage(item);
+  }
+
+  assert.deepEqual(
+    Array.from(document.querySelectorAll('[data-codex-plan="1"]'))
+      .map((node) => node.querySelector('.plan-item-text')?.textContent),
+    ['First plan', 'Latest plan'],
+  );
+
+  window.__wsTest.handleWsMessage(event(11, 'stream_end', {
+    messages: [firstUse, firstResult, secondUse, secondResult],
+  }));
+
+  assert.deepEqual(
+    Array.from(document.querySelectorAll('[data-codex-plan="1"]'))
+      .map((node) => node.querySelector('.plan-item-text')?.textContent),
+    ['First plan', 'Latest plan'],
+  );
 });

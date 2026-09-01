@@ -64,12 +64,34 @@
   window.normalizeCodexTimeline = function (container) {
     if (!container) return;
     let previousWait = null;
+    let historicalPlans = [];
     for (const row of Array.from(container.children)) {
       if (!row.classList?.contains('assistant-turn')) {
         previousWait = null;
+        historicalPlans = [];
         continue;
       }
-      for (const item of Array.from(row.children)) {
+      const rowItems = Array.from(row.children);
+      const rowPlans = rowItems.filter(item =>
+        item.dataset?.codexPlan === '1');
+      if ((row.classList.contains('stream-preview')
+          || row.classList.contains('stream-committed'))
+        && rowPlans.length) {
+        for (let count = rowPlans.length;
+          count > 0 && historicalPlans.length;
+          count--) {
+          const duplicate = historicalPlans.pop();
+          const duplicateRow = duplicate.parentElement;
+          duplicate.remove();
+          if (duplicateRow?.classList.contains('assistant-turn')
+            && !duplicateRow.children.length) {
+            duplicateRow.remove();
+          }
+        }
+      } else {
+        historicalPlans.push(...rowPlans);
+      }
+      for (const item of rowItems) {
         const processId = item.classList?.contains('codex-terminal-wait')
           ? String(item.dataset?.codexProcess || '')
           : '';
@@ -93,15 +115,20 @@
 
   function buildToolMaps(messages) {
     const resultMap = {};
-    for (const msg of messages) {
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      const msg = messages[messageIndex];
       if (!Array.isArray(msg.content)) continue;
       for (const b of msg.content) {
         if (b.type === 'tool_result' && b.tool_use_id) {
           if (b.codexSuperseded) continue;
-          // Attach Agent metadata if present on the message
-          if (msg.toolUseResult) b._agentMeta = msg.toolUseResult;
-          b._timestamp = msg.timestamp || '';
-          resultMap[b.tool_use_id] = b;
+          resultMap[b.tool_use_id] = {
+            ...b,
+            ...(msg.toolUseResult
+              ? { _agentMeta: msg.toolUseResult }
+              : {}),
+            _timestamp: msg.timestamp || '',
+            _messageIndex: messageIndex,
+          };
         }
       }
     }
@@ -122,7 +149,8 @@
     }
 
     let textBuf = [];
-    for (const block of msg.content) {
+    for (let blockIndex = 0; blockIndex < msg.content.length; blockIndex++) {
+      const block = msg.content[blockIndex];
       if (block.type === 'text') {
         if (block.text && block.text.trim()) textBuf.push(block.text);
       } else if (block.type === 'thinking') {
@@ -150,6 +178,11 @@
           codexWait: emptyTerminalWait,
           codexProcessId: String(result?.codexProcessId || block.input?.session_id || ''),
           codexBackgroundComplete: result?.codexBackground === 'complete',
+          codexPlan: runtime === 'codex' && block.name === 'TodoWrite',
+          displayOrder: result?.codexBackground === 'complete'
+            ? Number(result._messageIndex)
+            : Number(options.messageIndex),
+          blockIndex,
         });
       } else if (block.type === 'image' && block.key) {
         flush();
@@ -167,8 +200,22 @@
     return items;
   }
 
-  function normalizeCodexItems(items) {
-    return items;
+  function normalizeCodexItems(items, options = {}) {
+    if (!options.realtimeOrder) return items;
+    return items.map((item, index) => ({
+      item,
+      index,
+      order: Number.isFinite(item.displayOrder)
+        ? item.displayOrder
+        : index,
+      blockIndex: Number.isFinite(item.blockIndex) ? item.blockIndex : 0,
+    })).sort((left, right) => {
+      if (left.order !== right.order) return left.order - right.order;
+      if (left.blockIndex !== right.blockIndex) {
+        return left.blockIndex - right.blockIndex;
+      }
+      return left.index - right.index;
+    }).map(entry => entry.item);
   }
 
   function itemToHtml(item, timestamp, collapseToolDetails = false) {
@@ -190,8 +237,9 @@
     const messageAttr = item.messageId ? ` data-message-id="${escapeAttribute(item.messageId)}"` : '';
     const nativeAttr = item.nativeId ? ` data-native-id="${escapeAttribute(item.nativeId)}"` : '';
     const processAttr = item.codexProcessId ? ` data-codex-process="${escapeAttribute(item.codexProcessId)}"` : '';
+    const planAttr = item.codexPlan ? ' data-codex-plan="1"' : '';
     const tsAttr = timestamp ? ` data-ts="${escapeAttribute(timestamp)}"` : '';
-    return `<div class="${cls}"${toolAttr}${messageAttr}${nativeAttr}${processAttr}${tsAttr}>${item.html}</div>`;
+    return `<div class="${cls}"${toolAttr}${messageAttr}${nativeAttr}${processAttr}${planAttr}${tsAttr}>${item.html}</div>`;
   }
 
   // Main: render all messages, merging consecutive assistant messages into one timeline
@@ -206,13 +254,23 @@
 
     function flushTurn() {
       if (!turnItems.length) return;
-      const items = runtime === 'codex' ? normalizeCodexItems(turnItems) : turnItems;
-      html.push(`<div class="assistant-turn">${items.map(i =>
+      const normalizedItems = runtime === 'codex'
+        ? normalizeCodexItems(turnItems, options)
+        : turnItems;
+      const items = normalizedItems
+        .filter(item => item.type !== 'interrupt')
+        .concat(normalizedItems.filter(item => item.type === 'interrupt'));
+      const turnId = items[0]?.turnId || '';
+      const turnAttr = turnId && items.every(item => item.turnId === turnId)
+        ? ` data-turn-id="${escapeAttribute(turnId)}"`
+        : '';
+      html.push(`<div class="assistant-turn"${turnAttr}>${items.map(i =>
         itemToHtml(i, i.ts, collapseToolDetails)).join('')}</div>`);
       turnItems = [];
     }
 
-    for (const msg of messages) {
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      const msg = messages[messageIndex];
       if (isToolResultOnly(msg)) continue;
       if (window.isSubagentNotificationMsg?.(msg)) continue;
 
@@ -222,6 +280,7 @@
           html: renderInterrupt(msg),
           messageId: msg.uuid || '',
           nativeId: msg.nativeId || '',
+          turnId: msg.turnId || '',
           ts: msg.timestamp,
         });
         continue;
@@ -249,11 +308,19 @@
         if (msg._strictManaged) continue;
         const items = extractItems(msg, resultMap, runtime, {
           collapseToolDetails,
+          messageIndex,
         });
-        turnItems.push(...items.map(i => ({
+        turnItems.push(...items.map((i, itemIndex) => ({
           ...i,
           messageId: msg.uuid || '',
           nativeId: msg.nativeId || '',
+          turnId: msg.turnId || '',
+          displayOrder: Number.isFinite(i.displayOrder)
+            ? i.displayOrder
+            : messageIndex,
+          blockIndex: Number.isFinite(i.blockIndex)
+            ? i.blockIndex
+            : itemIndex,
           ts: i.ts || msg.timestamp,
         })));
         continue;
@@ -268,7 +335,14 @@
       // Summary stays in the timeline and is collapsed by default.
       if (msg.type === 'summary') {
         const summary = renderSummary(msg);
-        if (summary) turnItems.push({ type: 'summary', html: summary, ts: msg.timestamp });
+        if (summary) {
+          turnItems.push({
+            type: 'summary',
+            html: summary,
+            turnId: msg.turnId || '',
+            ts: msg.timestamp,
+          });
+        }
         continue;
       }
       // Metadata types: skip rendering (used for title only)

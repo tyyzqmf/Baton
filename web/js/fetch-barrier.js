@@ -13,6 +13,7 @@ export class FetchBarrier {
     this.pendingIds = new Set(options.pendingIds || []);
     this.historyBuffer = [];
     this.strictMessages = [];
+    this.completedTurnIds = new Set();
     this.state = 'open';
     this.promise = null;
   }
@@ -55,6 +56,7 @@ export class FetchBarrier {
 
   completeStrictTurn(turnId) {
     if (this.state !== 'open' || !turnId) return false;
+    this.completedTurnIds.add(turnId);
     for (var message of this.strictMessages) {
       if (message?.turnId !== turnId) continue;
       if (message.type === 'assistant' || message.type === 'summary') {
