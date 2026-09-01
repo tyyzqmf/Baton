@@ -174,16 +174,22 @@ findInsertBefore(container, timestamp):
 
 ## 6. Auto-scroll
 
-`state.stickBottom` records user intent. Opening a Session or sending a message enables it; manually
-scrolling away from the bottom disables it. Live insertions synchronously set
-`scrollTop = scrollHeight` only while that flag is true. Session entry performs one immediate and
-one next-frame placement after the final message DOM is rendered. Sending an optimistic user bubble
-uses the existing smooth scroll. Permission prompts position only their own newly inserted content.
+`state.stickBottom` records user intent separately from physical scroll position. Opening a Session,
+sending a message, or tapping the bottom button enables it. A real pointer drag or wheel gesture
+disables it immediately, even before the viewport moves beyond the bottom-button threshold. Ordinary
+`scroll` events update button state but never overwrite follow intent. Returning fully to the bottom
+after the user gesture settles re-enables following.
 
-Background synchronization does not re-enable following, and no shared layout observer owns the
-scroll position. When the mobile viewport shrinks, a message list that was physically at the bottom
-is placed at its new bottom on the next frame. Viewport growth remains native; keyboard handling
-does not change `state.stickBottom` or replace the message list.
+Live insertions synchronously set `scrollTop = scrollHeight` only while that flag is true. A
+`ResizeObserver` bound to the current `.messages` container maintains the same invariant when OUT,
+markdown, diff, image, or wrapping changes its real height. It does nothing while user follow is
+disabled. Session entry performs one immediate and one next-frame placement after the final message
+DOM is rendered. Sending an optimistic user bubble uses the existing smooth scroll. Permission
+prompts position only their own newly inserted content.
+
+Background synchronization does not re-enable following. When the mobile viewport shrinks, a
+message list that was physically at the bottom is placed at its new bottom on the next frame.
+Viewport growth remains native; keyboard handling does not replace the message list.
 
 ## 7. wsRunning State + Send/Stop Button
 

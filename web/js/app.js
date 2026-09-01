@@ -1762,6 +1762,90 @@ function scheduleScrollBtnPosition() {
 (function () {
   var btn = document.getElementById('scroll-bottom-btn');
   var content = document.getElementById('content');
+  var pointerId = null;
+  var pointerStartY = 0;
+  var userScrollActive = false;
+  var userScrollSettleTimer = 0;
+
+  function bottomDistance() {
+    return content.scrollHeight - content.scrollTop - content.clientHeight;
+  }
+
+  function updateScrollButton() {
+    var nearBottom = bottomDistance() < 100;
+    btn.classList.toggle('visible', !nearBottom);
+  }
+
+  function settleUserScrollSoon() {
+    clearTimeout(userScrollSettleTimer);
+    userScrollSettleTimer = setTimeout(function () {
+      if (pointerId !== null) return;
+      userScrollActive = false;
+      if (bottomDistance() <= 2) state.stickBottom = true;
+      updateScrollButton();
+    }, 140);
+  }
+
+  function interruptBottomFollow() {
+    if (!state.appState.session || state.appState.session === '__new__') return;
+    userScrollActive = true;
+    state.stickBottom = false;
+    updateScrollButton();
+    settleUserScrollSoon();
+  }
+
+  content.addEventListener('pointerdown', function (event) {
+    if (event.isPrimary === false || (event.button != null && event.button !== 0)) return;
+    pointerId = event.pointerId;
+    pointerStartY = event.clientY;
+  }, { passive: true });
+
+  content.addEventListener('pointermove', function (event) {
+    if (pointerId === null || event.pointerId !== pointerId) return;
+    if (Math.abs(event.clientY - pointerStartY) < 4) return;
+    interruptBottomFollow();
+  }, { passive: true });
+
+  function finishPointer(event) {
+    if (pointerId === null || event.pointerId !== pointerId) return;
+    pointerId = null;
+    if (userScrollActive) settleUserScrollSoon();
+  }
+  content.addEventListener('pointerup', finishPointer, { passive: true });
+  content.addEventListener('pointercancel', finishPointer, { passive: true });
+  content.addEventListener('wheel', function (event) {
+    if (event.deltaX || event.deltaY) interruptBottomFollow();
+  }, { passive: true });
+
+  var messageResizeObserver = null;
+  var observedMessageContainer = null;
+  function bindMessageResizeObserver() {
+    if (!messageResizeObserver) return;
+    var container = content.querySelector('.messages');
+    if (container === observedMessageContainer) return;
+    if (observedMessageContainer) {
+      messageResizeObserver.unobserve(observedMessageContainer);
+    }
+    observedMessageContainer = container;
+    if (container) messageResizeObserver.observe(container);
+  }
+  if (window.ResizeObserver) {
+    messageResizeObserver = new window.ResizeObserver(function () {
+      if (state.stickBottom
+        && state.appState.session
+        && state.appState.session !== '__new__'
+        && !content.querySelector('.skeleton-messages')
+        && content.querySelector('.messages') === observedMessageContainer) {
+        content.scrollTop = content.scrollHeight;
+      }
+      updateScrollButton();
+    });
+    bindMessageResizeObserver();
+    if (window.MutationObserver) {
+      new window.MutationObserver(bindMessageResizeObserver)
+        .observe(content, { childList: true });
+    }
+  }
 
   content.addEventListener('scroll', function () {
     if (!state.appState.session) {
@@ -1774,10 +1858,8 @@ function scheduleScrollBtnPosition() {
       state.stickBottom = true;
       return;
     }
-    var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
-    btn.classList.toggle('visible', !atBottom);
-    // Position drives auto-scroll intent (programmatic scrollTo(bottom) lands here too, atBottom=true, so never clears it).
-    state.stickBottom = atBottom;
+    updateScrollButton();
+    if (userScrollActive) settleUserScrollSoon();
 
     if (_scrollingToTop) { settleSoon(120); return; }
 
@@ -1797,6 +1879,7 @@ function scheduleScrollBtnPosition() {
   document.querySelector('.top-bar').addEventListener('click', function (e) {
     if (e.target.closest('.top-action')) return;
     if (!state.appState.session) return;
+    state.stickBottom = false;
     _scrollingToTop = true;
     settleSoon(400);
     content.scrollTo({ top: 0, behavior: 'smooth' });
