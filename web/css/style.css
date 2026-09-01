@@ -391,6 +391,19 @@ body.browse-view #content { scrollbar-gutter: stable; }
 }
 .tool-value.clamp { max-height: 5.2em; overflow: hidden; cursor: pointer; }
 .tool-value.clamp.expanded { max-height: none; }
+.tool-value.read-value { white-space: pre; word-break: normal; }
+.tool-value.read-value.expanded { overflow-x: auto; }
+.read-code-grid { display: flex; min-width: max-content; align-items: stretch; }
+.read-line-numbers {
+  flex: none; margin: 0 10px 0 0; padding: 0 10px 0 0;
+  border-right: 1px solid #30363d; color: #6e7681;
+  text-align: right; user-select: none; font: inherit; line-height: inherit;
+}
+.tool-value .read-code {
+  display: block; min-width: max-content; padding: 0;
+  overflow: visible; background: transparent; white-space: pre;
+  color: inherit; font: inherit;
+}
 
 /* diff2html dark overrides */
 .diff-render-staging {

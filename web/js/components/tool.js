@@ -30,7 +30,10 @@ import { state } from '../state.js';
 
   const SHELL_HIGHLIGHT_CACHE_LIMIT = 256;
   const SHELL_HIGHLIGHT_MAX_CHARS = 1024;
+  const READ_HIGHLIGHT_CACHE_LIMIT = 64;
+  const READ_HIGHLIGHT_MAX_CHARS = 128 * 1024;
   const shellHighlightCache = new Map();
+  const readHighlightCache = new Map();
   const shellKeywords = new Set([
     'case', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'function',
     'if', 'in', 'select', 'then', 'time', 'until', 'while',
@@ -274,29 +277,111 @@ import { state } from '../state.js';
       desc,
       fileLink: input.file_path || '',
       fileLine: line,
-      body: readResultBody(result),
+      body: readResultBody(result, input.file_path || ''),
     };
   }
 
-  function readResultBody(result) {
+  function readResultBody(result, filePath) {
     if (!result) return '';
     const c = result.content;
     if (!c) return '';
     let text = '';
     if (typeof c === 'string') text = c;
     else if (Array.isArray(c)) text = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
-    text = text.trim();
-    if (!text) return '';
-    return `<div class="tool-value clamp" onclick="toggleExpand(this)">${ansiHtml(text)}</div>`;
+    text = text.replace(/\r\n?/g, '\n').trimEnd();
+    if (!text.trim()) return '';
+    const source = parseReadSource(text);
+    const highlighted = highlightReadCode(source.text, filePath);
+    const code = source.lineNumbers
+      ? '<div class="read-code-grid">'
+        + '<pre class="read-line-numbers" aria-hidden="true">'
+        + source.lineNumbers.join('\n')
+        + '</pre>'
+        + highlighted
+        + '</div>'
+      : highlighted;
+    return `<div class="tool-value clamp read-value" onclick="toggleExpand(this)">${code}</div>`;
+  }
+
+  function parseReadSource(text) {
+    const lines = text.split('\n');
+    const numbered = [];
+    let index = 0;
+    for (; index < lines.length; index++) {
+      const match = /^\s*(\d+)→(.*)$/.exec(lines[index]);
+      if (!match) break;
+      numbered.push({
+        number: Number(match[1]),
+        text: match[2],
+      });
+    }
+    if (!numbered.length
+      || numbered.some((line, index) =>
+        index > 0 && line.number !== numbered[index - 1].number + 1)) {
+      return { text, lineNumbers: null };
+    }
+    const trailing = lines.slice(index).filter(line => line.trim());
+    if (trailing.length
+      && !(trailing[0].trim() === '<system-reminder>'
+        && trailing.at(-1).trim() === '</system-reminder>')) {
+      return { text, lineNumbers: null };
+    }
+    return {
+      text: numbered.map(line => line.text).join('\n'),
+      lineNumbers: numbered.map(line => line.number),
+    };
   }
 
   // File extension → hljs language
   function detectLang(path) {
-    const ext = (path.split('.').pop() || '').toLowerCase();
+    const file = String(path || '').split(/[\\/]/).pop() || '';
+    const base = file.toLowerCase();
+    const special = {
+      dockerfile: 'dockerfile',
+      makefile: 'makefile',
+      jenkinsfile: 'groovy',
+    };
+    if (special[base]) return special[base];
+    const ext = (file.split('.').pop() || '').toLowerCase();
     const map = { js:'javascript', mjs:'javascript', jsx:'javascript', ts:'typescript', tsx:'typescript',
-      py:'python', rb:'ruby', css:'css', html:'html', json:'json', sh:'bash', yml:'yaml', yaml:'yaml',
-      go:'go', rs:'rust', java:'java', swift:'swift', kt:'kotlin', c:'c', cpp:'cpp', md:'markdown' };
+      py:'python', rb:'ruby', css:'css', scss:'scss', html:'html', htm:'html', xml:'xml', svg:'xml',
+      json:'json', jsonl:'json', sh:'bash', bash:'bash', zsh:'bash', yml:'yaml', yaml:'yaml',
+      go:'go', rs:'rust', java:'java', swift:'swift', kt:'kotlin', kts:'kotlin', c:'c',
+      h:'c', cpp:'cpp', cc:'cpp', cxx:'cpp', hpp:'cpp', cs:'csharp', php:'php', sql:'sql',
+      lua:'lua', dart:'dart', scala:'scala', vue:'html', svelte:'html', md:'markdown',
+      toml:'ini', ini:'ini', conf:'ini', proto:'protobuf', graphql:'graphql', gql:'graphql' };
     return map[ext] || null;
+  }
+
+  function highlightReadCode(text, filePath) {
+    const lang = detectLang(filePath);
+    const className = lang ? `read-code hljs language-${lang}` : 'read-code';
+    if (!lang
+      || text.length > READ_HIGHLIGHT_MAX_CHARS
+      || !window.hljs?.getLanguage?.(lang)) {
+      return `<code class="${className}">${esc(text)}</code>`;
+    }
+
+    const cacheKey = `${lang}\0${text}`;
+    let html = readHighlightCache.get(cacheKey);
+    if (html !== undefined) {
+      readHighlightCache.delete(cacheKey);
+      readHighlightCache.set(cacheKey, html);
+    } else {
+      try {
+        html = window.hljs.highlight(
+          text,
+          { language: lang, ignoreIllegals: true },
+        ).value;
+      } catch (error) {
+        html = esc(text);
+      }
+      if (readHighlightCache.size >= READ_HIGHLIGHT_CACHE_LIMIT) {
+        readHighlightCache.delete(readHighlightCache.keys().next().value);
+      }
+      readHighlightCache.set(cacheKey, html);
+    }
+    return `<code class="${className}">${html}</code>`;
   }
 
   const diffSpecs = new Map();

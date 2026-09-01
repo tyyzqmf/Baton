@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import hljs from 'highlight.js';
 import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM('<!doctype html><body></body>');
@@ -220,6 +221,144 @@ test('Shell highlighting is skipped after 1024 characters', () => {
   document.body.innerHTML = window.highlightShellCommand(overLimit);
   assert.equal(document.body.textContent, overLimit);
   assert.equal(document.querySelector('.shell-token'), null);
+});
+
+test('Read highlights code by file extension without changing its text', () => {
+  const originalHljs = window.hljs;
+  window.hljs = hljs;
+  const resultText = [
+    '  40→const answer = "green";',
+    '  41→// keep <unsafe> as text',
+    '',
+    '<system-reminder>',
+    'This is not file content.',
+    '</system-reminder>',
+  ].join('\n');
+  const source = 'const answer = "green";\n// keep <unsafe> as text';
+
+  try {
+    const html = window.renderToolNode({
+      type: 'tool_use',
+      id: 'read-highlight',
+      name: 'Read',
+      input: {
+        file_path: '/workspace/src/example.js',
+        offset: 40,
+        limit: 2,
+      },
+    }, {
+      type: 'tool_result',
+      tool_use_id: 'read-highlight',
+      content: resultText,
+      is_error: false,
+    }, 'codex');
+
+    document.body.innerHTML = html;
+    const value = document.querySelector('.tool-value.read-value');
+    const code = value?.querySelector('code.read-code');
+    assert.ok(value);
+    assert.ok(code);
+    assert.equal(code.textContent, source);
+    assert.equal(code.classList.contains('hljs'), true);
+    assert.equal(code.classList.contains('language-javascript'), true);
+    assert.equal(code.querySelector('.hljs-keyword')?.textContent, 'const');
+    assert.equal(code.querySelector('.hljs-string')?.textContent, '"green"');
+    assert.equal(document.querySelector('unsafe'), null);
+    assert.equal(
+      document.querySelector('.read-line-numbers')?.textContent,
+      '40\n41',
+    );
+    assert.equal(document.body.textContent.includes('system-reminder'), false);
+
+    const css = fs.readFileSync(
+      new URL('../../web/css/style.css', import.meta.url),
+      'utf8',
+    );
+    assert.match(css, /\.tool-value\.read-value \{ white-space: pre; word-break: normal; \}/);
+    assert.match(css, /\.read-line-numbers \{[\s\S]*text-align: right;/);
+    assert.match(css, /\.tool-value \.read-code \{[\s\S]*background: transparent;/);
+  } finally {
+    window.hljs = originalHljs;
+  }
+});
+
+test('Read omits line numbers when the result has no trustworthy numbering', () => {
+  const originalHljs = window.hljs;
+  window.hljs = hljs;
+  const source = 'const first = 1;\nconst second = 2;';
+
+  try {
+    const html = window.renderToolNode({
+      type: 'tool_use',
+      id: 'read-no-lines',
+      name: 'Read',
+      input: { file_path: '/workspace/src/example.js' },
+    }, {
+      type: 'tool_result',
+      tool_use_id: 'read-no-lines',
+      content: source,
+      is_error: false,
+    }, 'codex');
+
+    document.body.innerHTML = html;
+    assert.equal(document.querySelector('code.read-code')?.textContent, source);
+    assert.equal(document.querySelector('.read-line-numbers'), null);
+  } finally {
+    window.hljs = originalHljs;
+  }
+});
+
+test('Read preserves irregular numbered text without presenting it as source lines', () => {
+  const originalHljs = window.hljs;
+  window.hljs = hljs;
+  const source = '  10→first\n  12→third';
+
+  try {
+    const html = window.renderToolNode({
+      type: 'tool_use',
+      id: 'read-irregular-lines',
+      name: 'Read',
+      input: { file_path: '/workspace/src/example.txt' },
+    }, {
+      type: 'tool_result',
+      tool_use_id: 'read-irregular-lines',
+      content: source,
+      is_error: false,
+    }, 'codex');
+
+    document.body.innerHTML = html;
+    assert.equal(document.querySelector('code.read-code')?.textContent, source);
+    assert.equal(document.querySelector('.read-line-numbers'), null);
+  } finally {
+    window.hljs = originalHljs;
+  }
+});
+
+test('Read skips syntax highlighting for oversized content', () => {
+  const originalHljs = window.hljs;
+  window.hljs = hljs;
+  const source = `const value = 1;\n${'x'.repeat(128 * 1024)}`;
+
+  try {
+    const html = window.renderToolNode({
+      type: 'tool_use',
+      id: 'read-large',
+      name: 'Read',
+      input: { file_path: '/workspace/src/large.js' },
+    }, {
+      type: 'tool_result',
+      tool_use_id: 'read-large',
+      content: source,
+      is_error: false,
+    }, 'codex');
+
+    document.body.innerHTML = html;
+    const code = document.querySelector('code.read-code');
+    assert.equal(code?.textContent, source);
+    assert.equal(code?.querySelector('[class*="hljs-"]'), null);
+  } finally {
+    window.hljs = originalHljs;
+  }
 });
 
 test('Codex Explore summaries stay plain instead of being treated as shell commands', () => {
