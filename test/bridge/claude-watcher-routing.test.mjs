@@ -2,11 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  clearLiveMessageRegistry,
+  registerClaudeInterruptTurn,
+} from '../../bridge/live-message-registry.mjs';
+import {
+  correlateClaudeInterruptMessage,
   pollAgentStates,
   resetAgentPollState,
   shouldPersistClaudeJsonlMessage,
   shouldSkipClaudeSession,
 } from '../../bridge/watcher.mjs';
+
+test.afterEach(clearLiveMessageRegistry);
 
 test('runtime-owned Claude JSONL rows are persistence-only', () => {
   assert.equal(shouldPersistClaudeJsonlMessage(true, null), true);
@@ -28,6 +35,63 @@ test('empty non-daemon Claude sessions are skipped regardless of running status'
   assert.equal(shouldSkipClaudeSession('', null), true);
   assert.equal(shouldSkipClaudeSession('Real user prompt', null), false);
   assert.equal(shouldSkipClaudeSession('', { agentName: 'worker' }), false);
+});
+
+test('watcher gives the authoritative Claude interrupt its live turn identity', () => {
+  registerClaudeInterruptTurn('session-1', 'sent-turn-1', 1_000);
+  const message = correlateClaudeInterruptMessage('session-1', {
+    uuid: 'claude-jsonl-uuid',
+    type: 'user',
+    content: [{ type: 'text', text: '[Request interrupted by user]' }],
+    timestamp: '2026-09-01T09:18:42.101Z',
+  }, 1_001);
+
+  assert.deepEqual(message, {
+    uuid: 'live_interrupt_sent-turn-1',
+    nativeId: 'live:interrupt:sent-turn-1',
+    turnId: 'sent-turn-1',
+    type: 'user',
+    content: [{ type: 'text', text: '[Request interrupted by user]' }],
+    timestamp: '2026-09-01T09:18:42.101Z',
+  });
+});
+
+test('unrelated rows do not consume a pending Claude interrupt turn', () => {
+  registerClaudeInterruptTurn('session-1', 'sent-turn-1', 1_000);
+  const assistant = {
+    uuid: 'assistant-1',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'partial' }],
+  };
+
+  assert.equal(
+    correlateClaudeInterruptMessage('session-1', assistant, 1_001),
+    assistant,
+  );
+  assert.equal(
+    correlateClaudeInterruptMessage('session-1', {
+      uuid: 'claude-jsonl-uuid',
+      type: 'user',
+      content: [{
+        type: 'text',
+        text: '[Request interrupted by user for tool use]',
+      }],
+    }, 1_002).uuid,
+    'live_interrupt_sent-turn-1',
+  );
+});
+
+test('external Claude interrupts retain their native JSONL identity', () => {
+  const message = {
+    uuid: 'external-interrupt',
+    type: 'user',
+    content: [{ type: 'text', text: '[Request interrupted by user]' }],
+  };
+
+  assert.equal(
+    correlateClaudeInterruptMessage('session-1', message, 1_000),
+    message,
+  );
 });
 
 test('failed realtime agent status push is retried on the next poll', async () => {

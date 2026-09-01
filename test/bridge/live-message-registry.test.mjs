@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  clearClaudeInterruptTurn,
   clearLiveMessage,
   clearLiveMessageRegistry,
   liveMessageRoute,
   markLiveMessagePushed,
+  pendingClaudeInterruptTurn,
+  registerClaudeInterruptTurn,
   registerRuntimeOwnedMessage,
 } from '../../bridge/live-message-registry.mjs';
 
@@ -65,4 +68,23 @@ test('runtime turn ownership is not evicted by pushed-message capacity', () => {
     liveMessageRoute('codex', 'runtime-turn:turn-1'),
     { pushed: false, runtimeOwned: true },
   );
+});
+
+test('Claude interrupt turns remain FIFO and expire independently', () => {
+  assert.equal(registerClaudeInterruptTurn('session-1', 'turn-1', 1_000), true);
+  assert.equal(registerClaudeInterruptTurn('session-1', 'turn-2', 2_000), true);
+  assert.equal(pendingClaudeInterruptTurn('session-1', 3_000), 'turn-1');
+
+  assert.equal(clearClaudeInterruptTurn('session-1', 'turn-1'), true);
+  assert.equal(pendingClaudeInterruptTurn('session-1', 3_000), 'turn-2');
+  assert.equal(pendingClaudeInterruptTurn('session-1', 63_000), '');
+});
+
+test('repeated Claude interrupt registration refreshes one turn entry', () => {
+  registerClaudeInterruptTurn('session-1', 'turn-1', 1_000);
+  registerClaudeInterruptTurn('session-1', 'turn-1', 50_000);
+
+  assert.equal(pendingClaudeInterruptTurn('session-1', 70_000), 'turn-1');
+  assert.equal(clearClaudeInterruptTurn('session-1', 'turn-1'), true);
+  assert.equal(clearClaudeInterruptTurn('session-1', 'turn-1'), false);
 });

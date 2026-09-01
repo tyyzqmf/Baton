@@ -22,6 +22,7 @@ import {
   liveMessageRoute,
   liveMessagePushed,
   markLiveMessagePushed,
+  registerClaudeInterruptTurn,
 } from './live-message-registry.mjs';
 import { post } from './http.mjs';
 import { scanSlashCommands } from './commands.mjs';
@@ -698,9 +699,13 @@ async function handleMessage(msg) {
         const identity = parseStorageSessionId(msg.sessionId, msg.runtime);
         const adapter = getRuntimeAdapter(identity.runtime);
         if (adapter.features.interrupt) {
+          let liveInterrupt = false;
           if (msg.turnId) {
-            _activeTurns.get(identity.sessionId, msg.turnId)
-              ?.sendInterrupt();
+            liveInterrupt = _activeTurns.get(identity.sessionId, msg.turnId)
+              ?.sendInterrupt() || false;
+          }
+          if (identity.runtime === 'claude' && liveInterrupt) {
+            registerClaudeInterruptTurn(identity.sessionId, msg.turnId);
           }
           await (adapter.interaction?.interrupt
             ? adapter.interaction.interrupt(identity.nativeSessionId)

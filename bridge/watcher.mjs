@@ -4,7 +4,11 @@ import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, AGENTS_POLL_I
 import { post, postRequired } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
-import { clearLiveMessage } from './live-message-registry.mjs';
+import {
+  clearClaudeInterruptTurn,
+  clearLiveMessage,
+  pendingClaudeInterruptTurn,
+} from './live-message-registry.mjs';
 import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import {
@@ -21,9 +25,35 @@ import {
 } from './claude-subagent.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
+const CLAUDE_INTERRUPT_TEXTS = new Set([
+  '[Request interrupted by user]',
+  '[Request interrupted by user for tool use]',
+]);
 
 export function shouldPersistClaudeJsonlMessage(runtimeOwned, route) {
   return !!runtimeOwned || !!route?.pushed || !!route?.runtimeOwned;
+}
+
+export function correlateClaudeInterruptMessage(
+  sessionId,
+  message,
+  now = Date.now(),
+) {
+  if (message?.type !== 'user'
+    || !Array.isArray(message.content)
+    || message.content.length !== 1
+    || message.content[0]?.type !== 'text'
+    || !CLAUDE_INTERRUPT_TEXTS.has(message.content[0].text)) {
+    return message;
+  }
+  const turnId = pendingClaudeInterruptTurn(sessionId, now);
+  if (!turnId) return message;
+  return {
+    ...message,
+    uuid: `live_interrupt_${turnId}`,
+    nativeId: `live:interrupt:${turnId}`,
+    turnId,
+  };
 }
 
 export function shouldSkipClaudeSession(preview, daemonMeta) {
@@ -208,8 +238,9 @@ async function readAndSend(config, filename, sessionId) {
     if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
     if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt') gotNewTitle = true;
 
-    const msg = await extractForApp(raw);
+    let msg = await extractForApp(raw);
     if (!msg.uuid) continue;
+    msg = correlateClaudeInterruptMessage(sessionId, msg);
 
     // A managed headless turn is the sole realtime source. Its JSONL copy only
     // persists; terminal/VS Code rows have no runtime ownership and still broadcast.
@@ -217,9 +248,11 @@ async function readAndSend(config, filename, sessionId) {
     if (shouldPersistClaudeJsonlMessage(poolOwns(sessionId), route)) {
       await uploadMessages(sessionId, [msg]);
       clearLiveMessage('claude', msg.uuid);
+      if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
       continue;
     }
     await deliverRealtimeMessages(sessionId, [msg]);
+    if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
   }
 
   synced.set(sessionId, lastParsedLine);
