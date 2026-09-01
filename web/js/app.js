@@ -1116,9 +1116,6 @@ function rememberDevices(data) {
   (data?.devices || []).forEach(function (device) {
     state.deviceOnlineMap[device.deviceName] = device.online;
     state.deviceDisplayNameMap[device.deviceName] = device.deviceDisplayName || device.deviceName;
-    state.deviceRuntimeCapabilities[device.deviceName] = device.runtimeCapabilities || {
-      claude: { canCreate: true },
-    };
   });
   window.__deviceDisplayNames = state.deviceDisplayNameMap;
 }
@@ -1255,13 +1252,13 @@ function sessionsHtml(device, projectHash, data, sel) {
     var childAgentsBadge = agentCount
       ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>'
       : '';
-    var displayStatus = s.activeStatus || s.status;
+    var displayStatus = s.status;
     var sLabel = statusLabel(displayStatus);
     var sClass = statusClass(displayStatus);
     var statusBadge = '<span class="badge ' + sClass + '">' + sLabel + '</span>';
-    var runtime = sessionRuntime(s.sessionId, s.runtime);
-    var nativeId = nativeSessionId(s.sessionId, s.nativeSessionId, runtime);
-    var shortId = shortSessionId(s.sessionId, s.nativeSessionId, runtime);
+    var runtime = sessionRuntime(s.sessionId);
+    var nativeId = nativeSessionId(s.sessionId, '', runtime);
+    var shortId = shortSessionId(s.sessionId, '', runtime);
     var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
     var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
       + '<span class="meta-sid" title="' + esc(nativeId) + '"> &middot; ' + esc(shortId) + '</span>'

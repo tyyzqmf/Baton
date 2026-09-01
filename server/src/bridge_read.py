@@ -22,6 +22,63 @@ _connections_table = None
 LIST_INDEX_NAME = "listPk-listSk-index"
 THREAD_ROOT_INDEX_NAME = "threadRootPk-threadRootSk-index"
 NEEDS_INPUT_ACTIVE_WINDOW = timedelta(days=7)
+SESSION_LIST_ATTRIBUTE_NAMES = {
+    "#sid": "sessionId",
+    "#preview": "preview",
+    "#last": "lastActive",
+    "#size": "size",
+    "#model": "model",
+    "#status": "status",
+    "#active": "activeStatus",
+    "#agents": "agentCount",
+    "#running_agents": "runningAgentCount",
+    "#waiting_agents": "needsInputAgentCount",
+    "#is_agent": "isAgent",
+    "#agent_name": "agentName",
+    "#agent_detail": "agentDetail",
+}
+SESSION_LIST_PROJECTION = ", ".join(SESSION_LIST_ATTRIBUTE_NAMES)
+LEGACY_SESSION_LIST_ATTRIBUTE_NAMES = {
+    **SESSION_LIST_ATTRIBUTE_NAMES,
+    "#parent": "parentSessionId",
+}
+LEGACY_SESSION_LIST_PROJECTION = ", ".join(LEGACY_SESSION_LIST_ATTRIBUTE_NAMES)
+ACTIVE_HOME_ATTRIBUTE_NAMES = {
+    "#sid": "sessionId",
+    "#preview": "preview",
+    "#status": "status",
+    "#active": "activeStatus",
+    "#device": "deviceName",
+    "#project": "projectHash",
+    "#project_name": "projectName",
+    "#last": "lastActive",
+    "#agents": "agentCount",
+    "#running_agents": "runningAgentCount",
+    "#waiting_agents": "needsInputAgentCount",
+    "#is_agent": "isAgent",
+    "#agent_name": "agentName",
+    "#agent_detail": "agentDetail",
+    "#parent": "parentSessionId",
+}
+ACTIVE_HOME_PROJECTION = ", ".join(ACTIVE_HOME_ATTRIBUTE_NAMES)
+ACTIVE_COUNT_ATTRIBUTE_NAMES = {
+    "#status": "status",
+    "#active": "activeStatus",
+    "#device": "deviceName",
+    "#project": "projectHash",
+    "#running_agents": "runningAgentCount",
+    "#waiting_agents": "needsInputAgentCount",
+    "#parent": "parentSessionId",
+}
+ACTIVE_COUNT_PROJECTION = ", ".join(ACTIVE_COUNT_ATTRIBUTE_NAMES)
+DEVICE_LIST_ATTRIBUTE_NAMES = {
+    "#device": "deviceName",
+    "#display": "deviceDisplayName",
+    "#os": "os",
+    "#projects": "projectCount",
+    "#last": "lastActive",
+}
+DEVICE_LIST_PROJECTION = ", ".join(DEVICE_LIST_ATTRIBUTE_NAMES)
 
 
 def _tables():
@@ -68,23 +125,6 @@ def _thread_fields(item):
             "agentDepth": item.get("agentDepth", 1),
         })
     return fields
-
-
-def _runtime_capabilities(item):
-    capabilities = item.get("runtimeCapabilities")
-    if isinstance(capabilities, dict) and capabilities:
-        return capabilities
-    # Devices written by older bridges only supported Claude.
-    return {
-        "claude": {
-            "installed": True,
-            "historyAvailable": True,
-            "canRead": True,
-            "canCreate": True,
-            "canSend": True,
-            "version": "",
-        }
-    }
 
 
 def _query_all(table, **kwargs):
@@ -219,13 +259,25 @@ def _decode_list_cursor(cursor, account_id, list_pk):
         raise HTTPException(status_code=400, detail="Invalid pagination cursor")
 
 
-def _query_list_page(table, account_id, list_pk, limit, cursor):
+def _query_list_page(
+    table,
+    account_id,
+    list_pk,
+    limit,
+    cursor,
+    projection_expression=None,
+    expression_attribute_names=None,
+):
     kwargs = {
         "IndexName": LIST_INDEX_NAME,
         "KeyConditionExpression": Key("listPk").eq(list_pk),
         "ScanIndexForward": False,
         "Limit": limit,
     }
+    if projection_expression:
+        kwargs["ProjectionExpression"] = projection_expression
+    if expression_attribute_names:
+        kwargs["ExpressionAttributeNames"] = expression_attribute_names
     if cursor:
         kwargs["ExclusiveStartKey"] = _decode_list_cursor(cursor, account_id, list_pk)
     response = table.query(**kwargs)
@@ -253,38 +305,39 @@ async def get_active_sessions(request: Request):
     loop = asyncio.get_running_loop()
     active_items, done_items, online_devices = await asyncio.gather(
         loop.run_in_executor(None, lambda: _query_all(sessions_table, IndexName="accountId-activeStatus-index",
-            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"))),
+            KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"),
+            ProjectionExpression=ACTIVE_HOME_PROJECTION,
+            ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES)),
         loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
-            ScanIndexForward=False, Limit=100).get("Items", [])),
+            ScanIndexForward=False, Limit=100,
+            ProjectionExpression=ACTIVE_HOME_PROJECTION,
+            ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES).get("Items", [])),
         loop.run_in_executor(None, lambda: _online_bridge_devices(account_id)),
     )
 
-    def _to_session(item):
+    def _to_session(item, include_status):
         pn = item.get("projectName", "")
         s = {
             "sessionId": item.get("sessionId", ""),
             "preview": item.get("preview", ""),
-            "status": item.get("status", "completed"),
-            "activeStatus": _public_active_status(item),
             "deviceName": item.get("deviceName", ""),
             "projectHash": item.get("projectHash", ""),
             "projectName": pn.rsplit("/", 1)[-1] if "/" in pn else pn,
             "lastActive": item.get("lastActive", ""),
             "agentCount": item.get("agentCount", 0),
-            **_runtime_fields(item),
-            **_thread_fields(item),
         }
+        if include_status:
+            s["status"] = _public_active_status(item)
         if item.get("isAgent"):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
-            s["agentRole"] = item.get("agentRole", "")
-        if item.get("agentDetail"):
+        if include_status and item.get("status") == "needs_input" and item.get("agentDetail"):
             s["agentDetail"] = item.get("agentDetail", "")
         return s
 
     sessions = [
-        _to_session(item)
+        _to_session(item, True)
         for item in active_items
         if not item.get("parentSessionId")
         and _active_session_visible(item, online_devices)
@@ -292,7 +345,7 @@ async def get_active_sessions(request: Request):
     sessions.sort(key=lambda x: x["lastActive"], reverse=True)
 
     recent_sessions = [
-        _to_session(item)
+        _to_session(item, False)
         for item in done_items
         if not item.get("parentSessionId")
     ][:20]
@@ -303,8 +356,14 @@ async def get_active_sessions(request: Request):
 def _live_active_counts(sessions_table, account_id):
     """Live count of running/needs_input per device and per device#project, from the
     sparse active GSI (a few rows). Avoids drift-prone stored counters."""
-    rows = _query_all(sessions_table, IndexName="accountId-activeStatus-index",
-        KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").between("needs_input", "running"))
+    rows = _query_all(
+        sessions_table,
+        IndexName="accountId-activeStatus-index",
+        KeyConditionExpression=Key("accountId").eq(account_id)
+        & Key("activeStatus").between("needs_input", "running"),
+        ProjectionExpression=ACTIVE_COUNT_PROJECTION,
+        ExpressionAttributeNames=ACTIVE_COUNT_ATTRIBUTE_NAMES,
+    )
     dev = {}   # deviceName -> {running, needs_input}
     proj = {}  # (deviceName, projectHash) -> {running, needs_input}
     for r in rows:
@@ -321,7 +380,7 @@ def _live_active_counts(sessions_table, account_id):
 
 @read_router.get("/devices")
 async def get_devices(request: Request):
-    """DEV# items for sessionCount/projectCount (reconciled); running/needs_input live."""
+    """Projected DEV# fields for the home list; running/needs_input counted live."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
     live_dev, _ = _live_active_counts(sessions_table, account_id)
@@ -329,6 +388,8 @@ async def get_devices(request: Request):
     items = _query_all(
         sessions_table,
         KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with("DEV#"),
+        ProjectionExpression=DEVICE_LIST_PROJECTION,
+        ExpressionAttributeNames=DEVICE_LIST_ATTRIBUTE_NAMES,
     )
 
     # Check which devices have active bridge WS connections.
@@ -358,12 +419,10 @@ async def get_devices(request: Request):
             "deviceDisplayName": item.get("deviceDisplayName") or name,
             "os": item.get("os", ""),
             "projectCount": int(item.get("projectCount", 0)),
-            "sessionCount": int(item.get("sessionCount", 0)),
             "runningCount": lc.get("running", 0),
             "needsInputCount": lc.get("needs_input", 0),
             "lastActive": item.get("lastActive", ""),
             "online": name in online_devices,
-            "runtimeCapabilities": _runtime_capabilities(item),
         })
     devices.sort(key=lambda x: x["lastActive"], reverse=True)
     return {"devices": devices}
@@ -435,10 +494,18 @@ async def get_sessions(
         items = _query_all(
             sessions_table,
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("sk").begins_with(f"SESS#{device}#{project}#"),
+            ProjectionExpression=LEGACY_SESSION_LIST_PROJECTION,
+            ExpressionAttributeNames=LEGACY_SESSION_LIST_ATTRIBUTE_NAMES,
         )
     else:
         items, next_cursor = _query_list_page(
-            sessions_table, account_id, _session_list_pk(account_id, device, project), limit, cursor
+            sessions_table,
+            account_id,
+            _session_list_pk(account_id, device, project),
+            limit,
+            cursor,
+            SESSION_LIST_PROJECTION,
+            SESSION_LIST_ATTRIBUTE_NAMES,
         )
     items = [item for item in items if not item.get("parentSessionId")]
 
@@ -450,22 +517,13 @@ async def get_sessions(
             "lastActive": item.get("lastActive", ""),
             "size": item.get("size", 0),
             "model": item.get("model", ""),
-            "status": item.get("status", "completed"),
-            "activeStatus": _public_active_status(item),
+            "status": _public_active_status(item),
             "agentCount": item.get("agentCount", 0),
-            **_runtime_fields(item),
-            **_thread_fields(item),
         }
-        if item.get("modelProvider"):
-            s["modelProvider"] = item["modelProvider"]
-        if item.get("clientSource"):
-            s["clientSource"] = item["clientSource"]
-        if item.get("cliVersion"):
-            s["cliVersion"] = item["cliVersion"]
         if item.get("isAgent"):
             s["isAgent"] = True
             s["agentName"] = item.get("agentName", "")
-        if item.get("agentDetail"):
+        if item.get("status") == "needs_input" and item.get("agentDetail"):
             s["agentDetail"] = item.get("agentDetail", "")
         sessions.append(s)
     sessions.sort(key=lambda x: (x["lastActive"], x["sessionId"]), reverse=True)

@@ -68,11 +68,6 @@ test('New Session switches available runtimes and remembers the last per-device 
       session: null,
       sessionPreview: '',
     };
-    state.deviceRuntimeCapabilities.Dual = {
-      claude: { canCreate: true },
-      codex: { canCreate: true },
-    };
-
     const content = document.getElementById('content');
     const scrollButton = document.getElementById('scroll-bottom-btn');
     Object.defineProperties(content, {
@@ -114,10 +109,6 @@ test('New Session switches available runtimes and remembers the last per-device 
       project: { hash: 'codex-project', name: 'Codex Project' },
       session: null,
       sessionPreview: '',
-    };
-    state.deviceRuntimeCapabilities.CodexOnly = {
-      claude: { canCreate: false },
-      codex: { canCreate: true },
     };
     await window.startNewSession('codex-project');
     assert.equal(state.appState.runtime, 'claude');

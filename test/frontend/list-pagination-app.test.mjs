@@ -23,18 +23,15 @@ function session(id) {
     lastActive: new Date(Date.UTC(2026, 7, 10, 0, 0, id)).toISOString(),
     size: id,
     model: 'test-model',
-    status: 'completed',
-    activeStatus: id === TWO_PAGES ? 'running' : 'completed',
+    status: id === TWO_PAGES ? 'running' : 'completed',
     agentCount: id === TWO_PAGES ? 3 : 0,
     isAgent: id === TWO_PAGES,
   };
   if (id === TWO_PAGES - 1) {
-    item.activeStatus = 'needs_input';
-    item.agentDetail = 'Child detail must stay hidden';
+    item.status = 'needs_input';
   }
   if (id === TWO_PAGES - 2) {
     item.status = 'needs_input';
-    item.activeStatus = 'needs_input';
     item.agentDetail = 'Approve Main request';
   }
   return item;

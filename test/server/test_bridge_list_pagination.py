@@ -143,6 +143,9 @@ def test_session_pages_are_newest_first_without_duplicates(monkeypatch):
     assert first["hasMore"] is True
     assert second["hasMore"] is True
     assert third == {"sessions": third["sessions"], "hasMore": False, "nextCursor": None}
+    first_query = table.query_calls[0]
+    assert first_query["ProjectionExpression"] == bridge_read.SESSION_LIST_PROJECTION
+    assert first_query["ExpressionAttributeNames"] == bridge_read.SESSION_LIST_ATTRIBUTE_NAMES
 
 
 def test_equal_timestamps_have_stable_cursor_order(monkeypatch):
@@ -197,8 +200,14 @@ def test_legacy_sessions_request_keeps_full_response_shape(monkeypatch):
     items[1]["status"] = "needs_input"
     items[1]["agentDetail"] = "Choose environment"
     items[1]["agentCount"] = 3
+    query_args = {}
     monkeypatch.setattr(bridge_read, "_tables", lambda: (object(), None))
-    monkeypatch.setattr(bridge_read, "_query_all", lambda *_args, **_kwargs: items)
+
+    def query_all(*_args, **kwargs):
+        query_args.update(kwargs)
+        return items
+
+    monkeypatch.setattr(bridge_read, "_query_all", query_all)
 
     result = asyncio.run(bridge_read.get_sessions(FakeRequest(), "Mac", "repo", None, None))
 
@@ -206,6 +215,56 @@ def test_legacy_sessions_request_keeps_full_response_shape(monkeypatch):
     assert [item["sessionId"] for item in result["sessions"]] == ["new", "old"]
     assert result["sessions"][0]["agentDetail"] == "Choose environment"
     assert result["sessions"][0]["agentCount"] == 3
+    assert query_args["ProjectionExpression"] == bridge_read.LEGACY_SESSION_LIST_PROJECTION
+    assert query_args["ExpressionAttributeNames"] == bridge_read.LEGACY_SESSION_LIST_ATTRIBUTE_NAMES
+
+
+def test_sessions_response_contains_only_frontend_list_fields(monkeypatch):
+    account_id = bridge_read._account_id(FakeRequest())
+    item = session_item(
+        account_id,
+        "Mac",
+        "repo",
+        "codex:native-id",
+        "2026-08-10T00:00:00.000Z",
+    )
+    item.update({
+        "preview": "Review changes",
+        "size": 42,
+        "model": "gpt-5",
+        "status": "completed",
+        "activeStatus": "running",
+        "agentCount": 2,
+        "runningAgentCount": 1,
+        "isAgent": True,
+        "agentName": "reviewer",
+        "agentDetail": "stale root detail",
+        "runtime": "codex",
+        "nativeSessionId": "native-id",
+        "threadKind": "main",
+        "canSend": True,
+        "modelProvider": "openai",
+        "clientSource": "baton",
+        "cliVersion": "1.2.3",
+    })
+    table = FakeListTable([item])
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (table, None))
+
+    result = asyncio.run(
+        bridge_read.get_sessions(FakeRequest(), "Mac", "repo", 50, None)
+    )
+
+    assert result["sessions"] == [{
+        "sessionId": "codex:native-id",
+        "preview": "Review changes",
+        "lastActive": "2026-08-10T00:00:00.000Z",
+        "size": 42,
+        "model": "gpt-5",
+        "status": "running",
+        "agentCount": 2,
+        "isAgent": True,
+        "agentName": "reviewer",
+    }]
 
 
 def test_cursor_is_bound_to_account_and_list(monkeypatch):

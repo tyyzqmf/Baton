@@ -9,20 +9,14 @@ import {
 import { makeHarness } from './harness.mjs';
 
 test('new sessions always expose both supported runtimes', () => {
-  const runtimes = creatableRuntimes({
-    claude: { canCreate: false },
-    codex: { canCreate: true },
-  });
+  const runtimes = creatableRuntimes();
   assert.deepEqual(runtimes, ['claude', 'codex']);
   assert.equal(preferredNewSessionRuntime(runtimes, 'claude'), 'claude');
   assert.equal(nextNewSessionRuntime(runtimes, 'codex'), 'claude');
 });
 
 test('multiple runtimes prefer the last valid per-device choice and cycle', () => {
-  const runtimes = creatableRuntimes({
-    claude: { canCreate: true },
-    codex: { canCreate: true },
-  });
+  const runtimes = creatableRuntimes();
   assert.deepEqual(runtimes, ['claude', 'codex']);
   assert.equal(preferredNewSessionRuntime(runtimes, 'codex'), 'codex');
   assert.equal(preferredNewSessionRuntime(runtimes, 'other'), 'claude');

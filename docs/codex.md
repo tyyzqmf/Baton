@@ -254,9 +254,8 @@ Codex 进程是否正在等待审批，因此 JSONL watcher 不生成 Codex `nee
 }
 ```
 
-`installed` 与 `historyAvailable` 分离，因为 CLI 被卸载后本地历史仍可能可读。创建
-Session 时，UI 使用 `capability.canCreate` 过滤 runtime；已有历史展示使用
-`historyAvailable/canRead`。
+`installed` 与 `historyAvailable` 分离，因为 CLI 被卸载后本地历史仍可能可读。
+这些能力保存在设备聚合中供 Bridge/诊断使用，不随首页 `/devices` 列表返回。
 
 ### 5.3 BridgeMessages
 

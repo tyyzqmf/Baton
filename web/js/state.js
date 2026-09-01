@@ -12,7 +12,6 @@ export const state = {
   appState: { device: null, project: null, session: null, sessionPreview: '' },
   deviceOnlineMap: {},
   deviceDisplayNameMap: {},
-  deviceRuntimeCapabilities: {},
   newSessionRuntimes: [],
   rootSessionId: null,
   rootSessionPreview: '',

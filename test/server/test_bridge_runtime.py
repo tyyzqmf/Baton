@@ -117,12 +117,6 @@ def test_runtime_fields_default_old_items_to_claude():
     }
 
 
-def test_old_device_gets_claude_capability():
-    capabilities = bridge_read._runtime_capabilities({})
-    assert list(capabilities) == ["claude"]
-    assert capabilities["claude"]["canCreate"] is True
-
-
 def test_device_name_validation():
     devices = [
         {"deviceName": "Mac", "deviceDisplayName": "Office-Mac"},
@@ -179,6 +173,130 @@ def test_active_session_visibility_falls_back_to_last_active_and_keeps_unknown_t
         "deviceName": "Mac",
         "status": "running",
     }, None, now)
+
+
+def test_active_sessions_projects_only_home_card_fields(monkeypatch):
+    active = {
+        "sessionId": "codex:active",
+        "preview": "Active",
+        "status": "completed",
+        "activeStatus": "running",
+        "deviceName": "Mac",
+        "projectHash": "-workspace",
+        "projectName": "/workspace/project",
+        "lastActive": "2026-09-01T00:00:00.000Z",
+        "agentCount": 1,
+        "runningAgentCount": 1,
+        "isAgent": True,
+        "agentName": "worker",
+        "agentDetail": "stale detail",
+        "runtime": "codex",
+        "nativeSessionId": "active",
+        "threadKind": "main",
+        "canSend": True,
+    }
+    done = {
+        **active,
+        "sessionId": "done",
+        "preview": "Done",
+        "status": "completed",
+        "activeStatus": "done#2026-08-31T00:00:00.000Z",
+        "lastActive": "2026-08-31T00:00:00.000Z",
+        "agentCount": 0,
+        "isAgent": False,
+    }
+
+    class ActiveTable:
+        def __init__(self):
+            self.query_calls = []
+
+        def query(self, **kwargs):
+            self.query_calls.append(kwargs)
+            expression = kwargs["KeyConditionExpression"].get_expression()
+            status_expression = expression["values"][1].get_expression()
+            if status_expression["operator"] == "BETWEEN":
+                return {"Items": [active]}
+            return {"Items": [done]}
+
+    table = ActiveTable()
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (table, None))
+    monkeypatch.setattr(bridge_read, "_online_bridge_devices", lambda _account: {"Mac"})
+
+    result = asyncio.run(bridge_read.get_active_sessions(FakeRequest()))
+
+    assert result == {
+        "sessions": [{
+            "sessionId": "codex:active",
+            "preview": "Active",
+            "deviceName": "Mac",
+            "projectHash": "-workspace",
+            "projectName": "project",
+            "lastActive": "2026-09-01T00:00:00.000Z",
+            "agentCount": 1,
+            "status": "running",
+            "isAgent": True,
+            "agentName": "worker",
+        }],
+        "recentSessions": [{
+            "sessionId": "done",
+            "preview": "Done",
+            "deviceName": "Mac",
+            "projectHash": "-workspace",
+            "projectName": "project",
+            "lastActive": "2026-08-31T00:00:00.000Z",
+            "agentCount": 0,
+        }],
+    }
+    assert len(table.query_calls) == 2
+    assert all(
+        call["ProjectionExpression"] == bridge_read.ACTIVE_HOME_PROJECTION
+        and call["ExpressionAttributeNames"] == bridge_read.ACTIVE_HOME_ATTRIBUTE_NAMES
+        for call in table.query_calls
+    )
+
+
+def test_devices_projects_only_home_list_fields(monkeypatch):
+    item = {
+        "deviceName": "Mac",
+        "deviceDisplayName": "Office Mac",
+        "os": "darwin",
+        "projectCount": 3,
+        "sessionCount": 99,
+        "lastActive": "2026-09-01T00:00:00.000Z",
+        "runtimeCapabilities": {"codex": {"canCreate": True}},
+    }
+
+    class DeviceTable:
+        def __init__(self):
+            self.query_calls = []
+
+        def query(self, **kwargs):
+            self.query_calls.append(kwargs)
+            return {"Items": [item]}
+
+    table = DeviceTable()
+    monkeypatch.setattr(bridge_read, "_tables", lambda: (table, None))
+    monkeypatch.setattr(
+        bridge_read,
+        "_live_active_counts",
+        lambda *_: ({"Mac": {"running": 1, "needs_input": 2}}, {}),
+    )
+    monkeypatch.setattr(bridge_read, "_connections_table", None)
+
+    result = asyncio.run(bridge_read.get_devices(FakeRequest()))
+
+    assert result == {"devices": [{
+        "deviceName": "Mac",
+        "deviceDisplayName": "Office Mac",
+        "os": "darwin",
+        "projectCount": 3,
+        "runningCount": 1,
+        "needsInputCount": 2,
+        "lastActive": "2026-09-01T00:00:00.000Z",
+        "online": False,
+    }]}
+    assert table.query_calls[0]["ProjectionExpression"] == bridge_read.DEVICE_LIST_PROJECTION
+    assert table.query_calls[0]["ExpressionAttributeNames"] == bridge_read.DEVICE_LIST_ATTRIBUTE_NAMES
 
 
 def test_ws_sync_payload_decodes_storage_id():

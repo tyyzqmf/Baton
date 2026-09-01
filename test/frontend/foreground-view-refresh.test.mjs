@@ -94,7 +94,6 @@ test('foreground visibility reuses current navigation loaders or resumes the ope
           model: 'test',
           status: sessionFetches === 1 ? 'completed' : 'needs_input',
           agentDetail: sessionFetches === 1 ? '' : 'Approve command',
-          runtime: 'codex',
         }],
         hasMore: false,
       };
@@ -105,10 +104,8 @@ test('foreground visibility reuses current navigation loaders or resumes the ope
           deviceName: 'D',
           online: true,
           projectCount: 1,
-          sessionCount: 1,
           runningCount: homeFetches,
           needsInputCount: 0,
-          runtimeCapabilities: { claude: { canCreate: true } },
         }],
       };
     }

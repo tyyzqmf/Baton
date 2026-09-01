@@ -325,8 +325,6 @@ devices and runtimes.
   "sessions": [
     {
       "sessionId": "codex:019e...",
-      "nativeSessionId": "019e...",
-      "runtime": "codex",
       "status": "running",
       "deviceName": "MacBook-Pro",
       "projectHash": "-Users-user-project",
@@ -338,6 +336,10 @@ devices and runtimes.
   "recentSessions": []
 }
 ```
+
+Active cards return only fields consumed by the home page. `status` is the
+effective root-plus-agents status. Completed cards omit `status` because their
+collection already defines the state.
 
 ---
 
@@ -355,23 +357,18 @@ Get all devices under the current account.
   "devices": [
     {
       "deviceName": "MacBook-Pro",
+      "deviceDisplayName": "Office Mac",
       "os": "darwin",
       "projectCount": 12,
-      "sessionCount": 522,
       "runningCount": 2,
       "needsInputCount": 1,
       "lastActive": "2026-03-27T10:30:00.000Z",
-      "online": true,
-      "runtimeCapabilities": {
-        "claude": { "installed": true, "historyAvailable": true, "canRead": true, "canCreate": true, "canSend": true, "version": "2.1.220" },
-        "codex": { "installed": true, "historyAvailable": true, "canRead": true, "canCreate": true, "canSend": true, "version": "0.147.0" }
-      }
+      "online": true
     },
     {
       "deviceName": "Ubuntu-Server",
       "os": "linux",
       "projectCount": 3,
-      "sessionCount": 38,
       "runningCount": 0,
       "needsInputCount": 0,
       "lastActive": "2026-03-26T08:00:00.000Z",
@@ -383,12 +380,10 @@ Get all devices under the current account.
 
 **Notes**:
 - `projectCount`: number of projects on this device (deduplicated by `projectHash`)
-- `sessionCount`: total sessions on this device
 - `runningCount`: sessions with `status="running"`
 - `needsInputCount`: sessions with `status="needs_input"`
 - `lastActive`: most recent session's lastActive on this device
 - `online`: whether bridge WS is connected (checks Connections table for role=bridge with matching deviceName)
-- `runtimeCapabilities`: installed/history/read/create/send capability for each runtime; old devices default to Claude capability
 - Sorted by `lastActive` descending
 
 ---
@@ -462,16 +457,12 @@ order. Requests without `limit` retain the legacy base-table query for older cli
   "sessions": [
     {
       "sessionId": "codex:019e86c2-fd17-7031-b8cb-63c1f56d3609",
-      "nativeSessionId": "019e86c2-fd17-7031-b8cb-63c1f56d3609",
-      "runtime": "codex",
       "preview": "Review the current changes",
       "lastActive": "2026-03-27T10:30:00.000Z",
       "size": 102400,
       "model": "gpt-5",
-      "modelProvider": "openai",
-      "clientSource": "codex-tui",
-      "cliVersion": "0.147.0",
-      "status": "completed"
+      "status": "completed",
+      "agentCount": 0
     },
     {
       "sessionId": "b880a5db-xxxx-xxxx-xxxx",
@@ -479,15 +470,20 @@ order. Requests without `limit` retain the legacy base-table query for older cli
       "lastActive": "2026-03-26T15:00:00.000Z",
       "size": 8192,
       "model": "claude-opus-4-6-20250610",
-      "nativeSessionId": "b880a5db-xxxx-xxxx-xxxx",
-      "runtime": "claude",
-      "status": "completed"
+      "status": "completed",
+      "agentCount": 0
     }
   ],
   "hasMore": true,
   "nextCursor": "eyJhY2NvdW50SWQiOi..."
 }
 ```
+
+`status` is the effective list status of the root Session and all nested
+agents. The query projects only fields consumed by the Session list; runtime
+and native IDs are derived from `sessionId`, while thread capabilities are
+returned by `/session-threads`. Agent roots may additionally include
+`isAgent`, `agentName`, and a current `agentDetail`.
 
 `hasMore` and `nextCursor` are returned only when `limit` is provided.
 
@@ -765,7 +761,7 @@ runtime from a Project.
 | Field | Description |
 |-------|-------------|
 | `requestId` | Client-generated id echoed back in `send_message_result`. Used as the launch lock key and to match the result to the originating new-session request |
-| `runtime` | Runtime selected from the target device's `canCreate` capabilities; defaults to `claude` for old clients |
+| `runtime` | Runtime selected by the user from the supported Claude/Codex options |
 | `asAgent` | `true` → new Claude Session runs as a Claude Agents background session; ignored for Codex |
 
 **Server handling**: Forward to matching bridge by `device`. Bridge handling:
