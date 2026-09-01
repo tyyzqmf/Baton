@@ -292,9 +292,14 @@ Claude → Bridge: runtime-filtered `commands`, `models`, aliases, descriptions,
 Bridge: filter terminal-only or unsafe local commands; order executable local
         commands alphabetically, followed by prompt/Skill commands alphabetically,
         matching the TUI groups; attach live model/effort/fast picker options
-Bridge: cache the normalized catalog for five minutes by runtime/project and hash
-        commands + Skills into a stable revision; coalesce concurrent refreshes
-Bridge → Server → App: ordered `commands_list`, or `notModified` without catalog content
+App: cache by device/runtime/project for five minutes; send `list_commands` only
+     when missing or expired
+Bridge: force-refresh that current project for every real request; hash the compact
+        frontend DTO into a stable revision; hard-truncate descriptions to 256
+        UTF-8 bytes without splitting characters; coalesce concurrent refreshes
+Bridge → REST: upload changed catalog to an account-scoped stable S3 object
+Bridge → Server → App: small `command_catalog_ready`, or `notModified`
+App → REST: fetch the catalog by `catalogRef`
 App: cache content + revision by device/runtime/project; show it immediately, skip
      validation for five minutes, and redraw an open top-level menu only when revision changes
 ```

@@ -63,6 +63,7 @@ import { SessionAckQueue } from './session-ack-queue.mjs';
 import {
   CommandCatalogCache,
   commandCatalogPayload,
+  commandCatalogReadyPayload,
 } from './command-catalog-cache.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 
@@ -175,10 +176,11 @@ async function loadCommandCatalog(runtime, cwd, fallbackDir = cwd) {
   return { commands, skills };
 }
 
-function commandCatalog(runtime, cwd, fallbackDir = cwd) {
+function commandCatalog(runtime, cwd, fallbackDir = cwd, options = {}) {
   return _commandCatalogCache.get(
     `${runtime}:${cwd}`,
     () => loadCommandCatalog(runtime, cwd, fallbackDir),
+    options,
   );
 }
 
@@ -1727,15 +1729,39 @@ async function handleListCommands(msg) {
   try {
     const dir = typeof projectHash === 'string' && projectHash ? projectHashToPath(projectHash) : null;
     const cwd = path.resolve(dir || process.cwd());
-    result = await commandCatalog(runtime, cwd, dir || cwd);
+    result = await commandCatalog(runtime, cwd, dir || cwd, { forceRefresh: true });
   } catch (err) {
     console.error(`[ws] list_commands failed: ${err.message}`);
     result = null;
   }
+  let payload = commandCatalogPayload(result, knownRevision);
+  let catalogRef = '';
+  if (!payload.notModified && Array.isArray(payload.commands)) {
+    const response = await post('/api/bridge/command-catalog', {
+      deviceName: device || _config?.deviceName || '',
+      runtime,
+      projectHash,
+      revision: payload.revision,
+      commands: payload.commands,
+      skills: Array.isArray(payload.skills) ? payload.skills : [],
+    });
+    if (response?.ok) {
+      try {
+        const uploaded = await response.json();
+        catalogRef = uploaded.catalogRef || '';
+      } catch {}
+    }
+    if (!catalogRef) {
+      payload = {
+        ...payload,
+        error: payload.error || 'Command catalog upload failed',
+      };
+    }
+  }
   wsSend({
-    action: 'commands_list',
+    action: 'command_catalog_ready',
     requestId,
-    ...commandCatalogPayload(result, knownRevision),
+    ...commandCatalogReadyPayload(payload, catalogRef),
     runtime,
     device,
     projectHash,

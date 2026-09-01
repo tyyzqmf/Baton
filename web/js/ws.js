@@ -903,8 +903,8 @@ function dispatchWsMessage(msg) {
       if (window.handleFileReady) window.handleFileReady(msg);
     } else if (msg.action === 'file_progress') {
       if (window.handleFileProgress) window.handleFileProgress(msg);
-    } else if (msg.action === 'commands_list') {
-      if (window.handleCommandsList) window.handleCommandsList(msg);
+    } else if (msg.action === 'command_catalog_ready') {
+      if (window.handleCommandCatalogReady) window.handleCommandCatalogReady(msg);
     } else if (msg.action === 'command_options') {
       if (window.handleCommandOptions) window.handleCommandOptions(msg);
     } else if (msg.action === 'stream_turn_start') {

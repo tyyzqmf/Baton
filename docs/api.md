@@ -966,15 +966,16 @@ Ask the bridge for the slash-command catalog of the active runtime.
 | `projectHash` | No | Resolves project-level Claude commands or the cwd used by Codex `skills/list` |
 | `runtime` | Yes | `claude` or `codex`; omitted values retain Claude compatibility |
 | `device` | Yes | Target device (routing) |
-| `knownRevision` | No | Revision already stored by the app; matching responses omit `commands` and `skills` |
-| `requestId` | Yes | Client-generated id, echoed back in `commands_list` |
+| `knownRevision` | No | Revision already stored by the app; matching responses avoid a catalog upload and REST fetch |
+| `requestId` | Yes | Client-generated id, echoed back in `command_catalog_ready` |
 
 **Server handling**: Forward to matching bridge by `device` (via `_handle_send_to_bridge`).
 
-The Bridge caches the normalized project catalog by `runtime + project path` for five minutes.
-Fresh cache hits do not start Claude or query Codex app-server again. Expired entries are refreshed
-on demand, concurrent refreshes share one promise, and the revision changes only when normalized
-command or Skill content changes.
+The app keeps a five-minute cache by `device + runtime + projectHash`; while it is fresh, no request
+is sent. Every actual `list_commands` request forces the Bridge to rescan that current project.
+Concurrent refreshes share one promise, the Bridge retains the last good result for failure fallback,
+and the revision changes only when the normalized command or Skill content changes. An unchanged
+revision returns `notModified` without another catalog upload.
 
 **Claude handling**:
 1. Start a short-lived `claude -p` process with `--no-session-persistence`.
@@ -1230,26 +1231,22 @@ The app matches by `requestId`, clears the pending timer (keeping `_pendingFileR
 
 ---
 
-#### commands_list
+#### command_catalog_ready
 
-Bridge replies with the scanned slash-command list (response to `list_commands`).
+Bridge uploads a changed catalog through `POST /api/bridge/command-catalog`, then replies with a
+small WS notification. Descriptions are hard-truncated to 256 UTF-8 bytes before revision hashing
+and upload, without splitting a Unicode character; visual line clamping remains frontend-only.
 
 ```json
 {
-  "action": "commands_list",
+  "action": "command_catalog_ready",
   "requestId": "cmds_1717300000000",
   "runtime": "codex",
   "device": "MacBook-Pro",
   "projectHash": "-Users-xiaoweii-workspace-rn-baton",
   "revision": "a1b2c3d4",
   "notModified": false,
-  "commands": [
-    { "name": "skills", "source": "builtin", "behavior": "picker" },
-    { "name": "review", "source": "builtin", "behavior": "send" }
-  ],
-  "skills": [
-    { "name": "reviewer", "description": "Review changes", "scope": "user" }
-  ]
+  "catalogRef": "0123456789abcdef0123456789abcdef"
 }
 ```
 
@@ -1259,11 +1256,10 @@ Bridge replies with the scanned slash-command list (response to `list_commands`)
 | `requestId` | Echoed from `list_commands`; stale replies are ignored |
 | `runtime`, `device`, `projectHash` | Echoed project context used to ignore account-wide broadcasts for another view |
 | `revision` | Stable hash of the normalized project catalog |
-| `notModified` | `true` when `knownRevision` matches; `commands` and `skills` are omitted |
+| `notModified` | `true` when `knownRevision` matches; `catalogRef` is omitted |
 | `stale` | The Bridge returned its last known catalog because a refresh failed |
 | `error` | Refresh error detail; empty on a normal response |
-| `commands` | Ordered command descriptors; Codex descriptors include behavior, description, and optional argument hint |
-| `skills` | Enabled Codex Skills from app-server; empty for Claude |
+| `catalogRef` | Account-scoped stable reference used by `GET /api/bridge/command-catalog/{ref}` |
 
 **Server handling**: `_handle_bridge_broadcast` — broadcast to **all** app connections for the account (not scoped by session). This is deliberate: the new-session view has no `sessionId` subscription, so a session-scoped relay (like `file_ready`) wouldn't reach it. Same pattern as `create_project_result`.
 
@@ -1271,7 +1267,7 @@ When `notModified` is true, the response is only a small acknowledgement:
 
 ```json
 {
-  "action": "commands_list",
+  "action": "command_catalog_ready",
   "requestId": "cmds_1717300000000",
   "revision": "a1b2c3d4",
   "notModified": true,
@@ -1466,20 +1462,22 @@ Server forwards bridge's file-ready notification (only pushed to app connections
 
 ---
 
-#### commands_list
+#### command_catalog_ready
 
-Server broadcasts the bridge's slash-command list to all app connections under the account. The
-app accepts only the reply matching its latest request and current device/runtime/project/session,
-then caches the ordered `{commands, skills}` payload under
-`apeek_cmds:v5:<device>:<runtime>:<projectHash>`.
+Server broadcasts the Bridge's small ready notification to all app connections under the account.
+The app accepts only the reply matching its latest request and current device/runtime/project,
+fetches the account-scoped catalog through REST, then caches the ordered `{commands, skills}`
+payload under `apeek_cmds:v6:<device>:<runtime>:<projectHash>`.
 
 ```json
 {
-  "action": "commands_list",
+  "action": "command_catalog_ready",
   "requestId": "cmds_1717300000000",
-  "commands": [{ "name": "commit", "source": "user" }]
+  "revision": "a1b2c3d4",
+  "catalogRef": "0123456789abcdef0123456789abcdef"
 }
 ```
+
 
 ---
 

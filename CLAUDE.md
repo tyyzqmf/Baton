@@ -269,6 +269,8 @@ GET  /api/bridge/projects?device=X          — project list
 GET  /api/bridge/sessions?device=X&project=Y — session list
 GET  /api/bridge/active-sessions            — homepage: active (running+needs_input) + 20 most-recent completed (recentSessions)
 GET  /api/bridge/messages?session=X&after=ts&device=D&project=P — messages + current Session status
+POST /api/bridge/command-catalog            — bridge stores the full project command catalog in S3
+GET  /api/bridge/command-catalog/{ref}      — app reads the account-scoped command catalog
 POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
 GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
 GET  /api/install                           — bridge install script (sets up always-on service)
@@ -284,7 +286,7 @@ App → Server → Bridge:  { action: "send_message", sessionId, text, device }
 App → Server → Bridge:  { action: "permission_reply", sessionId, requestId, decision, answerText?, device }
 App → Server → Bridge:  { action: "list_commands", projectHash, runtime, sessionId?, device, requestId }
 Bridge → Server → App:  { action: "send_message_result", ok, sessionId? }
-Bridge → Server → App:  { action: "commands_list", requestId, runtime, device, projectHash, sessionId?, commands, skills }
+Bridge → Server → App:  { action: "command_catalog_ready", requestId, runtime, device, projectHash, revision, catalogRef? }
 Server → App:           { action: "messages", sessionId, messages }
 Server → Bridge:        { action: "sync_session", sessionId, runtime, nativeSessionId }
 Bridge → Server → App:  { action: "sync_complete", sessionId, status, count }

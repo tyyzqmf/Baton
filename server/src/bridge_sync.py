@@ -840,6 +840,81 @@ class UploadFileRequest(BaseModel):
     data: str      # base64 encoded file content
 
 
+COMMAND_DESCRIPTION_MAX_BYTES = 256
+
+
+class CommandCatalogRequest(BaseModel):
+    deviceName: str
+    runtime: str = "claude"
+    projectHash: str = ""
+    revision: str
+    commands: List[dict] = Field(default_factory=list)
+    skills: List[dict] = Field(default_factory=list)
+
+
+def _trim_catalog_descriptions(value):
+    if isinstance(value, list):
+        return [_trim_catalog_descriptions(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized = {}
+    for key, item in value.items():
+        if key == "description" and isinstance(item, str):
+            encoded = item.encode("utf-8")
+            normalized[key] = (
+                encoded[:COMMAND_DESCRIPTION_MAX_BYTES].decode("utf-8", errors="ignore")
+                if len(encoded) > COMMAND_DESCRIPTION_MAX_BYTES
+                else item
+            )
+        else:
+            normalized[key] = _trim_catalog_descriptions(item)
+    return normalized
+
+
+def _command_catalog_ref(account_id: str, device: str, runtime: str, project_hash: str) -> str:
+    context = json.dumps(
+        [account_id, device, runtime, project_hash],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(context.encode()).hexdigest()[:32]
+
+
+@bridge_router.post("/command-catalog")
+async def upload_command_catalog(req: CommandCatalogRequest, raw: Request):
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        return {"error": "BRIDGE_IMAGES_BUCKET not configured"}
+    account_id = _hash_key(raw.headers.get("x-api-key", ""))
+    catalog_ref = _command_catalog_ref(
+        account_id,
+        req.deviceName,
+        req.runtime,
+        req.projectHash,
+    )
+    catalog = _trim_catalog_descriptions({
+        "device": req.deviceName,
+        "runtime": req.runtime,
+        "projectHash": req.projectHash,
+        "revision": req.revision,
+        "commands": req.commands,
+        "skills": req.skills,
+    })
+    body = json.dumps(catalog, ensure_ascii=False, separators=(",", ":")).encode()
+    _s3_client().put_object(
+        Bucket=bucket,
+        Key=f"command-catalogs/{account_id}/{catalog_ref}.json",
+        Body=body,
+        ContentType="application/json",
+        CacheControl="no-store",
+    )
+    return {
+        "catalogRef": catalog_ref,
+        "revision": req.revision,
+        "size": len(body),
+    }
+
+
 @bridge_router.post("/upload-file")
 async def upload_file(req: UploadFileRequest):
     import base64

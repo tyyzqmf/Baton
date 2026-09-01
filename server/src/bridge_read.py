@@ -1294,6 +1294,26 @@ async def get_image(key: str):
         return Response(status_code=404, content=f"Not found: {e}")
 
 
+@read_router.get("/command-catalog/{catalog_ref}")
+async def get_command_catalog(catalog_ref: str, request: Request, response: Response):
+    if not re.fullmatch(r"[0-9a-f]{32}", catalog_ref):
+        raise HTTPException(status_code=400, detail="Invalid catalog reference")
+    bucket = os.environ.get("BRIDGE_IMAGES_BUCKET", "")
+    if not bucket:
+        raise HTTPException(status_code=500, detail="BRIDGE_IMAGES_BUCKET not configured")
+    account_id = _account_id(request)
+    key = f"command-catalogs/{account_id}/{catalog_ref}.json"
+    import boto3
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        catalog = json.loads(obj["Body"].read())
+    except Exception:
+        raise HTTPException(status_code=404, detail="Command catalog not found")
+    response.headers["Cache-Control"] = "no-store"
+    return catalog
+
+
 @read_router.get("/file/{key}")
 async def get_file(key: str):
     import boto3

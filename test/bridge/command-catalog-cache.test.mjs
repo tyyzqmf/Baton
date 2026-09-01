@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  COMMAND_DESCRIPTION_MAX_BYTES,
   CommandCatalogCache,
   commandCatalogPayload,
+  commandCatalogReadyPayload,
+  normalizeCommandCatalog,
 } from '../../bridge/command-catalog-cache.mjs';
 
 function catalog(name = 'model') {
@@ -154,6 +157,123 @@ test('command catalog payload reports stale fallback and unavailable first load'
     notModified: false,
     stale: false,
     error: 'Command catalog unavailable',
+  });
+});
+
+test('command catalog descriptions are capped before revision and delivery', () => {
+  const long = '界'.repeat(COMMAND_DESCRIPTION_MAX_BYTES);
+  const normalized = normalizeCommandCatalog({
+    commands: [{
+      name: 'model',
+      description: long,
+      options: [{ name: 'opus', description: long }],
+    }],
+    skills: [{ name: 'reviewer', description: long }],
+  });
+
+  assert.equal(Buffer.byteLength(normalized.commands[0].description), 255);
+  assert.equal(normalized.commands[0].description, '界'.repeat(85));
+  assert.equal(Buffer.byteLength(normalized.commands[0].options[0].description), 255);
+  assert.equal(Buffer.byteLength(normalized.skills[0].description), 255);
+  assert.equal(
+    normalizeCommandCatalog({
+      commands: [{ name: 'ascii', description: 'x'.repeat(300) }],
+    }).commands[0].description,
+    'x'.repeat(256),
+  );
+});
+
+test('command catalog drops fields the frontend cannot display or execute', () => {
+  const normalized = normalizeCommandCatalog({
+    commands: [{
+      name: 'model',
+      description: 'Choose a model',
+      source: 'builtin',
+      aliases: ['models'],
+      runtime: 'codex',
+      inlineArgs: true,
+      behavior: 'picker',
+      options: [{
+        name: 'opus',
+        label: 'Opus',
+        value: 'opus',
+        description: 'Most capable',
+        source: 'runtime',
+      }],
+    }],
+    skills: [{
+      name: 'reviewer',
+      description: 'Review changes',
+      path: '/private/skill/path',
+      scope: 'user',
+    }],
+  });
+
+  assert.deepEqual(normalized, {
+    commands: [{
+      name: 'model',
+      description: 'Choose a model',
+      behavior: 'picker',
+      options: [{
+        name: 'opus',
+        label: 'Opus',
+        value: 'opus',
+        description: 'Most capable',
+      }],
+    }],
+    skills: [{ name: 'reviewer', description: 'Review changes' }],
+  });
+});
+
+test('ten thousand 256-byte commands stay within the REST catalog budget', () => {
+  const normalized = normalizeCommandCatalog({
+    commands: Array.from({ length: 10_000 }, (_, index) => ({
+      name: `command-${index}`,
+      description: 'x'.repeat(300),
+      source: 'runtime',
+      aliases: ['unused-alias'],
+      runtime: 'claude',
+      inlineArgs: true,
+    })),
+    skills: [],
+  });
+  const bytes = Buffer.byteLength(JSON.stringify(normalized));
+
+  assert.equal(normalized.commands.length, 10_000);
+  assert.equal(Buffer.byteLength(normalized.commands[0].description), 256);
+  assert.ok(bytes < 3 * 1024 * 1024, `catalog was ${bytes} bytes`);
+});
+
+test('forced command catalog refresh bypasses a fresh bridge cache entry', async () => {
+  let loads = 0;
+  const cache = new CommandCatalogCache();
+  const loader = async () => catalog(`model-${++loads}`);
+  const first = await cache.get('claude:/project', loader);
+  const refreshed = await cache.get(
+    'claude:/project',
+    loader,
+    { forceRefresh: true },
+  );
+
+  assert.equal(loads, 2);
+  assert.notEqual(first.revision, refreshed.revision);
+});
+
+test('command catalog ready payload never includes catalog content', () => {
+  const payload = {
+    ...commandCatalogPayload({
+      catalog: catalog(),
+      revision: 'revision-1',
+      stale: false,
+      refreshed: true,
+    }),
+  };
+  assert.deepEqual(commandCatalogReadyPayload(payload, 'catalog-ref'), {
+    revision: 'revision-1',
+    notModified: false,
+    stale: false,
+    error: '',
+    catalogRef: 'catalog-ref',
   });
 });
 

@@ -366,7 +366,7 @@ def _handle_message(event, connection_id, endpoint):
                 "list_command_options",
                 preserve_device=True,
             )
-    elif action == "commands_list":
+    elif action == "command_catalog_ready":
         if role == "bridge":
             return _handle_bridge_broadcast(body, account_id, connection_id, endpoint)
     elif action == "command_options":

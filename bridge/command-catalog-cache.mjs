@@ -1,6 +1,77 @@
 import crypto from 'crypto';
 
 export const COMMAND_CATALOG_TTL_MS = 5 * 60_000;
+export const COMMAND_DESCRIPTION_MAX_BYTES = 256;
+
+function trimDescription(value) {
+  if (typeof value !== 'string') return value;
+  if (Buffer.byteLength(value) <= COMMAND_DESCRIPTION_MAX_BYTES) return value;
+  let bytes = 0;
+  let trimmed = '';
+  for (const character of value) {
+    const size = Buffer.byteLength(character);
+    if (bytes + size > COMMAND_DESCRIPTION_MAX_BYTES) break;
+    trimmed += character;
+    bytes += size;
+  }
+  return trimmed;
+}
+
+function copyField(target, source, key) {
+  const value = source?.[key];
+  if (value === undefined || value === null || value === '') return;
+  target[key] = value;
+}
+
+function normalizeOption(option) {
+  if (!option || typeof option !== 'object') return null;
+  const normalized = {};
+  for (const key of ['name', 'label', 'value', 'behavior', 'confirm']) {
+    copyField(normalized, option, key);
+  }
+  if (typeof option.description === 'string' && option.description) {
+    normalized.description = trimDescription(option.description);
+  }
+  if (option.disabled === true) normalized.disabled = true;
+  return normalized;
+}
+
+function normalizeCommand(command) {
+  if (!command || typeof command.name !== 'string' || !command.name) return null;
+  const normalized = { name: command.name };
+  for (const key of ['argumentHint', 'behavior', 'picker', 'confirm']) {
+    copyField(normalized, command, key);
+  }
+  if (typeof command.description === 'string' && command.description) {
+    normalized.description = trimDescription(command.description);
+  }
+  if (command.optionsRemote === true) normalized.optionsRemote = true;
+  if (command.disabled === true) normalized.disabled = true;
+  if (Array.isArray(command.options) && command.options.length) {
+    normalized.options = command.options.map(normalizeOption).filter(Boolean);
+  }
+  return normalized;
+}
+
+function normalizeSkill(skill) {
+  if (!skill || typeof skill.name !== 'string' || !skill.name) return null;
+  const normalized = { name: skill.name };
+  if (typeof skill.description === 'string' && skill.description) {
+    normalized.description = trimDescription(skill.description);
+  }
+  return normalized;
+}
+
+export function normalizeCommandCatalog(catalog) {
+  return {
+    commands: (Array.isArray(catalog?.commands) ? catalog.commands : [])
+      .map(normalizeCommand)
+      .filter(Boolean),
+    skills: (Array.isArray(catalog?.skills) ? catalog.skills : [])
+      .map(normalizeSkill)
+      .filter(Boolean),
+  };
+}
 
 function revisionFor(catalog) {
   return crypto.createHash('sha256')
@@ -28,6 +99,16 @@ export function commandCatalogPayload(result, knownRevision = '') {
   };
 }
 
+export function commandCatalogReadyPayload(payload, catalogRef = '') {
+  return {
+    revision: payload.revision || '',
+    notModified: !!payload.notModified,
+    stale: !!payload.stale,
+    error: payload.error || '',
+    ...(!payload.notModified && catalogRef ? { catalogRef } : {}),
+  };
+}
+
 export class CommandCatalogCache {
   constructor(options = {}) {
     this.ttlMs = options.ttlMs ?? COMMAND_CATALOG_TTL_MS;
@@ -35,9 +116,11 @@ export class CommandCatalogCache {
     this.entries = new Map();
   }
 
-  async get(key, loader) {
+  async get(key, loader, options = {}) {
     const current = this.entries.get(key);
-    if (current?.value && this.now() - current.loadedAt < this.ttlMs) {
+    if (!options.forceRefresh
+      && current?.value
+      && this.now() - current.loadedAt < this.ttlMs) {
       return { ...current.value, stale: false, refreshed: false };
     }
     if (current?.pending) return current.pending;
@@ -45,7 +128,7 @@ export class CommandCatalogCache {
     const previous = current?.value;
     const pending = (async () => {
       try {
-        const catalog = await loader();
+        const catalog = normalizeCommandCatalog(await loader());
         const value = {
           catalog,
           revision: revisionFor(catalog),

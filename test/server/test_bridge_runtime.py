@@ -7,6 +7,8 @@ import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+from fastapi import HTTPException
+
 sys.path.insert(
     0,
     os.path.join(os.path.dirname(__file__), "..", "..", "server", "src"),
@@ -94,6 +96,117 @@ def test_session_id_compatibility():
     assert bridge_sync._session_ids("", "abc") == ("claude", "abc", "abc")
     assert bridge_sync._session_ids("codex", "abc") == ("codex", "abc", "codex:abc")
     assert bridge_sync._session_ids("codex", "codex:abc") == ("codex", "abc", "codex:abc")
+
+
+def test_command_catalog_round_trip_is_account_scoped_and_trims_descriptions(monkeypatch):
+    class Body:
+        def __init__(self, value):
+            self.value = value
+
+        def read(self):
+            return self.value
+
+    class S3:
+        def __init__(self):
+            self.objects = {}
+
+        def put_object(self, Bucket, Key, Body, **kwargs):
+            self.objects[(Bucket, Key)] = Body
+            assert kwargs["ContentType"] == "application/json"
+            assert kwargs["CacheControl"] == "no-store"
+
+        def get_object(self, Bucket, Key):
+            if (Bucket, Key) not in self.objects:
+                raise RuntimeError("not found")
+            return {"Body": Body(self.objects[(Bucket, Key)])}
+
+    s3 = S3()
+    monkeypatch.setenv("BRIDGE_IMAGES_BUCKET", "catalog-bucket")
+    monkeypatch.setattr(bridge_sync, "_s3", s3)
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: s3)
+    long_description = "界" * 240
+    request = bridge_sync.CommandCatalogRequest(
+        deviceName="Mac",
+        runtime="claude",
+        projectHash="-workspace-project",
+        revision="revision-1",
+        commands=[{
+            "name": "model",
+            "description": long_description,
+            "options": [{"name": "opus", "description": long_description}],
+        }],
+        skills=[{"name": "reviewer", "description": long_description}],
+    )
+
+    uploaded = asyncio.run(bridge_sync.upload_command_catalog(request, FakeRequest()))
+    assert len(uploaded["catalogRef"]) == 32
+    response = SimpleNamespace(headers={})
+    catalog = asyncio.run(bridge_read.get_command_catalog(
+        uploaded["catalogRef"],
+        FakeRequest(),
+        response,
+    ))
+
+    assert catalog["revision"] == "revision-1"
+    assert len(catalog["commands"][0]["description"].encode("utf-8")) == 255
+    assert catalog["commands"][0]["description"] == "界" * 85
+    assert len(catalog["commands"][0]["options"][0]["description"].encode("utf-8")) == 255
+    assert len(catalog["skills"][0]["description"].encode("utf-8")) == 255
+    assert response.headers["Cache-Control"] == "no-store"
+
+    class OtherRequest:
+        headers = {"x-api-key": "other-key"}
+
+    try:
+        asyncio.run(bridge_read.get_command_catalog(
+            uploaded["catalogRef"],
+            OtherRequest(),
+            SimpleNamespace(headers={}),
+        ))
+        assert False, "another account must not read the catalog"
+    except HTTPException as error:
+        assert error.status_code == 404
+
+
+def test_command_catalog_ready_is_broadcast_to_apps(monkeypatch):
+    class ConnectionTable:
+        def get_item(self, Key):
+            return {"Item": {
+                "connectionId": Key["connectionId"],
+                "role": "bridge",
+                "accountId": "account-1",
+            }}
+
+    broadcasts = []
+    monkeypatch.setattr(bridge_ws, "_connections_table", ConnectionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_handle_bridge_broadcast",
+        lambda body, account_id, connection_id, endpoint: (
+            broadcasts.append((body, account_id, connection_id, endpoint))
+            or {"statusCode": 200}
+        ),
+    )
+    body = {
+        "action": "command_catalog_ready",
+        "requestId": "cmds-1",
+        "catalogRef": "0123456789abcdef0123456789abcdef",
+        "revision": "revision-1",
+    }
+
+    response = bridge_ws._handle_message(
+        {"body": json.dumps(body)},
+        "bridge-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert broadcasts == [(
+        body,
+        "account-1",
+        "bridge-1",
+        "https://example.test/v1",
+    )]
 
 
 def test_old_session_payload_defaults_to_claude():

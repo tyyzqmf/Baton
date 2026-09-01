@@ -5,6 +5,7 @@ import {
   pollAgentStates,
   resetAgentPollState,
   shouldPersistClaudeJsonlMessage,
+  shouldSkipClaudeSession,
 } from '../../bridge/watcher.mjs';
 
 test('runtime-owned Claude JSONL rows are persistence-only', () => {
@@ -21,6 +22,12 @@ test('external Claude JSONL rows remain realtime', () => {
     pushed: false,
     runtimeOwned: false,
   }), false);
+});
+
+test('empty non-daemon Claude sessions are skipped regardless of running status', () => {
+  assert.equal(shouldSkipClaudeSession('', null), true);
+  assert.equal(shouldSkipClaudeSession('Real user prompt', null), false);
+  assert.equal(shouldSkipClaudeSession('', { agentName: 'worker' }), false);
 });
 
 test('failed realtime agent status push is retried on the next poll', async () => {

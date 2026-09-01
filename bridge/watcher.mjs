@@ -26,6 +26,10 @@ export function shouldPersistClaudeJsonlMessage(runtimeOwned, route) {
   return !!runtimeOwned || !!route?.pushed || !!route?.runtimeOwned;
 }
 
+export function shouldSkipClaudeSession(preview, daemonMeta) {
+  return !preview && !daemonMeta;
+}
+
 export function startWatcher(config) {
   if (!fs.existsSync(CLAUDE_PROJECTS)) return;
   const busy = new Map(); // sessionId → { pending }
@@ -180,6 +184,9 @@ async function readAndSend(config, filename, sessionId) {
   const lastLine = synced.get(sessionId) ?? 0;
   if (lines.length <= lastLine) return;
 
+  const metadata = getSessionMetadata(filePath);
+  const daemonMeta = metadata.preview ? null : getDaemonSessions().get(sessionId);
+  const skipSession = shouldSkipClaudeSession(metadata.preview, daemonMeta);
   let lastParsedLine = lastLine;
   let gotNewTitle = false;
   let lastStatus = null; // track status from parsed entries directly
@@ -194,6 +201,7 @@ async function readAndSend(config, filename, sessionId) {
     const s = statusFromEntry(raw);
     if (s) lastStatus = s;
 
+    if (skipSession) continue;
     if (!VALID_TYPES.has(raw.type)) continue;
     // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
     if (raw.isMeta && raw.type === 'user') { _metaUuids.add(raw.uuid); continue; }
@@ -215,6 +223,7 @@ async function readAndSend(config, filename, sessionId) {
   }
 
   synced.set(sessionId, lastParsedLine);
+  if (skipSession) return;
 
   // Sync metadata only when status changed, new session, or ai-title arrived
   if (lastParsedLine > lastLine && (lastStatus || gotNewTitle)) {
@@ -335,10 +344,10 @@ async function postSessionMeta(
   const statusChanged = newStatus !== oldStatus;
   const isNew = !recentSessions.has(sessionId);
 
-  // Skip empty-shell sessions (e.g. /clear: metadata only, no preview, not running).
+  // Skip empty-shell sessions even if process detection briefly marks them running.
   const metadata = getSessionMetadata(filePath);
   const preview = metadata.preview;
-  if (!preview && newStatus !== 'running' && !dm) return;
+  if (shouldSkipClaudeSession(preview, dm)) return;
   if (!(statusChanged || isNew || gotNewTitle)) return;
 
   const stat = fs.statSync(filePath);

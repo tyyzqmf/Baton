@@ -77,7 +77,7 @@ function loadCurrentContext() {
   _checkedAt = cached.checkedAt;
 }
 
-// Fire a fresh scan request to the bridge (response → handleCommandsList).
+// Fire a fresh scan request to the bridge (response → handleCommandCatalogReady).
 function prefetchCommands() {
   var send = window.wsSendReliable || window.wsSend;
   if (!send) return;
@@ -98,7 +98,7 @@ function prefetchCommands() {
   });
 }
 
-function handleCommandsList(msg) {
+function applyCommandCatalog(msg) {
   if (_latestRequestId && msg.requestId !== _latestRequestId) return;
   var currentRuntime = runtime();
   if (currentRuntime === 'codex' && msg.runtime !== 'codex') return;
@@ -126,6 +126,39 @@ function handleCommandsList(msg) {
   if (changed && currentQuery() !== null && (_mode === 'commands' || _mode === 'skills')) {
     applyFilter(selectedName);
   }
+}
+
+function handleCommandCatalogReady(msg) {
+  if (_latestRequestId && msg.requestId !== _latestRequestId) return;
+  var currentRuntime = runtime();
+  if (currentRuntime === 'codex' && msg.runtime !== 'codex') return;
+  if (currentRuntime !== 'codex' && msg.runtime && msg.runtime !== currentRuntime) return;
+  if (msg.device && msg.device !== (state.appState.device || '')) return;
+  if (msg.projectHash && msg.projectHash !== projectHash()) return;
+  if (msg.notModified || !msg.catalogRef) {
+    applyCommandCatalog(msg);
+    return;
+  }
+  var requestId = msg.requestId;
+  var requestContextKey = cacheKey();
+  if (typeof window.api !== 'function') {
+    _requestPending = false;
+    _requestContextKey = '';
+    return;
+  }
+  window.api('/api/bridge/command-catalog/' + encodeURIComponent(msg.catalogRef))
+    .then(function (catalog) {
+      if (requestId !== _latestRequestId || requestContextKey !== cacheKey()) return;
+      applyCommandCatalog(Object.assign({}, msg, catalog, {
+        requestId: requestId,
+        notModified: false,
+      }));
+    })
+    .catch(function () {
+      if (requestId !== _latestRequestId || requestContextKey !== cacheKey()) return;
+      _requestPending = false;
+      _requestContextKey = '';
+    });
 }
 
 function resetCommandRequest() {
@@ -456,7 +489,8 @@ function onKeydown(e) {
 
 Object.assign(window, {
   prefetchCommands: prefetchCommands,
-  handleCommandsList: handleCommandsList,
+  applyCommandCatalog: applyCommandCatalog,
+  handleCommandCatalogReady: handleCommandCatalogReady,
   handleCommandOptions: handleCommandOptions,
   resetCommandRequest: resetCommandRequest,
   closeSlashPopup: closePopup,
