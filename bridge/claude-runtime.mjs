@@ -13,6 +13,7 @@ import {
   getSessionMetadata,
   getSessionStatus,
   normalizeProjectHash,
+  readClaudeFirstPrompts,
   readableProjectName,
 } from './session.mjs';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
@@ -34,6 +35,12 @@ function findClaudeSessionFile(nativeSessionId) {
 
 export function discoverClaudeSessions(options = {}) {
   const projectsRoot = options.claudeProjectsRoot || CLAUDE_PROJECTS;
+  const historyPath = options.claudeHistoryPath
+    || path.join(path.dirname(projectsRoot), 'history.jsonl');
+  let firstPrompts = new Map();
+  try {
+    firstPrompts = readClaudeFirstPrompts(historyPath);
+  } catch {}
   const runningInfo = options.runningInfo || getRunningInfo();
   const sessions = [];
   const errors = [];
@@ -70,9 +77,11 @@ export function discoverClaudeSessions(options = {}) {
       }
       if (stat.size === 0) continue;
 
-      const metadata = getSessionMetadata(filePath);
-      if (!metadata.preview) continue;
       const nativeSessionId = file.slice(0, -'.jsonl'.length);
+      const metadata = getSessionMetadata(filePath, {
+        firstPrompt: firstPrompts.get(nativeSessionId),
+      });
+      if (!metadata.preview) continue;
       const projectHash = normalizeProjectHash(project);
       const session = {
         id: nativeSessionId,

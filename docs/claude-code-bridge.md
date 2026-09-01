@@ -37,7 +37,9 @@ Mac/Linux/Windows                   AWS (Serverless)                    Baton Ap
 The current startup coordinator discovers all registered runtime adapters, merges their catalogs,
 and computes Device/Project aggregates once. The steps below describe the Claude-specific part.
 
-1. Scan `~/.claude/projects/` → collect ALL session metadata (preview from `ai-title`)
+1. Scan `~/.claude/projects/` → collect ALL session metadata. Preview follows Claude
+   TUI order: `custom-title` → `ai-title` → `summary` → first prompt → `last-prompt`;
+   `~/.claude/history.jsonl` preserves the original first prompt, including slash commands.
 2. `POST /api/bridge/sync-sessions` → full upload to DDB (only on startup)
 3. Build `recentSessions` set (sessions active in last 24h) for periodic sync
 4. Initial message sync: active session per project (latest only) + recent 24h sessions → extract + upload to DDB

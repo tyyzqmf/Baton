@@ -71,8 +71,10 @@
    | 子 agent 中间步骤(parent_tool_use_id) | ✅ 独有 | ❌ |
    | `ai-title` / `last-prompt`(会话标题元数据) | ❌ | ✅ 独有(CC 异步写盘,不走 stream stdout) |
    | 用户输入回显 / `file-history-snapshot` | ❌ | ✅ |
-   - **标题不受影响**:沿用现有多级 fallback(ai-title → last-prompt → **第一条 user 消息**),与 CC 本身
-     逻辑一致。ai-title 仍随 jsonl 落 DDB;实时期前端有 user 消息即可出标题。litter 同思路
+   - **标题不受影响**:沿用与 CC TUI 一致的多级 fallback(custom-title → ai-title
+     → summary → **第一条原始 prompt** → last-prompt)。第一条原始 prompt 优先从
+     `~/.claude/history.jsonl` 按 sessionId 获取，缺失时从 session JSONL 恢复普通文本、
+     `/package` 等 slash command。ai-title 仍随 jsonl 落 DDB;实时期前端有 user 消息即可出标题。litter 同思路
      (`claude_session_scan.rs` 直接取首条 user 消息文本作 preview)。
 
 ## 二、核心架构:per-session 常驻进程池(ClaudePool)

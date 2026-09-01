@@ -12,6 +12,65 @@ import { runExecutable } from './platform.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
 const SKIP_FIRST_PROMPT = /^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user[^\]]*\])/;
+const claudeHistoryCache = new Map();
+const DEFAULT_CLAUDE_HISTORY = path.join(path.dirname(CLAUDE_PROJECTS), 'history.jsonl');
+
+function previewText(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > 200 ? `${text.slice(0, 200).trim()}…` : text;
+}
+
+function commandPrompt(text) {
+  const command = /<command-name>\s*(\/?[^<]+?)\s*<\/command-name>/i.exec(text);
+  if (!command) return '';
+  const name = command[1].startsWith('/') ? command[1] : `/${command[1]}`;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/i.exec(text)?.[1] || '';
+  return previewText(`${name}${args.trim() ? ` ${args.trim()}` : ''}`);
+}
+
+export function readClaudeFirstPrompts(historyPath) {
+  const prompts = new Map();
+  try {
+    scanJsonlLines(historyPath, (line) => {
+      if (!line.trim()) return;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        return;
+      }
+      const sessionId = String(entry?.sessionId || '');
+      if (!sessionId || prompts.has(sessionId)) return;
+      const prompt = previewText(entry.display);
+      if (prompt) prompts.set(sessionId, prompt);
+    });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  return prompts;
+}
+
+export function getClaudeFirstPrompt(sessionId, historyPath) {
+  if (!sessionId || !historyPath) return '';
+  let stat;
+  try {
+    stat = fs.statSync(historyPath);
+  } catch {
+    claudeHistoryCache.delete(historyPath);
+    return '';
+  }
+  let cached = claudeHistoryCache.get(historyPath);
+  if (!cached || cached.size !== stat.size || cached.mtimeMs !== stat.mtimeMs) {
+    cached = {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      prompts: readClaudeFirstPrompts(historyPath),
+    };
+    claudeHistoryCache.set(historyPath, cached);
+  }
+  return cached.prompts.get(sessionId) || '';
+}
 
 export function extractFirstPromptFromMsg(msg) {
   if (msg.type !== 'user' || msg.isMeta || msg.isCompactSummary) return '';
@@ -22,18 +81,21 @@ export function extractFirstPromptFromMsg(msg) {
   for (const raw of texts) {
     const t = raw.replace(/\n/g, ' ').trim();
     if (!t) continue;
+    const command = commandPrompt(raw);
+    if (command) return command;
     const bash = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(t);
     if (bash) return `! ${bash[1].trim()}`;
     if (SKIP_FIRST_PROMPT.test(t)) continue;
-    return t.length > 200 ? t.slice(0, 200).trim() + '…' : t;
+    return previewText(t);
   }
   return '';
 }
 
-export function getSessionMetadata(filePath) {
+export function getSessionMetadata(filePath, options = {}) {
   try {
     let customTitle = '';
     let aiTitle = '';
+    let summary = '';
     let lastPrompt = '';
     let firstUserMsg = '';
     let model = '';
@@ -44,6 +106,7 @@ export function getSessionMetadata(filePath) {
         const msg = JSON.parse(line);
         if (msg.type === 'custom-title' && msg.customTitle) customTitle = msg.customTitle;
         if (msg.type === 'ai-title' && msg.aiTitle) aiTitle = msg.aiTitle;
+        if (msg.type === 'summary' && msg.summary) summary = msg.summary;
         if (msg.type === 'last-prompt' && msg.lastPrompt) lastPrompt = msg.lastPrompt;
         if (!firstUserMsg) {
           const fp = extractFirstPromptFromMsg(msg);
@@ -52,8 +115,23 @@ export function getSessionMetadata(filePath) {
         if (msg.type === 'assistant' && msg.message?.model) model = msg.message.model;
       } catch {}
     });
+    const sessionId = path.basename(filePath, '.jsonl');
+    const hasFirstPrompt = Object.prototype.hasOwnProperty.call(options, 'firstPrompt');
+    const indexedFirstPrompt = !hasFirstPrompt
+      ? getClaudeFirstPrompt(
+        sessionId,
+        options.historyPath || DEFAULT_CLAUDE_HISTORY,
+      )
+      : previewText(options.firstPrompt);
     return {
-      preview: customTitle || aiTitle || lastPrompt || firstUserMsg,
+      preview: previewText(
+        customTitle
+        || aiTitle
+        || summary
+        || indexedFirstPrompt
+        || firstUserMsg
+        || lastPrompt,
+      ),
       model,
       lineCount,
     };

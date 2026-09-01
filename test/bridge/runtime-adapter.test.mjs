@@ -14,7 +14,11 @@ import {
   getRuntimeAdapter,
   runtimeAdapters,
 } from '../../bridge/runtime-registry.mjs';
-import { getSessionMetadata } from '../../bridge/session.mjs';
+import {
+  extractFirstPromptFromMsg,
+  getSessionMetadata,
+  readClaudeFirstPrompts,
+} from '../../bridge/session.mjs';
 import { resolveCodexBin } from '../../bridge/runtime-capabilities.mjs';
 
 function claudeFixture() {
@@ -169,6 +173,77 @@ test('Claude metadata scan returns preview, latest model, and line count in one 
       model: 'claude-test',
       lineCount: 2,
     });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Claude metadata follows the TUI title priority and preserves slash commands', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-title-'));
+  const historyPath = path.join(root, 'history.jsonl');
+  const sessionId = '11111111-1111-4111-8111-111111111111';
+  const filePath = path.join(root, `${sessionId}.jsonl`);
+  fs.writeFileSync(historyPath, [
+    JSON.stringify({ sessionId, display: '/package mac' }),
+    JSON.stringify({ sessionId, display: 'later prompt' }),
+    '',
+  ].join('\n'));
+  fs.writeFileSync(filePath, [
+    JSON.stringify({
+      type: 'user',
+      message: {
+        content: '<command-message>package</command-message>\n'
+          + '<command-name>/package</command-name>\n'
+          + '<command-args>mac</command-args>',
+      },
+    }),
+    JSON.stringify({ type: 'last-prompt', lastPrompt: 'later prompt' }),
+    '',
+  ].join('\n'));
+  try {
+    assert.equal(
+      extractFirstPromptFromMsg(JSON.parse(fs.readFileSync(filePath, 'utf8').split('\n')[0])),
+      '/package mac',
+    );
+    assert.equal(readClaudeFirstPrompts(historyPath).get(sessionId), '/package mac');
+    assert.equal(getSessionMetadata(filePath, { historyPath }).preview, '/package mac');
+    assert.equal(getSessionMetadata(filePath, {
+      firstPrompt: readClaudeFirstPrompts(historyPath).get(sessionId),
+    }).preview, '/package mac');
+    assert.equal(getSessionMetadata(filePath, { firstPrompt: '' }).preview, '/package mac');
+
+    fs.appendFileSync(filePath, `${JSON.stringify({
+      type: 'summary',
+      summary: 'Package release artifacts',
+    })}\n`);
+    assert.equal(getSessionMetadata(filePath, { firstPrompt: '/package mac' }).preview,
+      'Package release artifacts');
+
+    fs.appendFileSync(filePath, `${JSON.stringify({
+      type: 'ai-title',
+      aiTitle: 'Build release package',
+    })}\n`);
+    fs.appendFileSync(filePath, `${JSON.stringify({
+      type: 'custom-title',
+      customTitle: 'Release build',
+    })}\n`);
+    assert.equal(getSessionMetadata(filePath, { firstPrompt: '/package mac' }).preview,
+      'Release build');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Claude first prompt outranks the latest prompt when no generated title exists', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-first-prompt-'));
+  const filePath = path.join(root, 'session.jsonl');
+  fs.writeFileSync(filePath, [
+    JSON.stringify({ type: 'user', message: { content: 'First question' } }),
+    JSON.stringify({ type: 'last-prompt', lastPrompt: 'Follow-up question' }),
+    '',
+  ].join('\n'));
+  try {
+    assert.equal(getSessionMetadata(filePath).preview, 'First question');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
