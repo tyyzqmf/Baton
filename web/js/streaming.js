@@ -639,8 +639,24 @@ export class StreamCoordinator {
         this.reconcileBlock(turn, block);
       }
       if (!block.authoritative) {
+        block.stopped = true;
+        if (!block.isRenderable()) {
+          this.emit({
+            type: 'discardBlock',
+            turnId: turn.turnId,
+            blockId: block.blockId,
+          });
+          continue;
+        }
+        block.displayComplete = true;
         this.emit({
-          type: 'discardBlock',
+          type: 'patchBlock',
+          turnId: turn.turnId,
+          blockId: block.blockId,
+          block: block.snapshot(),
+        });
+        this.emit({
+          type: 'commitBlock',
           turnId: turn.turnId,
           blockId: block.blockId,
         });
@@ -1209,7 +1225,10 @@ export class StreamingDomRenderer {
     if (view.block.toolUseId) view.element.dataset.toolId = view.block.toolUseId;
     if (view.block.messageId) view.element.dataset.messageId = view.block.messageId;
     if (view.block.nativeId) view.element.dataset.nativeId = view.block.nativeId;
-    view.element.classList.add('stream-block-authoritative');
+    view.element.classList.toggle(
+      'stream-block-authoritative',
+      !!view.block.authoritative,
+    );
     this.onMutation(view.element);
   }
 

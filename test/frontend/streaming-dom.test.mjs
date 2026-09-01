@@ -136,6 +136,38 @@ test('authority patches the existing block instead of creating a duplicate', () 
   assert.equal(original.textContent, 'final');
 });
 
+test('freezing a local block renders all visible text without claiming authority', () => {
+  const h = createRenderer();
+  createText(h.renderer);
+  const original = h.document.querySelector('[data-block-id="1"]');
+  h.renderer.applyOperations([
+    { type: 'appendText', turnId: 'turn-1', blockId: 1, chunk: 'partial' },
+    {
+      type: 'patchBlock',
+      turnId: 'turn-1',
+      blockId: 1,
+      block: {
+        blockId: 1,
+        kind: 'text',
+        text: 'partial answer',
+        stopped: true,
+        displayComplete: true,
+        authoritative: false,
+      },
+    },
+    { type: 'commitBlock', turnId: 'turn-1', blockId: 1 },
+    { type: 'completeTurn', turnId: 'turn-1' },
+  ]);
+
+  assert.equal(original.textContent, 'partial answer');
+  assert.equal(original.classList.contains('stream-block-committed'), true);
+  assert.equal(original.classList.contains('stream-block-authoritative'), false);
+  assert.equal(
+    original.parentElement.classList.contains('stream-committed'),
+    true,
+  );
+});
+
 test('discarding the only incomplete block removes its empty live turn', () => {
   const h = createRenderer();
   createText(h.renderer);

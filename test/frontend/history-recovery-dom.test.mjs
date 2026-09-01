@@ -282,6 +282,143 @@ test('recovery patches but never deletes local stream-committed children', () =>
   );
 });
 
+test('completed recovery preserves visible stream previews missing from authority', () => {
+  const turnId = 'turn-interrupted-preview';
+  const interruptId = `live_interrupt_${turnId}`;
+  const dom = new JSDOM(
+    '<div class="messages">'
+      + '<div class="msg-user" data-anchor="' + turnId + '"'
+      + ' data-message-id="user">question</div>'
+      + '<div class="assistant-turn stream-preview" data-turn-id="'
+      + turnId + '">'
+      + '<div class="tl-item assistant-text" data-block-id="2">'
+      + 'visible partial answer</div>'
+      + '</div>'
+      + '</div>',
+  );
+  const container = dom.window.document.querySelector('.messages');
+  const preview = container.lastElementChild;
+  const localAnswer = preview.firstElementChild;
+  const messages = [{
+    uuid: 'user',
+    turnId,
+    type: 'user',
+    content: 'question',
+  }, {
+    uuid: interruptId,
+    nativeId: `live:interrupt:${turnId}`,
+    turnId,
+    type: 'user',
+    content: [{ type: 'text', text: '[Request interrupted by user]' }],
+  }];
+  const state = {
+    wsAllMessages: messages,
+    wsMessageUuids: new Set(['user', interruptId]),
+    wsMessageCount: messages.length,
+    wsLastTimestamp: '',
+    wsRenderedCount: messages.length,
+    pendingSentMessages: [],
+    wsRunning: false,
+  };
+  const discarded = [];
+  const adapter = createHistoryRecoveryDomAdapter({
+    state,
+    document: dom.window.document,
+    runtime: () => 'claude',
+    preserveStreamPreviews: false,
+    discardStreamTurn: (id) => discarded.push(id),
+    renderMessages: () =>
+      '<div class="msg-user" data-anchor="' + turnId + '"'
+      + ' data-message-id="user">question</div>'
+      + '<div class="assistant-turn" data-turn-id="' + turnId + '">'
+      + '<div class="tl-item msg-interrupt" data-message-id="'
+      + interruptId + '">Interrupted</div>'
+      + '</div>',
+  });
+
+  adapter.setMessages(messages);
+  adapter.applyHistoryChanges({
+    messages,
+    inserted: [{ message: messages[1] }],
+    patched: [],
+    identityUpdated: [],
+    conflicts: [],
+    reordered: false,
+    authoritative: true,
+  }, { promoted: [], remaining: [] }, 'completed');
+
+  assert.equal(localAnswer.isConnected, true);
+  assert.equal(localAnswer.textContent, 'visible partial answer');
+  assert.equal(preview.querySelectorAll('.msg-interrupt').length, 1);
+  assert.deepEqual(discarded, []);
+});
+
+test('recovered authority patches one matching local stream block without duplication', () => {
+  const turnId = 'turn-recovered-stream-block';
+  const dom = new JSDOM(
+    '<div class="messages">'
+      + '<div class="msg-user" data-anchor="' + turnId + '"'
+      + ' data-message-id="user">question</div>'
+      + '<div class="assistant-turn stream-committed" data-turn-id="'
+      + turnId + '">'
+      + '<div class="tl-item assistant-text stream-block-committed"'
+      + ' data-block-id="2">local partial answer</div>'
+      + '</div>'
+      + '</div>',
+  );
+  const container = dom.window.document.querySelector('.messages');
+  const committed = container.lastElementChild;
+  const localAnswer = committed.firstElementChild;
+  const messages = [{
+    uuid: 'user',
+    turnId,
+    type: 'user',
+    content: 'question',
+  }, {
+    uuid: 'assistant-authority',
+    turnId,
+    type: 'assistant',
+    content: 'authoritative answer',
+  }];
+  const state = {
+    wsAllMessages: messages,
+    wsMessageUuids: new Set(['user', 'assistant-authority']),
+    wsMessageCount: messages.length,
+    wsLastTimestamp: '',
+    wsRenderedCount: messages.length,
+    pendingSentMessages: [],
+    wsRunning: false,
+  };
+  const adapter = createHistoryRecoveryDomAdapter({
+    state,
+    document: dom.window.document,
+    runtime: () => 'claude',
+    renderMessages: () =>
+      '<div class="msg-user" data-anchor="' + turnId + '"'
+      + ' data-message-id="user">question</div>'
+      + '<div class="assistant-turn" data-turn-id="' + turnId + '">'
+      + '<div class="tl-item assistant-text"'
+      + ' data-message-id="assistant-authority">authoritative answer</div>'
+      + '</div>',
+  });
+
+  adapter.setMessages(messages);
+  adapter.applyHistoryChanges({
+    messages,
+    inserted: [{ message: messages[1] }],
+    patched: [],
+    identityUpdated: [],
+    conflicts: [],
+    reordered: false,
+    authoritative: true,
+  }, { promoted: [], remaining: [] }, 'completed');
+
+  assert.equal(committed.querySelectorAll('.assistant-text').length, 1);
+  assert.equal(localAnswer.isConnected, true);
+  assert.equal(localAnswer.dataset.messageId, 'assistant-authority');
+  assert.equal(localAnswer.textContent, 'authoritative answer');
+});
+
 test('recovery folds an unscoped REST turn into its committed stream turn', () => {
   const turnId = 'sent-recovered-without-turn-id';
   const dom = new JSDOM(

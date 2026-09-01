@@ -208,6 +208,32 @@ test('reconnect preserves completed and partial blocks without DOM operations', 
   assert.equal(coordinator.getTurn('turn-1').blocks.size, 2);
 });
 
+test('completed recovery freezes visible local blocks and discards only empty placeholders', () => {
+  const coordinator = new StreamCoordinator();
+  coordinator.startTurn(event('stream_turn_start', 0));
+  frame(coordinator, 'stream_block_start', 1, { kind: 'text' });
+  frame(coordinator, 'stream_delta', 2, { chunk: 'visible partial answer' });
+  frame(coordinator, 'stream_block_stop', 3);
+  frame(coordinator, 'stream_block_start', 4, { kind: 'text' });
+  coordinator.takeOperations();
+
+  assert.equal(coordinator.settleTurn('turn-1'), true);
+  const operations = coordinator.takeOperations();
+
+  assert.ok(operations.some((operation) =>
+    operation.type === 'patchBlock'
+    && operation.blockId === 1
+    && operation.block.text === 'visible partial answer'
+    && operation.block.displayComplete === true
+    && operation.block.authoritative === false));
+  assert.ok(operations.some((operation) =>
+    operation.type === 'commitBlock' && operation.blockId === 1));
+  assert.ok(operations.some((operation) =>
+    operation.type === 'discardBlock' && operation.blockId === 4));
+  assert.equal(operations.some((operation) =>
+    operation.type === 'discardBlock' && operation.blockId === 1), false);
+});
+
 test('reconnect authority replaces the old partial block but not later live blocks', () => {
   const coordinator = new StreamCoordinator();
   coordinator.startTurn(event('stream_turn_start', 0));

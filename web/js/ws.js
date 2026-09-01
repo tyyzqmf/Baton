@@ -421,6 +421,26 @@ function settleRecoveredTurns(turnIds) {
   return settled;
 }
 
+function recoveredInterruptTurnIds(turnIds) {
+  var candidates = new Set(turnIds || []);
+  var interrupted = new Set();
+  for (var message of state.wsAllMessages) {
+    if (!isInterruptMsg(message)) continue;
+    var turnId = String(message.turnId || '');
+    if (!turnId) {
+      var nativeId = String(message.nativeId || '');
+      var uuid = String(message.uuid || '');
+      if (nativeId.indexOf('live:interrupt:') === 0) {
+        turnId = nativeId.slice('live:interrupt:'.length);
+      } else if (uuid.indexOf('live_interrupt_') === 0) {
+        turnId = uuid.slice('live_interrupt_'.length);
+      }
+    }
+    if (candidates.has(turnId)) interrupted.add(turnId);
+  }
+  return Array.from(interrupted);
+}
+
 function finishSessionConnectionRecovery(recovery) {
   if (!recovery || recovery !== _connectionRecovery
     || recovery.sessionId !== state.wsSessionId) {
@@ -455,6 +475,14 @@ function finishSessionConnectionRecovery(recovery) {
   if (recovery.activity === 'completed') {
     settleRecoveredTurns(recovery.turnIds);
     drainStrictStreamOperations();
+  } else if (recovery.sessionStatus === 'completed'
+    && !bufferedLifecycleChanged
+    && newLocalTurnIds.size === 0) {
+    var interruptedTurnIds = recoveredInterruptTurnIds(recovery.turnIds);
+    if (interruptedTurnIds.length) {
+      settleRecoveredTurns(interruptedTurnIds);
+      drainStrictStreamOperations();
+    }
   }
   state.wsRunning = resolveSessionRunningAfterFetch({
     status: recovery.sessionStatus,

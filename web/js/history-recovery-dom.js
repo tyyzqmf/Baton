@@ -148,6 +148,29 @@ function recoveredTurnsForStream(container, streamRow) {
   });
 }
 
+function streamRowHasVisibleContent(streamRow) {
+  if (!streamRow) return false;
+  return Array.from(streamRow.children).some(function (child) {
+    if ((child.textContent || '').trim()) return true;
+    if (child.classList?.contains('tool-node')) return true;
+    return !!child.querySelector?.(
+      'img,video,audio,canvas,svg,pre,code,table',
+    );
+  });
+}
+
+function streamChildrenCompatible(current, expected) {
+  if (!current?.dataset?.blockId || !expected) return false;
+  for (var className of ['assistant-text', 'thinking-tl', 'tool-node']) {
+    if (current.classList.contains(className)
+      || expected.classList.contains(className)) {
+      return current.classList.contains(className)
+        && expected.classList.contains(className);
+    }
+  }
+  return false;
+}
+
 function reconcileChildren(parent, expectedParent, options = {}) {
   var existing = Array.from(parent.children);
   var used = new Set();
@@ -161,6 +184,7 @@ function reconcileChildren(parent, expectedParent, options = {}) {
   var cursor = parent.firstElementChild;
   for (var expected of Array.from(expectedParent.children)) {
     var candidates = byKey.get(domKey(expected)) || [];
+    var matchedStreamBlock = false;
     var current = candidates.find(function (candidate) {
       return !used.has(candidate);
     }) || null;
@@ -169,6 +193,15 @@ function reconcileChildren(parent, expectedParent, options = {}) {
         return !used.has(candidate)
           && candidate.dataset?.toolId === expected.dataset.toolId;
       }) || null;
+    }
+    if (!current
+      && (parent.classList.contains('stream-preview')
+        || parent.classList.contains('stream-committed'))) {
+      current = existing.find(function (candidate) {
+        return !used.has(candidate)
+          && streamChildrenCompatible(candidate, expected);
+      }) || null;
+      matchedStreamBlock = !!current;
     }
     var resolved;
     if (current && nodeUnchanged(current, expected)) {
@@ -180,6 +213,12 @@ function reconcileChildren(parent, expectedParent, options = {}) {
     } else if (current && options.preserveUnmatched) {
       used.add(current);
       resolved = syncElementInPlace(current, expected);
+    } else if (current && matchedStreamBlock) {
+      used.add(current);
+      resolved = syncElementInPlace(current, expected);
+      if (!options.preserveUnmatched && resolved !== cursor) {
+        parent.insertBefore(resolved, cursor);
+      }
     } else if (current
       && parent.classList.contains('stream-committed')
       && domKey(current) === domKey(expected)) {
@@ -432,7 +471,8 @@ function buildHistoryRecoveryDomAdapter(options) {
       || configuredStreamTurnIds.size > 0;
     var streamRows = allStreamRows.filter(function (node) {
       return node.classList.contains('stream-committed')
-        || preserveStreamPreviews;
+        || preserveStreamPreviews
+        || streamRowHasVisibleContent(node);
     });
     var streamPlacements = new Map();
     for (var streamNode of allStreamRows) {
@@ -445,6 +485,7 @@ function buildHistoryRecoveryDomAdapter(options) {
     if (!preserveStreamPreviews) {
       for (var stalePreview of allStreamRows) {
         if (!stalePreview.classList.contains('stream-preview')) continue;
+        if (streamRows.includes(stalePreview)) continue;
         var staleTurnId = stalePreview.dataset?.turnId || '';
         if (staleTurnId) options.discardStreamTurn?.(staleTurnId);
       }
