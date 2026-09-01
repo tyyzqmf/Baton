@@ -1135,10 +1135,39 @@ export class StreamingDomRenderer {
     view.element.classList.add('stream-block-committed');
   }
 
+  adoptToolHistoryNode(view, block) {
+    var toolUseId = block?.toolUseId || '';
+    var turn = view?.element?.parentElement;
+    if (!toolUseId || !turn) return false;
+    var historical = Array.from(turn.children).find(function (candidate) {
+      return candidate !== view.element
+        && candidate.dataset?.toolId === toolUseId;
+    });
+    if (!historical) return false;
+
+    var provisional = view.element;
+    historical.dataset.blockId = String(view.blockId);
+    historical.dataset.kind = 'tool_use';
+    historical.classList.remove('tool-details-collapsed');
+    var header = historical.querySelector(':scope > .tool-header');
+    if (header?.classList.contains('tool-details-toggle')) {
+      header.setAttribute('aria-expanded', 'true');
+    }
+    if (view.committed
+      || provisional.classList.contains('stream-block-committed')) {
+      historical.classList.add('stream-block-committed');
+    }
+    provisional.remove();
+    view.element = historical;
+    view.adopted = true;
+    return true;
+  }
+
   confirmBlock(operation) {
     var view = this.blockView(operation);
     if (!view) return;
     view.block = { ...view.block, ...operation.block };
+    this.adoptToolHistoryNode(view, view.block);
     if (view.block.kind !== 'tool_use') {
       view.targetText = view.block.text || '';
       if (view.block.displayComplete) {
@@ -1161,9 +1190,13 @@ export class StreamingDomRenderer {
       if (!view) return;
     }
     view.block = { ...operation.block };
+    this.adoptToolHistoryNode(view, view.block);
     this.ensureBlockKind(view);
     if (view.block.kind === 'tool_use') {
       this.renderTool(view.element, view.block);
+      if (view.committed) {
+        view.element.classList.add('stream-block-committed');
+      }
     } else {
       view.targetText = view.block.text || '';
       if (view.committed || view.block.displayComplete) {

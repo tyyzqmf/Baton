@@ -269,6 +269,88 @@ test('strict tool results update OUT before stream_end', () => {
   }]);
 });
 
+test('strict stream adopts a historical active tool instead of appending a duplicate', () => {
+  reset();
+  const turnId = 'turn-active-history';
+  const toolUse = {
+    uuid: 'active-history-use',
+    nativeId: 'codex:item:active-history:tool-use',
+    turnId,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'active-history-tool',
+      name: 'Bash',
+      input: { command: 'printf active' },
+    }],
+  };
+  const toolResult = {
+    uuid: 'active-history-result',
+    nativeId: 'codex:item:active-history:tool-result',
+    turnId,
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'active-history-tool',
+      content: 'active',
+      is_error: false,
+    }],
+  };
+  state.wsAllMessages = [toolUse];
+  state.wsMessageUuids = new Set([toolUse.uuid]);
+  state.wsRenderedCount = 1;
+  state.wsMessageCount = 1;
+  const container = document.querySelector('.messages');
+  container.innerHTML = `<div class="msg-user" data-anchor="${turnId}">run it</div>`
+    + window.renderMessages([toolUse], 'codex');
+  const historical = container.querySelector(
+    '[data-tool-id="active-history-tool"]',
+  );
+  assert.equal(historical.classList.contains('tool-details-collapsed'), true);
+
+  const event = (seq, action, extra = {}) => ({
+    action,
+    sessionId: state.wsSessionId,
+    turnId,
+    seq,
+    ...extra,
+  });
+  for (const item of [
+    event(0, 'stream_turn_start'),
+    event(1, 'stream_block_start', { kind: 'tool_use', name: 'Bash' }),
+    event(2, 'stream_tool_input', {
+      chunk: JSON.stringify(toolUse.content[0].input),
+    }),
+    event(3, 'stream_block_stop'),
+    event(4, 'messages', { messages: [toolUse] }),
+    event(5, 'messages', { messages: [toolResult] }),
+  ]) {
+    window.__wsTest.handleWsMessage(item);
+  }
+
+  const tools = container.querySelectorAll(
+    '[data-tool-id="active-history-tool"]',
+  );
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0], historical);
+  assert.equal(tools[0].dataset.blockId, '1');
+  assert.equal(tools[0].classList.contains('tool-details-collapsed'), false);
+  assert.equal(
+    tools[0].querySelector('.tool-header').getAttribute('aria-expanded'),
+    'true',
+  );
+  assert.match(tools[0].textContent, /OUT/);
+  assert.match(tools[0].textContent, /active/);
+  window.__wsTest.handleWsMessage(event(6, 'stream_end', {
+    messages: [toolUse, toolResult],
+  }));
+  send([{
+    uuid: 'active-history-next-user',
+    type: 'user',
+    content: 'next',
+  }]);
+});
+
 test('Goal resume resolution starts the spinner before the first turn update arrives', () => {
   reset();
   state.wsRunning = false;
