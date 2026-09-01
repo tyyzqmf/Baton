@@ -282,6 +282,89 @@ test('recovery patches but never deletes local stream-committed children', () =>
   );
 });
 
+test('recovery folds an unscoped REST turn into its committed stream turn', () => {
+  const turnId = 'sent-recovered-without-turn-id';
+  const dom = new JSDOM(
+    '<div class="messages">'
+      + '<div class="msg-user" data-anchor="' + turnId + '">question</div>'
+      + '<div class="assistant-turn stream-committed" data-turn-id="'
+      + turnId + '">'
+      + '<div class="tl-item tool-node" data-message-id="local-only">local</div>'
+      + '<div class="tl-item assistant-text" data-message-id="shared">old</div>'
+      + '</div>'
+      + '</div>',
+  );
+  const container = dom.window.document.querySelector('.messages');
+  const committed = container.lastElementChild;
+  const localOnly = committed.firstElementChild;
+  const shared = committed.lastElementChild;
+  const messages = [{
+    uuid: 'shared',
+    type: 'assistant',
+    content: 'new',
+  }, {
+    uuid: 'rest-only',
+    type: 'assistant',
+    content: 'rest',
+  }];
+  const state = {
+    wsAllMessages: messages,
+    wsMessageUuids: new Set(['shared', 'rest-only']),
+    wsMessageCount: messages.length,
+    wsLastTimestamp: '',
+    wsRenderedCount: messages.length,
+    pendingSentMessages: [],
+    wsRunning: false,
+  };
+  const adapter = createHistoryRecoveryDomAdapter({
+    state,
+    document: dom.window.document,
+    runtime: () => 'codex',
+    preserveUnmatchedHistory: true,
+    renderMessages: () =>
+      '<div class="assistant-turn">'
+      + '<div class="tl-item assistant-text" data-message-id="shared">new</div>'
+      + '<div class="tl-item assistant-text" data-message-id="rest-only">rest</div>'
+      + '</div>',
+  });
+
+  adapter.setMessages(messages);
+  adapter.applyHistoryChanges({
+    messages,
+    inserted: [{ message: messages[1] }],
+    patched: [{
+      before: { uuid: 'shared', type: 'assistant', content: 'old' },
+      after: messages[0],
+    }],
+    identityUpdated: [],
+    conflicts: [],
+    reordered: false,
+    authoritative: false,
+  }, { promoted: [], remaining: [] }, 'completed');
+
+  assert.equal(container.querySelectorAll('.assistant-turn').length, 1);
+  assert.equal(container.lastElementChild, committed);
+  assert.equal(committed.dataset.turnId, turnId);
+  assert.equal(localOnly.isConnected, true);
+  assert.equal(
+    committed.querySelector('[data-message-id="shared"]'),
+    shared,
+  );
+  assert.equal(shared.textContent, 'new');
+  assert.equal(
+    committed.querySelector('[data-message-id="rest-only"]').textContent,
+    'rest',
+  );
+  assert.equal(
+    container.querySelectorAll('[data-message-id="shared"]').length,
+    1,
+  );
+  assert.equal(
+    container.querySelectorAll('[data-message-id="rest-only"]').length,
+    1,
+  );
+});
+
 test('append-only recovery patches ordinary nodes in place without removing local rows', () => {
   const dom = new JSDOM(
     '<div class="messages">'

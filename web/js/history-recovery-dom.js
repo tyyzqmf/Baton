@@ -134,6 +134,20 @@ function assistantTurnsShareIdentity(current, expected) {
   return false;
 }
 
+function recoveredTurnsForStream(container, streamRow) {
+  var turnId = streamRow?.dataset?.turnId || '';
+  return Array.from(container.children).filter(function (element) {
+    if (element === streamRow
+      || !element.classList.contains('assistant-turn')) {
+      return false;
+    }
+    var recoveredTurnId = element.dataset?.turnId || '';
+    if (turnId && recoveredTurnId === turnId) return true;
+    return !recoveredTurnId
+      && assistantTurnsShareIdentity(streamRow, element);
+  });
+}
+
 function reconcileChildren(parent, expectedParent, options = {}) {
   var existing = Array.from(parent.children);
   var used = new Set();
@@ -478,15 +492,10 @@ function buildHistoryRecoveryDomAdapter(options) {
       }
     }
     for (var streamRow of streamRows) {
-      var streamTurnId = streamRow.dataset?.turnId || '';
-      var recoveredTurn = streamTurnId
-        ? Array.from(container.children).find(function (element) {
-            return element !== streamRow
-              && element.classList.contains('assistant-turn')
-              && element.dataset?.turnId === streamTurnId;
-          })
-        : null;
-      if (recoveredTurn) {
+      for (var recoveredTurn of recoveredTurnsForStream(
+        container,
+        streamRow,
+      )) {
         if (streamRow.classList.contains('stream-committed')) {
           reconcileChildren(streamRow, recoveredTurn, {
             preserveUnmatched: true,
