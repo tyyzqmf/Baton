@@ -95,7 +95,7 @@ test('project file rows stay compact while preserving the native-mobile touch ta
   );
   assert.match(
     css,
-    /html\.native-mobile \.project-file-row \{[\s\S]*?min-height: 44px;[\s\S]*?padding: 9px 16px;/,
+    /html\.native-mobile \.project-file-row \{[\s\S]*?min-height: 44px;[\s\S]*?padding: 9px 16px 9px 12px;/,
   );
   assert.match(
     css,
