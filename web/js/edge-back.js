@@ -235,6 +235,8 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     var topBar = document.createElement('div');
     topBar.className = 'top-bar';
     topBar.innerHTML = snapshot.topBarHtml;
+    var topRight = topBar.querySelector('#top-right');
+    if (topRight) topRight.classList.add('edge-back-top-right');
 
     var breadcrumb = document.createElement('div');
     breadcrumb.className = 'breadcrumb';

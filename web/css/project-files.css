@@ -37,7 +37,17 @@ html.native-mobile #top-right .project-files-entry {
   height: 44px;
   flex-basis: 44px;
 }
+html.native-mobile .edge-back-top-right .project-files-entry {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
 html.native-mobile #top-right .project-files-entry svg {
+  width: 26px;
+  height: 26px;
+  transform: translate(calc(-50% + 3px), -50%);
+}
+html.native-mobile .edge-back-top-right .project-files-entry svg {
   width: 26px;
   height: 26px;
   transform: translate(calc(-50% + 3px), -50%);

@@ -499,6 +499,7 @@ body.browse-view #content { scrollbar-gutter: stable; }
   .text-btn.danger:hover { background: rgba(229, 83, 75, 0.12); border-color: #e5534b; }
 }
 #top-right { display: flex; align-items: center; gap: 8px; }
+.edge-back-top-right { display: flex; align-items: center; gap: 8px; }
 .agent-thread-trigger {
   position: relative; width: 20px; height: 20px; flex: 0 0 20px;
   padding: 0; border: 0;
@@ -1045,6 +1046,7 @@ html.native-mobile .top-title {
   display: inline-flex; align-items: center; height: 21px; line-height: 21px;
 }
 html.native-mobile #top-right { min-height: 44px; gap: 0; line-height: 0; }
+html.native-mobile .edge-back-top-right { min-height: 44px; gap: 0; line-height: 0; }
 html.native-mobile .top-gear,
 html.native-mobile .new-session-btn,
 html.native-mobile .runtime-switch {
