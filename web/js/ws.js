@@ -52,6 +52,30 @@ var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
 var _appliedLifecycleVersion = 0;
+var _bottomFollowFrame = null;
+
+function placeFollowedContentAtBottom(content, container, sessionId) {
+  if (!state.stickBottom
+    || state.appState.session !== sessionId
+    || content !== document.getElementById('content')
+    || container !== content.querySelector('.messages')) {
+    return;
+  }
+  content.scrollTop = content.scrollHeight;
+}
+
+function followBottomAfterLayout() {
+  var content = document.getElementById('content');
+  var container = content?.querySelector('.messages');
+  var sessionId = state.appState.session;
+  if (!content || !container || content.querySelector('.skeleton-messages')) return;
+  placeFollowedContentAtBottom(content, container, sessionId);
+  if (_bottomFollowFrame !== null) cancelAnimationFrame(_bottomFollowFrame);
+  _bottomFollowFrame = requestAnimationFrame(function () {
+    _bottomFollowFrame = null;
+    placeFollowedContentAtBottom(content, container, sessionId);
+  });
+}
 
 if (window.visualViewport && _isMobile) {
   var syncMobileViewport = function () {
@@ -109,6 +133,7 @@ if (window.visualViewport && _isMobile) {
         _keyboardOpenFrame = null;
         if (!_followKeyboardOpen) return;
         _followKeyboardOpen = false;
+        state.stickBottom = true;
         var currentContent = document.getElementById('content');
         if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
       });
@@ -1030,8 +1055,7 @@ function getStrictStreamRenderer() {
         || element?.classList.contains('tool-node')) {
         markTurnAdjacency(container);
       }
-      var content = document.getElementById('content');
-      if (state.stickBottom && content) content.scrollTop = content.scrollHeight;
+      followBottomAfterLayout();
     },
   });
   return _strictStreamRenderer;
@@ -1979,10 +2003,7 @@ function historyRequestKey(after, options) {
 
 function restoreBottomAfterRecovery(wasFollowingBottom) {
   if (!wasFollowingBottom || !state.stickBottom) return;
-  var content = document.getElementById('content');
-  if (!content || content.querySelector('.skeleton-messages')) return;
-  var distance = content.scrollHeight - content.scrollTop - content.clientHeight;
-  if (distance > 2) content.scrollTop = content.scrollHeight;
+  followBottomAfterLayout();
 }
 
 /**

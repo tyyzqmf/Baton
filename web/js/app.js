@@ -446,11 +446,23 @@ function updateBreadcrumb() {
   el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
     + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml
     + '</div>';
+  el.classList.toggle('session-detail', !!state.appState.session);
   el.style.display = parts.length > 0 ? 'flex' : 'none';
+  requestAnimationFrame(function () {
+    updateBreadcrumbTruncation(el.querySelector('.breadcrumb-nav'));
+  });
+}
+
+function updateBreadcrumbTruncation(nav) {
+  if (!nav) return;
+  nav.classList.remove('is-truncated');
+  if (nav.classList.contains('expanded')) return;
+  nav.classList.toggle('is-truncated', nav.scrollWidth > nav.clientWidth);
 }
 
 function toggleBreadcrumbExpand(nav) {
   nav.classList.toggle('expanded');
+  requestAnimationFrame(function () { updateBreadcrumbTruncation(nav); });
 }
 
 async function refreshSessionThreads() {
@@ -1838,36 +1850,6 @@ function scheduleScrollBtnPosition() {
   content.addEventListener('wheel', function (event) {
     if (event.deltaX || event.deltaY) interruptBottomFollow();
   }, { passive: true });
-
-  var messageResizeObserver = null;
-  var observedMessageContainer = null;
-  function bindMessageResizeObserver() {
-    if (!messageResizeObserver) return;
-    var container = content.querySelector('.messages');
-    if (container === observedMessageContainer) return;
-    if (observedMessageContainer) {
-      messageResizeObserver.unobserve(observedMessageContainer);
-    }
-    observedMessageContainer = container;
-    if (container) messageResizeObserver.observe(container);
-  }
-  if (window.ResizeObserver) {
-    messageResizeObserver = new window.ResizeObserver(function () {
-      if (state.stickBottom
-        && state.appState.session
-        && state.appState.session !== '__new__'
-        && !content.querySelector('.skeleton-messages')
-        && content.querySelector('.messages') === observedMessageContainer) {
-        content.scrollTop = content.scrollHeight;
-      }
-      if (updateScrollButton()) resumeBottomWhenSettled = false;
-    });
-    bindMessageResizeObserver();
-    if (window.MutationObserver) {
-      new window.MutationObserver(bindMessageResizeObserver)
-        .observe(content, { childList: true });
-    }
-  }
 
   content.addEventListener('scroll', function () {
     if (!state.appState.session) {

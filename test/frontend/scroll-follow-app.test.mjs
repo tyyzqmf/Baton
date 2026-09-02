@@ -130,6 +130,7 @@ test('a small user drag pauses bottom-follow until the user returns to the botto
     scrollHeight = 1120;
     triggerResize(messages);
     assert.equal(scrollTop, 695);
+    content.dispatchEvent(new window.Event('scroll'));
     assert.equal(scrollButton.classList.contains('visible'), true);
 
     content.dispatchEvent(pointerEvent(window, 'pointerdown', 294));
@@ -145,13 +146,6 @@ test('a small user drag pauses bottom-follow until the user returns to the botto
     assert.equal(scrollTop, 820);
     assert.equal(scrollButton.classList.contains('visible'), false);
 
-    // A bottom-button smooth scroll may still be in flight when new content
-    // arrives. Follow intent makes the real size change retarget the latest bottom.
-    scrollTop = 760;
-    scrollHeight = 1300;
-    triggerResize(messages);
-    assert.equal(scrollTop, 1000);
-    assert.equal(scrollButton.classList.contains('visible'), false);
   } finally {
     await vite.close();
     dom.window.close();
