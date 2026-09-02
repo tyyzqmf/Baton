@@ -114,6 +114,8 @@
 html.native-mobile .path-breadcrumb {
   min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
   padding: var(--sat, env(safe-area-inset-top, 0px)) 12px 0 0;
+  border-bottom: 0;
+  box-shadow: inset 0 -1px #30363d;
 }
 html.native-mobile .path-breadcrumb > .back-button {
   margin-right: 0;

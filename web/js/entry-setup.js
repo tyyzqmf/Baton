@@ -16,6 +16,10 @@ import qrcode from 'qrcode-generator';
   if (!state.KEY) { location.replace('landing.html'); return; }
 
   function leaveSetup() {
+    if (!(window.isTauri || window.__TAURI_INTERNALS__)) {
+      location.href = 'index.html';
+      return;
+    }
     sessionStorage.setItem('baton-returning-home', '1');
     var referrer = document.referrer ? new URL(document.referrer) : null;
     var fromIndex = referrer && referrer.origin === location.origin
