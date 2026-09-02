@@ -5,7 +5,7 @@
   padding: 6px 12px 6px 8px;
   padding-top: max(var(--sat, env(safe-area-inset-top)), 6px);
   border-bottom: 1px solid #30363d;
-  background: #0d1117;
+  background: #161b22;
   color: #484f58;
   flex: 0 0 auto;
 }
@@ -30,9 +30,9 @@
   max-width: 240px;
   overflow: hidden;
   padding: 1px 5px;
-  border: 1px solid #30363d;
+  border: 1px solid #484f58;
   border-radius: 12px;
-  background: #161b22;
+  background: #0d1117;
   color: #c9d1d9;
   font-size: 11px;
   line-height: 1.8;
@@ -50,6 +50,7 @@
 @media (hover: hover) and (pointer: fine) {
   .path-breadcrumb-item:hover {
     background: #21262d;
+    border-color: #6e7681;
     color: #e6edf3;
   }
 }
