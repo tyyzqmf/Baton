@@ -1199,6 +1199,8 @@ html.native-mobile .file-modal-title { font-size: 16px; }
 html.native-mobile .file-modal-header {
   min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px);
   padding: var(--sat, env(safe-area-inset-top, 0px)) 8px 0 12px;
+  border-bottom: 0;
+  box-shadow: inset 0 -1px #30363d;
 }
 html.native-mobile .file-tab { height: 28px; font-size: 13px; }
 html.native-mobile .file-modal-close {
