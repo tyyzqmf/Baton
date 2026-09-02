@@ -104,6 +104,9 @@ function watcherHarness(homes, options = {}) {
       : {}),
     ...(options.rescanMs ? { rescanMs: options.rescanMs } : {}),
     ...(options.watchRetryMs ? { watchRetryMs: options.watchRetryMs } : {}),
+    ...(options.activitySyncIntervalMs !== undefined
+      ? { activitySyncIntervalMs: options.activitySyncIntervalMs }
+      : {}),
     retryMs: 60_000,
     statusRecheckMs: 60_000,
   });
@@ -587,6 +590,34 @@ test('Codex watcher skips rollout status scans for ordinary tool appends', async
   assert.equal(scans, 2);
 });
 
+test('Codex watcher refreshes session metadata for throttled message activity', async (t) => {
+  const home = createHome(t);
+  const filePath = rolloutPath(home, IDS[0]);
+  const lines = baseLines(IDS[0], home, { complete: false });
+  writeLines(filePath, lines);
+  const h = watcherHarness([home]);
+  t.after(() => h.watcher.stop());
+
+  await h.watcher.scanNow({ initial: true });
+  assert.equal(h.posts.length, 1);
+  h.watcher.lastActivitySyncAt.set(storageSessionId('codex', IDS[0]), 0);
+
+  fs.appendFileSync(filePath, `${json('response_item', {
+    type: 'function_call',
+    name: 'exec_command',
+    arguments: JSON.stringify({ cmd: 'printf hello' }),
+    call_id: 'call-activity-refresh',
+  }, 6)}\n`);
+  const newer = new Date(Date.now() + 2_000);
+  fs.utimesSync(filePath, newer, newer);
+  await h.watcher.scanNow();
+
+  assert.equal(h.posts.length, 2);
+  assert.equal(h.posts[1].body.sessions[0].status, 'running');
+  assert.equal(h.posts[1].body.statusDelta, undefined);
+  assert.equal(h.posts[1].body.sessions[0].lastActive, newer.toISOString());
+});
+
 test('Codex watcher drains appends during delivery without another file event', async (t) => {
   const home = createHome(t);
   const filePath = rolloutPath(home, IDS[0]);
@@ -820,6 +851,7 @@ test('Codex watcher does not rebuild the recent set for an already watched appen
     recomputes++;
     return desiredFileWatchPaths();
   };
+  h.watcher.lastActivitySyncAt.set(key, Date.now());
 
   fs.appendFileSync(filePath, `${json('response_item', {
     type: 'message',

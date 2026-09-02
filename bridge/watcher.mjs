@@ -23,8 +23,13 @@ import {
   claudeSubagentSessionId,
   readClaudeSubagentMeta,
 } from './claude-subagent.mjs';
+import {
+  activitySyncDue,
+  markActivitySynced,
+} from './session-activity.mjs';
 
 const _metaUuids = new Set(); // track isMeta message UUIDs to skip their replies
+const _lastActivitySyncAt = new Map();
 const CLAUDE_INTERRUPT_TEXTS = new Set([
   '[Request interrupted by user]',
   '[Request interrupted by user for tool use]',
@@ -219,6 +224,7 @@ async function readAndSend(config, filename, sessionId) {
   const skipSession = shouldSkipClaudeSession(metadata.preview, daemonMeta);
   let lastParsedLine = lastLine;
   let gotNewTitle = false;
+  let gotActivity = false;
   let lastStatus = null; // track status from parsed entries directly
 
   for (let i = lastLine; i < lines.length; i++) {
@@ -247,24 +253,28 @@ async function readAndSend(config, filename, sessionId) {
     const route = headlessRoute(msg.uuid);
     if (shouldPersistClaudeJsonlMessage(poolOwns(sessionId), route)) {
       await uploadMessages(sessionId, [msg]);
+      gotActivity = true;
       clearLiveMessage('claude', msg.uuid);
       if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
       continue;
     }
     await deliverRealtimeMessages(sessionId, [msg]);
+    gotActivity = true;
     if (msg.turnId) clearClaudeInterruptTurn(sessionId, msg.turnId);
   }
 
   synced.set(sessionId, lastParsedLine);
   if (skipSession) return;
 
-  // Sync metadata only when status changed, new session, or ai-title arrived
-  if (lastParsedLine > lastLine && (lastStatus || gotNewTitle)) {
+  const forceActivity = gotActivity
+    && activitySyncDue(_lastActivitySyncAt, sessionId);
+  // Sync metadata on lifecycle/title changes, plus throttled message activity.
+  if (lastParsedLine > lastLine && (lastStatus || gotNewTitle || forceActivity)) {
     // Pool-owned → status comes from headless lifecycle events (updateSessionStatus carries
     // isAgent), not jsonl/daemon. Title metadata can still pass through while the pool
     // owns status, so list previews stay aligned with the open session title.
     const poolOwned = poolOwns(sessionId);
-    if (poolOwned && !gotNewTitle) return;
+    if (poolOwned && !gotNewTitle && !forceActivity) return;
     // Agent identity is permanent — never downgrade (a false isAgent put-overwrites the DDB flag).
     const dm = getDaemonSessions().get(sessionId);
     // Only roster-active agents trust daemon state; inactive agents use this jsonl update.
@@ -286,6 +296,7 @@ async function readAndSend(config, filename, sessionId) {
       agentMeta,
       gotNewTitle,
       effective.detail,
+      forceActivity,
     );
   }
 }
@@ -372,6 +383,7 @@ async function postSessionMeta(
   dm,
   gotNewTitle,
   interactionDetail = null,
+  forceActivity = false,
 ) {
   const oldStatus = lastKnownStatus.get(sessionId);
   const statusChanged = newStatus !== oldStatus;
@@ -381,7 +393,7 @@ async function postSessionMeta(
   const metadata = getSessionMetadata(filePath);
   const preview = metadata.preview;
   if (shouldSkipClaudeSession(preview, dm)) return;
-  if (!(statusChanged || isNew || gotNewTitle)) return;
+  if (!(statusChanged || isNew || gotNewTitle || forceActivity)) return;
 
   const stat = fs.statSync(filePath);
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filename)));
@@ -420,6 +432,7 @@ async function postSessionMeta(
     sessions: [sessionMeta],
     ...(statusDelta ? { statusDelta } : {}),
   });
+  markActivitySynced(_lastActivitySyncAt, sessionId);
   recentSessions.add(sessionId);
   // First session of a brand-new project → recount totals so projectCount stays accurate.
   if (!knownProjects.has(projectHash)) {
