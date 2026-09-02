@@ -37,7 +37,7 @@ export const state = {
   wsProjectHash: null,        // for new session creation
   wsRequestId: null,          // unique ID per new-session creation flow
   wsRunning: false,           // active session still running (derived via deriveRunning)
-  stickBottom: true,          // auto-scroll intent: real user drag clears it; returning fully to bottom / tapping the button restores it
+  stickBottom: true,          // auto-scroll intent: real user drag clears it; returning until the bottom button hides / tapping it restores
   _titleTier: 0,              // 4=customTitle 3=ai-title 2=lastPrompt 1=firstUser; never downgrade
   wsRenderedCount: 0,
   wsHasMore: false,           // more older messages on server

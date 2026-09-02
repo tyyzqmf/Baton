@@ -1766,6 +1766,7 @@ function scheduleScrollBtnPosition() {
   var pointerStartY = 0;
   var userScrollActive = false;
   var userScrollSettleTimer = 0;
+  var resumeBottomWhenSettled = false;
 
   function bottomDistance() {
     return content.scrollHeight - content.scrollTop - content.clientHeight;
@@ -1774,6 +1775,7 @@ function scheduleScrollBtnPosition() {
   function updateScrollButton() {
     var nearBottom = bottomDistance() < 100;
     btn.classList.toggle('visible', !nearBottom);
+    return !nearBottom;
   }
 
   function settleUserScrollSoon() {
@@ -1781,13 +1783,20 @@ function scheduleScrollBtnPosition() {
     userScrollSettleTimer = setTimeout(function () {
       if (pointerId !== null) return;
       userScrollActive = false;
-      if (bottomDistance() <= 2) state.stickBottom = true;
+      if (state.stickBottom) {
+        resumeBottomWhenSettled = false;
+      } else if (resumeBottomWhenSettled) {
+        resumeBottomWhenSettled = false;
+        scrollToBottom();
+        return;
+      }
       updateScrollButton();
     }, 140);
   }
 
   function interruptBottomFollow() {
     if (!state.appState.session || state.appState.session === '__new__') return;
+    if (!userScrollActive) resumeBottomWhenSettled = false;
     userScrollActive = true;
     state.stickBottom = false;
     updateScrollButton();
@@ -1796,6 +1805,7 @@ function scheduleScrollBtnPosition() {
 
   content.addEventListener('pointerdown', function (event) {
     if (event.isPrimary === false || (event.button != null && event.button !== 0)) return;
+    resumeBottomWhenSettled = false;
     pointerId = event.pointerId;
     pointerStartY = event.clientY;
   }, { passive: true });
@@ -1838,7 +1848,7 @@ function scheduleScrollBtnPosition() {
         && content.querySelector('.messages') === observedMessageContainer) {
         content.scrollTop = content.scrollHeight;
       }
-      updateScrollButton();
+      if (updateScrollButton()) resumeBottomWhenSettled = false;
     });
     bindMessageResizeObserver();
     if (window.MutationObserver) {
@@ -1858,8 +1868,13 @@ function scheduleScrollBtnPosition() {
       state.stickBottom = true;
       return;
     }
-    updateScrollButton();
-    if (userScrollActive) settleUserScrollSoon();
+    var buttonWasVisible = btn.classList.contains('visible');
+    var buttonIsVisible = updateScrollButton();
+    if (userScrollActive) {
+      if (buttonIsVisible) resumeBottomWhenSettled = false;
+      else if (buttonWasVisible) resumeBottomWhenSettled = true;
+      settleUserScrollSoon();
+    }
 
     if (_scrollingToTop) { settleSoon(120); return; }
 

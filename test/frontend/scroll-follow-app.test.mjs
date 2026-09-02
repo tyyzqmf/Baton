@@ -134,12 +134,15 @@ test('a small user drag pauses bottom-follow until the user returns to the botto
 
     content.dispatchEvent(pointerEvent(window, 'pointerdown', 294));
     content.dispatchEvent(pointerEvent(window, 'pointermove', 288));
-    scrollTop = 820;
+    scrollTop = 770; // 50px from bottom: button hides, but not yet physical bottom.
     content.dispatchEvent(new window.Event('scroll'));
+    assert.equal(state.stickBottom, false);
+    assert.equal(scrollButton.classList.contains('visible'), false);
     content.dispatchEvent(pointerEvent(window, 'pointerup', 288));
     await new Promise(function (resolve) { setTimeout(resolve, 180); });
 
     assert.equal(state.stickBottom, true);
+    assert.equal(scrollTop, 820);
     assert.equal(scrollButton.classList.contains('visible'), false);
 
     // A bottom-button smooth scroll may still be in flight when new content
