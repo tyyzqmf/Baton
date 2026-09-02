@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
 import { post, postRequired } from './http.mjs';
-import { synced, extractForApp, uploadMessages } from './extract.mjs';
+import {
+  synced,
+  extractForApp,
+  isClaudeLocalCommandCaveat,
+  uploadMessages,
+} from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import {
   clearClaudeInterruptTurn,
@@ -240,7 +245,10 @@ async function readAndSend(config, filename, sessionId) {
     if (skipSession) continue;
     if (!VALID_TYPES.has(raw.type)) continue;
     // Skip isMeta user messages (VS Code replay duplicates), but keep their assistant replies
-    if (raw.isMeta && raw.type === 'user') { _metaUuids.add(raw.uuid); continue; }
+    if (raw.isMeta && raw.type === 'user') {
+      if (!isClaudeLocalCommandCaveat(raw)) _metaUuids.add(raw.uuid);
+      continue;
+    }
     if (raw.type === 'user' && raw.parentUuid && _metaUuids.has(raw.parentUuid)) { _metaUuids.delete(raw.parentUuid); continue; }
     if (raw.type === 'ai-title' || raw.type === 'custom-title' || raw.type === 'last-prompt') gotNewTitle = true;
 

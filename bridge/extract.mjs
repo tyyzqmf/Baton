@@ -252,6 +252,14 @@ export async function extractForApp(msg) {
   return extracted;
 }
 
+export function isClaudeLocalCommandCaveat(msg) {
+  const content = msg?.message?.content;
+  return msg?.type === 'user'
+    && msg.isMeta === true
+    && typeof content === 'string'
+    && content.trimStart().startsWith('<local-command-caveat>');
+}
+
 export async function extractClaudeMessages(filePath, sessionId, options = {}) {
   const watermarks = options.watermarks || synced;
   const startLine = options.startLine ?? watermarks.get(sessionId) ?? 0;
@@ -267,7 +275,10 @@ export async function extractClaudeMessages(filePath, sessionId, options = {}) {
     let msg;
     try { msg = JSON.parse(lines[i]); } catch { continue; }
     if (!VALID_TYPES.has(msg.type)) continue;
-    if ((msg.isMeta || msg.isCompactSummary) && msg.type === 'user') { metaUuids.add(msg.uuid); continue; }
+    if ((msg.isMeta || msg.isCompactSummary) && msg.type === 'user') {
+      if (!isClaudeLocalCommandCaveat(msg)) metaUuids.add(msg.uuid);
+      continue;
+    }
     if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
     const extracted = await extractForApp(msg);
     if (!extracted.uuid) continue;
