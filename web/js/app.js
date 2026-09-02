@@ -20,6 +20,8 @@ import {
   nextNewSessionRuntime,
   preferredNewSessionRuntime,
 } from './new-session-runtime.js';
+import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
+import { FOLDER_ICON_SVG } from './components/icons.js';
 
 var _navVersion = 0;
 var _listPrefetches = {};
@@ -417,7 +419,12 @@ function updateBreadcrumb() {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
       : (state.appState.session ? sessionRuntimeControl() : '');
-    topRight.innerHTML = runtimeMark + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
+    var filesButton = !state.appState.session
+      ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
+        + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
+      : '';
+    topRight.innerHTML = runtimeMark + filesButton
+      + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
   } else if (!topRight.querySelector('.top-gear')) {
@@ -921,17 +928,17 @@ function renderListEntry(options, entry, scrollTop, anchor) {
   entry.scrollTop = content.scrollTop;
 }
 
+function setBreadcrumbLoading(loading) {
+  setBreadcrumbItemsLoading(
+    document.querySelectorAll('#breadcrumb .breadcrumb-nav a'),
+    loading,
+  );
+}
+
 function setListLoading(loading) {
   var content = document.getElementById('content');
   content.classList.toggle('list-loading', loading);
-  var existing = content.querySelector('.loading-more');
-  if (!loading) {
-    if (existing) existing.remove();
-    return;
-  }
-  if (!existing && content.querySelector('.list')) {
-    content.insertAdjacentHTML('beforeend', '<div class="loading-more"><span class="spinner"></span></div>');
-  }
+  setBreadcrumbLoading(loading);
 }
 
 function rememberActiveListScroll() {
@@ -977,7 +984,7 @@ async function loadPagedList(options, navVersion) {
   _activeListKey = options.key;
   _activeListOptions = options;
 
-  if (window.__setTopSync) window.__setTopSync(true);
+  setBreadcrumbLoading(true);
   if (hadMemory) {
     renderListEntry(options, entry, entry.scrollTop, null);
   } else if (cached) {
@@ -1020,7 +1027,7 @@ async function loadPagedList(options, navVersion) {
     var stillCurrent = isCurrentList(options, navVersion, requestId);
     _listPages.finish(options.key, requestId);
     if (stillCurrent) {
-      if (window.__setTopSync) window.__setTopSync(false);
+      setBreadcrumbLoading(false);
       if (refreshed) maybeLoadNextListPage();
     }
   }
@@ -1121,6 +1128,7 @@ function rememberDevices(data) {
 }
 
 async function loadDevices() {
+  window.deactivateProjectFiles?.();
   resetSessionThreads();
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
@@ -1220,6 +1228,7 @@ function renderProjects(device, data) {
 }
 
 async function loadProjects(device) {
+  window.deactivateProjectFiles?.();
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1312,6 +1321,7 @@ function renderSessions(device, projectHash, data) {
 }
 
 async function loadSessions(device, projectHash, projectName) {
+  window.deactivateProjectFiles?.();
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1521,6 +1531,7 @@ function toggleNewSessionRuntime() {
 }
 
 async function startNewSession(projectHash) {
+  window.deactivateProjectFiles?.();
   resetSessionThreads();
   deactivateList();
   document.body.classList.remove('browse-view');
@@ -1597,6 +1608,7 @@ async function startNewSession(projectHash) {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, options) {
+  window.deactivateProjectFiles?.();
   options = options || {};
   var rootSessionId = options.rootSessionId || sessionId;
   var rootSessionPreview = options.rootSessionPreview

@@ -109,10 +109,14 @@ test('staged update replaces package files and dependencies but preserves user s
   const stage = path.join(root, 'stage');
   fs.mkdirSync(path.join(home, 'node_modules', 'old-dep'), { recursive: true });
   fs.mkdirSync(path.join(stage, 'node_modules', 'new-dep'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'project'), { recursive: true });
+  fs.mkdirSync(path.join(stage, 'project'), { recursive: true });
   fs.writeFileSync(path.join(home, 'bridge.mjs'), 'old bridge');
+  fs.writeFileSync(path.join(home, 'project', 'files.mjs'), 'old project module');
   fs.writeFileSync(path.join(home, 'config.json'), '{"deviceName":"Mac"}');
   fs.writeFileSync(path.join(home, 'node_modules', 'old-dep', 'index.js'), 'old');
   fs.writeFileSync(path.join(stage, 'bridge.mjs'), 'new bridge');
+  fs.writeFileSync(path.join(stage, 'project', 'files.mjs'), 'new project module');
   fs.writeFileSync(path.join(stage, 'codex-session.mjs'), 'new module');
   fs.writeFileSync(path.join(stage, 'package.json'), '{"name":"bridge"}');
   fs.writeFileSync(path.join(stage, 'package-lock.json'), '{"name":"bridge","lockfileVersion":3}');
@@ -122,6 +126,10 @@ test('staged update replaces package files and dependencies but preserves user s
     installStagedBridge(stage, home);
     assert.equal(fs.readFileSync(path.join(home, 'bridge.mjs'), 'utf-8'), 'new bridge');
     assert.equal(fs.readFileSync(path.join(home, 'codex-session.mjs'), 'utf-8'), 'new module');
+    assert.equal(
+      fs.readFileSync(path.join(home, 'project', 'files.mjs'), 'utf-8'),
+      'new project module',
+    );
     assert.equal(
       fs.readFileSync(path.join(home, 'package-lock.json'), 'utf-8'),
       '{"name":"bridge","lockfileVersion":3}',

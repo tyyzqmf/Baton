@@ -17,6 +17,7 @@ import {
   StreamingDomRenderer,
   TurnEventQueue,
 } from './streaming.js';
+import { handleProjectFilesMessage } from './project/rpc.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.height : 0;
@@ -317,12 +318,12 @@ function connectWs(_, projectHash) {
   state.ws.onclose = function () {
     if (window.resetCommandRequest) window.resetCommandRequest();
     setWsStatus('disconnected');
-    if (state.appState.session) {
+    if (state.appState.session || state.projectFilesOpen) {
       beginSessionConnectionRecovery();
       setWsStatus('reconnecting');
       _wsReconnectTimer = setTimeout(function () {
         _wsReconnectTimer = null;
-        if (state.appState.session) connectWs();
+        if (state.appState.session || state.projectFilesOpen) connectWs();
       }, 3000);
     }
   };
@@ -927,6 +928,8 @@ function dispatchWsMessage(msg) {
       if (!state.wsSessionId || msg.deviceName !== state.appState.device) return;
       queueAgentThreadRefresh({ delays: [150, 1000] });
       recoverMissing('');
+    } else if (msg.action === 'project_files') {
+      handleProjectFilesMessage(msg);
     } else if (msg.action === 'file_ready') {
       if (window.handleFileReady) window.handleFileReady(msg);
     } else if (msg.action === 'file_progress') {

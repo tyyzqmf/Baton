@@ -1,7 +1,9 @@
 // Entry for setup.html — install command + Start URL QR
 import { state } from './state.js';
 import './api.js';
+import { mountBackButton } from './components/back-button.js';
 import { attachPageEdgeBackGesture } from './edge-back.js';
+import '../css/back-button.css';
 import qrcode from 'qrcode-generator';
 
 (function () {
@@ -12,6 +14,17 @@ import qrcode from 'qrcode-generator';
     history.replaceState(null, '', location.pathname);
   }
   if (!state.KEY) { location.replace('landing.html'); return; }
+
+  function leaveSetup() {
+    sessionStorage.setItem('baton-returning-home', '1');
+    var referrer = document.referrer ? new URL(document.referrer) : null;
+    var fromIndex = referrer && referrer.origin === location.origin
+      && /\/(?:index\.html)?$/.test(referrer.pathname);
+    if (fromIndex && history.length > 1) history.back();
+    else location.href = 'index.html';
+  }
+
+  mountBackButton(document.getElementById('setupBackButton'), leaveSetup);
 
   // Step 1: Install command — full text, single Copy button.
   // Key is shown in plain text; user is already authenticated to view this page.
@@ -78,14 +91,7 @@ import qrcode from 'qrcode-generator';
   window.copyCmd = copyCmd;
   window.copyUrl = copyUrl;
 
-  attachPageEdgeBackGesture(function () {
-    sessionStorage.setItem('baton-returning-home', '1');
-    var referrer = document.referrer ? new URL(document.referrer) : null;
-    var fromIndex = referrer && referrer.origin === location.origin
-      && /\/(?:index\.html)?$/.test(referrer.pathname);
-    if (fromIndex && history.length > 1) history.back();
-    else location.href = 'index.html';
-  }, ['.setup-bar', '.setup-content']);
+  attachPageEdgeBackGesture(leaveSetup, ['.setup-bar', '.setup-content']);
 
   // App version — baked at build time from package.json, shown on all platforms.
   var verEl = document.getElementById('appVersion');

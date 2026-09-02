@@ -47,18 +47,22 @@ export function installStagedBridge(stage, bridgeHome) {
   const nextModules = path.join(bridgeHome, `.node_modules-next-${token}`);
   const oldModules = path.join(bridgeHome, `.node_modules-old-${token}`);
   const sourceEntries = fs.readdirSync(stage, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && (
-      entry.name.endsWith('.mjs')
-      || entry.name === 'package.json'
-      || entry.name === 'package-lock.json'
-    ));
+    .filter((entry) => (
+      entry.isFile() && (
+        entry.name.endsWith('.mjs')
+        || entry.name === 'package.json'
+        || entry.name === 'package-lock.json'
+      )
+    ) || (entry.isDirectory() && entry.name === 'project'));
   const newlyAdded = [];
   let modulesInstalled = false;
 
   fs.mkdirSync(backupDir, { recursive: true });
   for (const entry of sourceEntries) {
     const current = path.join(bridgeHome, entry.name);
-    if (fs.existsSync(current)) fs.copyFileSync(current, path.join(backupDir, entry.name));
+    if (fs.existsSync(current)) {
+      fs.cpSync(current, path.join(backupDir, entry.name), { recursive: true });
+    }
     else newlyAdded.push(current);
   }
 
@@ -69,7 +73,10 @@ export function installStagedBridge(stage, bridgeHome) {
 
   try {
     for (const entry of sourceEntries) {
-      fs.copyFileSync(path.join(stage, entry.name), path.join(bridgeHome, entry.name));
+      const source = path.join(stage, entry.name);
+      const current = path.join(bridgeHome, entry.name);
+      if (entry.isDirectory()) removable(current);
+      fs.cpSync(source, current, { recursive: true });
     }
     if (fs.existsSync(stagedModules)) {
       const currentModules = path.join(bridgeHome, 'node_modules');
@@ -78,8 +85,13 @@ export function installStagedBridge(stage, bridgeHome) {
       modulesInstalled = true;
     }
   } catch (error) {
-    for (const entry of fs.readdirSync(backupDir, { withFileTypes: true })) {
-      if (entry.isFile()) fs.copyFileSync(path.join(backupDir, entry.name), path.join(bridgeHome, entry.name));
+    for (const entry of sourceEntries) {
+      const current = path.join(bridgeHome, entry.name);
+      const backup = path.join(backupDir, entry.name);
+      removable(current);
+      if (fs.existsSync(backup)) {
+        fs.cpSync(backup, current, { recursive: true });
+      }
     }
     for (const target of newlyAdded) removable(target);
     const currentModules = path.join(bridgeHome, 'node_modules');

@@ -1,0 +1,36 @@
+.back-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s, background 0.15s;
+}
+.back-button svg {
+  width: 20px;
+  height: 20px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .back-button:hover {
+    color: #e6edf3;
+    background: #21262d;
+  }
+}
+html.native-mobile .back-button {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
+html.native-mobile .back-button svg {
+  width: 22px;
+  height: 22px;
+}

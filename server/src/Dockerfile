@@ -16,6 +16,7 @@ COPY main.py .
 COPY bridge_sync.py .
 COPY bridge_read.py .
 COPY bridge_ws.py .
+COPY project/ project/
 COPY --from=web-builder /build/dist web/
 RUN pip install --no-cache-dir -r requirements.txt
 

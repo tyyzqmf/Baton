@@ -1,0 +1,24 @@
+.loading-spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: loading-spinner-spin 0.6s linear infinite;
+}
+.loading-spinner-small {
+  width: 16px;
+  height: 16px;
+}
+.loading-spinner-medium {
+  width: 18px;
+  height: 18px;
+}
+@keyframes loading-spinner-spin {
+  to { transform: rotate(360deg); }
+}
+html.native-mobile .loading-spinner-medium {
+  width: 22px;
+  height: 22px;
+}

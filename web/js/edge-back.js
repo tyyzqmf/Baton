@@ -31,6 +31,8 @@ export function registerEdgeBackLayer(options) {
     navigateBack: options.navigateBack,
     foregroundSelectors: options.foregroundSelectors || [],
     guardZIndex: options.guardZIndex || 1001,
+    foregroundZIndex: options.foregroundZIndex
+      || Math.max(301, (options.guardZIndex || 1001) - 1),
   };
   edgeBackLayers.push(layer);
   return {
@@ -272,6 +274,11 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
       return !candidates.some(function (parent) { return parent !== el && parent.contains(el); });
     });
     foreground.forEach(function (el) { el.classList.add('edge-back-foreground'); });
+    if (gestureLayer) {
+      foreground.forEach(function (el) {
+        el.style.setProperty('--edge-back-foreground-z', gestureLayer.foregroundZIndex);
+      });
+    }
 
     shadow = document.createElement('div');
     shadow.className = 'edge-back-shadow';
@@ -283,7 +290,10 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   function cleanupSwipe() {
     clearTimeout(settleTimer);
     settleTimer = null;
-    foreground.forEach(function (el) { el.classList.remove('edge-back-foreground'); });
+    foreground.forEach(function (el) {
+      el.classList.remove('edge-back-foreground');
+      el.style.removeProperty('--edge-back-foreground-z');
+    });
     foreground = [];
     if (underlay) underlay.remove();
     if (shadow) shadow.remove();

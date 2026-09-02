@@ -179,4 +179,6 @@ test('file preview uses one circled close icon across desktop and native mobile'
   assert.doesNotMatch(html, /file-modal-close-glyph/);
   assert.match(css, /\.file-modal-close-icon\s*\{[^}]*display:\s*block;[^}]*border:\s*1\.5px solid currentColor;[^}]*border-radius:\s*50%;[^}]*rotate\(45deg\)/s);
   assert.match(css, /html\.native-mobile \.file-modal-close-icon\s*\{[^}]*width:\s*26px;[^}]*height:\s*26px;/s);
+  assert.match(css, /\.file-modal-header\s*\{[^}]*min-height:\s*44px;/s);
+  assert.doesNotMatch(css, /\.file-modal-close\s*\{[^}]*translateY/);
 });

@@ -19,6 +19,7 @@ export const state = {
   activeThreadCanSend: true,
   sessionThreads: [],
   threadRequestVersion: 0,
+  projectFilesOpen: false,
 
   // ---- Batch-delete selection (app.js) ----
   selectMode: false,
@@ -50,9 +51,7 @@ export const state = {
   // ---- Image staging (image.js) ----
   stagedImages: [],
 
-  // ---- File viewer (fileviewer.js) ----
+  // ---- File viewer (project/file-viewer.js) ----
   fileCache: new Map(),       // key → { text, path, truncated }
   videoUrlCache: new Map(),   // key → { url, exp } — presigned GET URL + expiry (ms epoch)
-  _pendingFileReq: null,      // { requestId, timer }
-  _fileReqSeq: 0,
 };

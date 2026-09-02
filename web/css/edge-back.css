@@ -30,7 +30,7 @@
 }
 
 .edge-back-foreground {
-  z-index: 301 !important;
+  z-index: var(--edge-back-foreground-z, 301) !important;
 }
 
 body.edge-back-active > #content {

@@ -1,39 +1,32 @@
-// Click-to-sync project file viewer: request_file → file_ready → GET /file/{key} → highlight.
+// Project file viewer: text up to 300 KB arrives over WS; larger content uses S3.
 import { state } from '../state.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
+import { loadingSpinner } from '../components/loading.js';
+import { requestProjectFiles } from './rpc.js';
 
-var HIGHLIGHT_MAX = 256 * 1024;
+var HIGHLIGHT_MAX = 300 * 1024;
 var FILE_REQ_TIMEOUT = 20000;
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-var _current = null; // { path, text, truncated, line, snippet }
-var _previewToken = 0; // guards against stale preview results overwriting the view
+var _current = null;
+var _previewToken = 0;
+var _fileRequestToken = 0;
 var _edgeBack = registerEdgeBackLayer({
   navigateBack: closeFileViewer,
   foregroundSelectors: ['#fileOverlay'],
   guardZIndex: 1001,
 });
 
-// Concurrent async file fetches (used by HTML preview to pull referenced assets).
-var _asyncReqs = new Map(); // requestId → { resolve }
-
 function requestFileAsync(absPath) {
-  return new Promise(function (resolve) {
-    var requestId = 'fa_' + (++state._fileReqSeq);
-    var timer = setTimeout(function () {
-      if (_asyncReqs.delete(requestId)) resolve(null);
-    }, FILE_REQ_TIMEOUT);
-    _asyncReqs.set(requestId, function (msg) { clearTimeout(timer); resolve(msg); });
-    var project = state.appState.project;
-    var projectHash = state.wsProjectHash || (project && project.hash) || '';
-    window.wsSend({
-      action: 'request_file', path: absPath, sessionId: state.wsSessionId,
-      projectHash: projectHash, device: state.appState.device || '', requestId: requestId,
-    });
-  });
+  var project = state.appState.project;
+  var projectHash = state.wsProjectHash || (project && project.hash) || '';
+  return requestProjectFiles('read', {
+    projectHash: projectHash,
+    path: absPath,
+  }).catch(function () { return null; });
 }
 
 function overlay() { return document.getElementById('fileOverlay'); }
@@ -84,7 +77,8 @@ function setFileViewMode(mode) {
     return;
   }
   var token = ++_previewToken;
-  setBody('<div class="file-loading" role="status" aria-label="Loading preview"><div class="spinner"></div></div>');
+  setBody('<div class="file-loading">'
+    + loadingSpinner({ label: 'Loading preview' }) + '</div>');
   buildPreviewHtml(_current.text, _current.path).then(function (html) {
     if (token === _previewToken) showPreview(html);
   });
@@ -112,7 +106,7 @@ function inlineImages(container, dir) {
     var src = el.getAttribute('src');
     if (!isRelativeUrl(src)) return;
     jobs.push(requestFileAsync(resolvePath(dir, src)).then(function (m) {
-      if (m && !m.error && m.image) return window.apiText('/api/bridge/image/' + m.key).then(function (b64) {
+      if (m && m.ok !== false && m.image) return window.apiText('/api/bridge/image/' + m.key).then(function (b64) {
         var ext = (m.key.split('.').pop() || '').toLowerCase();
         var mime = ext === 'svg' ? 'image/svg+xml' : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
         el.setAttribute('src', 'data:' + mime + ';base64,' + b64);
@@ -136,18 +130,28 @@ function buildPreviewHtml(html, basePath) {
     var href = el.getAttribute('href');
     if (!isRelativeUrl(href)) return;
     jobs.push(requestFileAsync(resolve(href)).then(function (m) {
-      if (m && !m.error && !m.image) return window.apiText('/api/bridge/file/' + m.key).then(function (css) {
+      if (m && m.ok !== false && !m.image) {
+        var cssPromise = m.content != null
+          ? Promise.resolve(m.content)
+          : window.apiText('/api/bridge/file/' + m.key);
+        return cssPromise.then(function (css) {
         var style = doc.createElement('style'); style.textContent = css; el.replaceWith(style);
-      });
+        });
+      }
     }));
   });
   doc.querySelectorAll('script[src]').forEach(function (el) {
     var src = el.getAttribute('src');
     if (!isRelativeUrl(src)) return;
     jobs.push(requestFileAsync(resolve(src)).then(function (m) {
-      if (m && !m.error && !m.image) return window.apiText('/api/bridge/file/' + m.key).then(function (js) {
+      if (m && m.ok !== false && !m.image) {
+        var scriptPromise = m.content != null
+          ? Promise.resolve(m.content)
+          : window.apiText('/api/bridge/file/' + m.key);
+        return scriptPromise.then(function (js) {
         el.removeAttribute('src'); el.textContent = js;
-      });
+        });
+      }
     }));
   });
 
@@ -159,27 +163,47 @@ function closeFileViewer() {
   var o = overlay();
   if (o) o.style.display = 'none';
   _current = null;
+  _fileRequestToken++;
   showTabs(false);
-  if (state._pendingFileReq) { clearTimeout(state._pendingFileReq.timer); state._pendingFileReq = null; }
 }
 
-function sendFileRequest(absPath, line, snippet, retriesLeft) {
-  var requestId = 'file_' + (++state._fileReqSeq);
-  if (state._pendingFileReq) clearTimeout(state._pendingFileReq.timer);
-  var timer = setTimeout(function () {
-    if (!state._pendingFileReq || state._pendingFileReq.requestId !== requestId) return;
-    if (retriesLeft > 0) { sendFileRequest(absPath, line, snippet, retriesLeft - 1); return; }
-    state._pendingFileReq = null;
-    setBody('<div class="file-error">Request timed out — device may be offline.</div>');
-  }, FILE_REQ_TIMEOUT);
-  state._pendingFileReq = { requestId: requestId, timer: timer, path: absPath, line: line, snippet: snippet };
-
+async function sendFileRequest(absPath, line, snippet, retriesLeft) {
+  var token = ++_fileRequestToken;
   var project = state.appState.project;
   var projectHash = state.wsProjectHash || (project && project.hash) || '';
-  window.wsSend({
-    action: 'request_file', path: absPath, sessionId: state.wsSessionId,
-    projectHash: projectHash, device: state.appState.device || '', requestId: requestId,
-  });
+  try {
+    var message = await requestProjectFiles('read', {
+      projectHash: projectHash,
+      path: absPath,
+    }, {
+      timeout: FILE_REQ_TIMEOUT,
+      onProgress: function (progress) {
+        if (token !== _fileRequestToken) return;
+        if (progress.video) {
+          setBody('<div class="file-loading">'
+            + loadingSpinner({ label: 'Uploading video' }) + '</div>');
+        }
+      },
+    });
+    if (token !== _fileRequestToken) return;
+    handleFileResponse(message, line, snippet);
+  } catch (error) {
+    if (token !== _fileRequestToken) return;
+    if (retriesLeft > 0) {
+      sendFileRequest(absPath, line, snippet, retriesLeft - 1);
+      return;
+    }
+    var messages = {
+      'binary file': 'Cannot preview a binary file.',
+      'is a directory': 'That path is a directory.',
+      'image too large': 'Image is too large to preview (over 10 MB).',
+      'video too large': 'Video is too large to preview (over 5 GB).',
+    };
+    var detail = error.response?.path || absPath;
+    setBody('<div class="file-error">' + esc(messages[error.message] || error.message)
+      + (detail ? '<div class="file-error-path">' + esc(detail) + '</div>' : '')
+      + '</div>');
+  }
 }
 
 function openFile(absPath, displayName, lineHint, matchId) {
@@ -191,7 +215,8 @@ function openFile(absPath, displayName, lineHint, matchId) {
   titleEl.title = absPath;
   _current = null;
   showTabs(false);
-  setBody('<div class="file-loading" role="status" aria-label="Loading file"><div class="spinner"></div></div>');
+  setBody('<div class="file-loading">'
+    + loadingSpinner({ label: 'Loading file' }) + '</div>');
   o.style.display = 'flex';
   _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
@@ -303,22 +328,7 @@ function showVideo(key) {
   });
 }
 
-function handleFileReady(msg) {
-  var async = _asyncReqs.get(msg.requestId);
-  if (async) { _asyncReqs.delete(msg.requestId); return async(msg); }
-
-  var p = state._pendingFileReq;
-  if (!p || p.requestId !== msg.requestId) return;
-  clearTimeout(p.timer);
-  state._pendingFileReq = null;
-
-  if (msg.error) {
-    var m = { 'binary file': 'Cannot preview a binary file.', 'is a directory': 'That path is a directory.', 'image too large': 'Image is too large to preview (over 10 MB).', 'video too large': 'Video is too large to preview (over 5 GB).' };
-    var detail = msg.path || p.path || '';
-    return setBody('<div class="file-error">' + esc(m[msg.error] || ('Failed to load file: ' + msg.error))
-      + (detail ? '<div class="file-error-path">' + esc(detail) + '</div>' : '') + '</div>');
-  }
-
+function handleFileResponse(msg, line, snippet) {
   if (msg.video) return showVideo(msg.key);
 
   if (msg.image) {
@@ -332,11 +342,13 @@ function handleFileReady(msg) {
     });
   }
 
-  var line = p.line, snippet = p.snippet;
   var cached = state.fileCache.get(msg.key);
   if (cached) return render(cached.path, cached.text, cached.truncated, line, snippet);
 
-  window.apiText('/api/bridge/file/' + msg.key).then(function (text) {
+  var contentPromise = msg.content != null
+    ? Promise.resolve(msg.content)
+    : window.apiText('/api/bridge/file/' + msg.key);
+  contentPromise.then(function (text) {
     if (state.fileCache.size > 50) state.fileCache.delete(state.fileCache.keys().next().value);
     state.fileCache.set(msg.key, { text: text, path: msg.path, truncated: msg.truncated });
     render(msg.path, text, msg.truncated, line, snippet);
@@ -345,20 +357,13 @@ function handleFileReady(msg) {
   });
 }
 
-// Bridge acks a video request before its (potentially long) S3 upload finishes.
-// Clear the request timeout so it neither fires "timed out" nor retries (which would
-// re-upload); keep _pendingFileReq alive so the eventual file_ready still matches.
-function handleFileProgress(msg) {
-  var p = state._pendingFileReq;
-  if (!p || p.requestId !== msg.requestId) return;
-  clearTimeout(p.timer);
-  p.timer = null;
-  if (msg.video) setBody('<div class="file-loading" role="status" aria-label="Uploading video"><div class="spinner"></div></div>');
-}
-
 document.addEventListener('keydown', function (e) {
   var o = overlay();
   if (o && o.style.display === 'flex' && e.key === 'Escape') closeFileViewer();
 });
 
-Object.assign(window, { openFile: openFile, closeFileViewer: closeFileViewer, handleFileReady: handleFileReady, handleFileProgress: handleFileProgress, setFileViewMode: setFileViewMode });
+Object.assign(window, {
+  openFile: openFile,
+  closeFileViewer: closeFileViewer,
+  setFileViewMode: setFileViewMode,
+});

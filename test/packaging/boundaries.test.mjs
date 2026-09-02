@@ -56,7 +56,12 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
     install,
     /cp "\$BRIDGE_DIR"\/\*\.mjs "\$BRIDGE_DIR\/package\.json" "\$BRIDGE_DIR\/package-lock\.json" "\$BRIDGE_STAGE\/"/,
   );
-  assert.match(install, /tar czf "\$BRIDGE_TAR" \*\.mjs package\.json package-lock\.json/);
+  assert.match(install, /cp -R "\$BRIDGE_DIR\/project" "\$BRIDGE_STAGE\/project"/);
+  assert.match(
+    install,
+    /sed "s#from '\.\.\/#from '\.\/#g" "\$BRIDGE_DIR\/project\/files\.mjs" > "\$BRIDGE_STAGE\/project-files\.mjs"/,
+  );
+  assert.match(install, /tar czf "\$BRIDGE_TAR" \*\.mjs project package\.json package-lock\.json/);
   assert.doesNotMatch(install, /cp\s+-r\s+"\$BRIDGE_DIR"/);
   assert.doesNotMatch(install, /cp\s+-r\s+"\$ROOT_DIR"/);
   const bridgeUpload = install.indexOf('aws s3 cp "$BRIDGE_TAR"');
@@ -67,6 +72,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   const dockerfile = read('server/src/Dockerfile');
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s/m);
   assert.match(dockerfile, /^COPY web\/ web\/$/m);
+  assert.match(dockerfile, /^COPY project\/ project\/$/m);
   assert.match(dockerfile, /^COPY --from=web-builder \/build\/dist web\/$/m);
 });
 

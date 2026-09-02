@@ -8,6 +8,7 @@ import os
 import time
 import hashlib
 import boto3
+from project.files_ws import handle_project_files
 
 _ddb = None
 _connections_table = None
@@ -334,6 +335,17 @@ def _handle_message(event, connection_id, endpoint):
     elif action == "request_file":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "request_file")
+    elif action == "project_files":
+        return handle_project_files(
+            body,
+            role,
+            connection_id,
+            account_id,
+            endpoint,
+            query_connections=_query_connections,
+            post_to_connection=_post_to_connection,
+            connections_table=_connections_table,
+        )
     elif action == "delete_files":
         if role == "app":
             return _handle_send_to_bridge(body, account_id, endpoint, "delete_files")

@@ -49,7 +49,7 @@ async function loadViewerLibs() {
       import('./components/typing-status.js'),
       import('./components/image.js'),
       import('./components/voice.js'),
-      import('./components/fileviewer.js'),
+      import('./project/file-viewer.js'),
       import('./components/slashcommands.js'),
       import('./components/claude-usage.js'),
       import('./render.js'),
