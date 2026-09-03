@@ -7,6 +7,15 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
+async function waitFor(h, predicate, timeoutMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await h.tick(10);
+  }
+  return predicate();
+}
+
 test('completed interrupt recovery freezes a visible partial answer', async () => {
   const h = await makeHarness();
   const sessionId = 'claude:interrupt-recovery-preserves-preview';
@@ -42,11 +51,13 @@ test('completed interrupt recovery freezes a visible partial answer', async () =
       }],
     }),
   ]) h.hooks.handleWsMessage(item);
-  await h.tick(30);
-
-  const partialBlock = h.document.querySelector(
-    `[data-turn-id="${turnId}"] [data-block-id="2"]`,
-  );
+  let partialBlock = null;
+  assert.equal(await waitFor(h, () => {
+    partialBlock = h.document.querySelector(
+      `[data-turn-id="${turnId}"] [data-block-id="2"]`,
+    );
+    return partialBlock?.textContent === 'visible partial answer';
+  }), true);
   assert.equal(partialBlock?.textContent, 'visible partial answer');
 
   h.state.ws = {

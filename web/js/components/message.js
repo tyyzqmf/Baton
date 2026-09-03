@@ -169,7 +169,10 @@
     const displayText = slashCmd ? `/${slashCmd}${text.trim() ? ' ' + text.trim() : ''}` : text.trim();
 
     if (!displayText && !attachHtml) return '';
-    const anchorAttr = msg.turnId ? ` data-anchor="${esc(msg.turnId)}"` : '';
+    const nativeTurn = String(msg.nativeId || '')
+      .match(/^(?:codex|live):user:(.+)$/)?.[1] || '';
+    const anchorId = msg.turnId || nativeTurn;
+    const anchorAttr = anchorId ? ` data-anchor="${esc(anchorId)}"` : '';
     const messageAttr = msg.uuid ? ` data-message-id="${esc(msg.uuid)}"` : '';
     const nativeAttr = msg.nativeId ? ` data-native-id="${esc(msg.nativeId)}"` : '';
     const className = `msg-user${extraClass ? ` ${extraClass}` : ''}`;

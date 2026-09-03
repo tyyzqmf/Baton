@@ -16,6 +16,8 @@ function turnEvent(seq, action, extra = {}) {
 test('a recovered permission resumes the strict turn before the next output', async () => {
   const h = await makeHarness();
   resetSession(h, { sessionId: 'codex:permission-resume' });
+  h.document.querySelector('.messages').innerHTML =
+    '<div class="msg-user" data-anchor="turn-permission-resume">question</div>';
   const shown = [];
   const resolved = [];
   globalThis.showPermissionPrompt = h.window.showPermissionPrompt = (message) => {

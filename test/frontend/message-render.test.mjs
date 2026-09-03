@@ -24,6 +24,20 @@ test('user bubbles preserve and wrap long unbroken text', () => {
   assert.match(css, /\.msg-user \.msg-text \{[\s\S]*word-break: break-word;/);
 });
 
+test('REST user identity restores the live turn anchor', () => {
+  document.body.innerHTML = window.renderUserBubble({
+    uuid: 'rest-user',
+    nativeId: 'codex:user:client-turn-1',
+    type: 'user',
+    content: 'continue',
+  });
+
+  assert.equal(
+    document.querySelector('.msg-user').dataset.anchor,
+    'client-turn-1',
+  );
+});
+
 test('Codex subagent notifications stay hidden from the user timeline', () => {
   const message = {
     type: 'user',
