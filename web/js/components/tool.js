@@ -787,7 +787,6 @@ import { state } from '../state.js';
   };
 
   window.isCodexHiddenTool = function (toolUse, result) {
-    if (toolUse?.name === 'Bash' && result?.codexBackground === 'running') return true;
     if (toolUse?.name !== 'WriteStdin' || String(toolUse.input?.chars || '').length) return false;
     return !!result && result.codexWait !== 'waiting';
   };

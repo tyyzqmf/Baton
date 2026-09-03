@@ -8,6 +8,7 @@ import {
   OPTIONAL_TURN_EVENT_ACTIONS,
   prepareAuthoritativeMessage,
   shouldCreateFinalInterrupt,
+  shouldSendImmediateInterrupt,
   STREAM_EVENT_ACTIONS,
   userMessageUuidForTurnId,
 } from '../../bridge/live-turn-stream.mjs';
@@ -186,6 +187,11 @@ test('every runtime final interrupted status synthesizes interrupt authority', (
     shouldCreateFinalInterrupt('codex', { subtype: 'error_during_execution' }),
     false,
   );
+});
+
+test('Codex waits for canonical interrupt authority', () => {
+  assert.equal(shouldSendImmediateInterrupt('codex'), false);
+  assert.equal(shouldSendImmediateInterrupt('claude'), true);
 });
 
 test('stream_end closes an unfinished block before terminating the turn', () => {

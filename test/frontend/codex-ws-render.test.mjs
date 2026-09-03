@@ -490,7 +490,10 @@ test('Codex WS keeps parallel Ran nodes in creation order', () => {
       codexProcessId: '300',
     }),
   ]);
-  assert.equal(document.querySelector('[data-tool-id="sleep"]'), null);
+  const running = document.querySelector('[data-tool-id="sleep"]');
+  assert.ok(running);
+  assert.equal(running.querySelector('.tool-name').textContent, 'Ran');
+  assert.match(running.textContent, /Process running with session ID 300/);
 
   const wait = (suffix, timestamp) => ({
     uuid: `wait-${suffix}`,

@@ -750,14 +750,7 @@ function resumeLateJoinAtCheckpoint(turnId) {
   var recovery = _turnEventQueue.resumeAtNextCheckpoint(turnId);
   if (!recovery) return false;
   if (!document.querySelector('[data-anchor="' + turnId + '"]')) {
-    var container = document.querySelector('.messages');
-    if (container) {
-      var recoveryAnchor = document.createElement('span');
-      recoveryAnchor.hidden = true;
-      recoveryAnchor.dataset.anchor = turnId;
-      recoveryAnchor.dataset.streamRecoveryAnchor = '1';
-      container.appendChild(recoveryAnchor);
-    }
+    console.warn('[ws] late-join turn has no user anchor; holding preview:', turnId);
   }
   _checkpointResumedTurns.add(turnId);
   mergeLateJoinAuthority({
@@ -1244,10 +1237,6 @@ function drainStrictStreamOperations() {
       state.wsRunning = true;
     } else if (operation.type === 'completeTurn') {
       completedTurn = true;
-      document.querySelector(
-        '[data-stream-recovery-anchor="1"][data-anchor="'
-          + operation.turnId + '"]',
-      )?.remove();
       _queuedTurnIds.delete(operation.turnId);
       _checkpointResumedTurns.delete(operation.turnId);
       _reconnectingTurns.delete(operation.turnId);

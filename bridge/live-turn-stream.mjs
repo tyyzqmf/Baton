@@ -102,6 +102,10 @@ export function shouldCreateFinalInterrupt(runtime, result) {
     || result?.status === 'interrupted';
 }
 
+export function shouldSendImmediateInterrupt(runtime) {
+  return runtime !== 'codex';
+}
+
 export class LiveTurnStream {
   constructor(options) {
     this.sessionId = options.sessionId;

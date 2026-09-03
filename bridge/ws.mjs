@@ -59,6 +59,7 @@ import {
   LiveTurnStream,
   prepareAuthoritativeMessage,
   shouldCreateFinalInterrupt,
+  shouldSendImmediateInterrupt,
 } from './live-turn-stream.mjs';
 import { SessionAckQueue } from './session-ack-queue.mjs';
 import {
@@ -709,7 +710,7 @@ async function handleMessage(msg) {
         const adapter = getRuntimeAdapter(identity.runtime);
         if (adapter.features.interrupt) {
           let liveInterrupt = false;
-          if (msg.turnId) {
+          if (msg.turnId && shouldSendImmediateInterrupt(identity.runtime)) {
             liveInterrupt = _activeTurns.get(identity.sessionId, msg.turnId)
               ?.sendInterrupt() || false;
           }
