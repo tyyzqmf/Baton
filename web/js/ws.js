@@ -517,12 +517,20 @@ function finishSessionConnectionRecovery(recovery) {
       || recovery.activity === 'running',
   }, state.wsAllMessages, state.appState.runtime);
   updateSendBtn();
+  if (recovery.followBottomAfterForeground) {
+    var content = document.getElementById('content');
+    var container = content?.querySelector('.messages');
+    setTimeout(function () {
+      placeFollowedContentAtBottom(content, container, recovery.sessionId);
+    }, 200);
+  }
   return true;
 }
 
 function resumeSessionForeground() {
   if (!state.appState.session || !state.WS_URL) return false;
-  beginSessionConnectionRecovery();
+  var recovery = beginSessionConnectionRecovery();
+  if (recovery) recovery.followBottomAfterForeground = state.stickBottom;
   if (state.ws?.readyState === WebSocket.OPEN) {
     recoverSubscribedSession();
     return true;
@@ -2539,7 +2547,8 @@ function doSend(fullText, displayText, images) {
       + '<div class="msg-meta"><span class="msg-time sending-status">sending...</span></div></div>');
     clampOverflow(container);
     state.stickBottom = true; // sending a message = follow the incoming reply
-    document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
+    document.getElementById('content').scrollTop =
+      document.getElementById('content').scrollHeight;
   }
   schedulePendingTransportRetry(pendingSend);
   scheduleSendTimeout(msgId);

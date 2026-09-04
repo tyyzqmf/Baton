@@ -110,19 +110,20 @@ test('keyboard opening and closing preserve physical bottom follow', async (t) =
   h.document.getElementById('msg-input').blur();
 });
 
-test('sending a user message restores bottom following with a smooth scroll', () => {
+test('sending a user message restores bottom following without a competing animation', () => {
   resetSession(h, { sessionId: 'codex:send-follow' });
   const content = h.document.getElementById('content');
-  let scrollOptions = null;
-  content.scrollTo = (options) => {
-    scrollOptions = options;
-  };
+  Object.defineProperty(content, 'scrollHeight', {
+    configurable: true,
+    value: 1200,
+  });
+  content.scrollTop = 200;
   h.state.stickBottom = false;
 
   h.window.doSend('hello', 'hello', []);
 
   assert.equal(h.state.stickBottom, true);
-  assert.deepEqual(scrollOptions, { top: 99999, behavior: 'smooth' });
+  assert.equal(content.scrollTop, 1200);
   assert.match(h.document.querySelector('.msg-user[data-pending="1"]').textContent, /hello/);
 });
 
