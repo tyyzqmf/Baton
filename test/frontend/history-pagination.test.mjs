@@ -35,10 +35,14 @@ test('older history merge updates state without rebuilding the visible page', as
   h.state.wsRunning = false;
   const pendingMessages = [{ id: 'pending-turn', text: 'pending' }];
   h.state.pendingSentMessages = pendingMessages;
-  h.setApiResponse({
-    messages: [older],
-    hasMore: false,
-    oldestTimestamp: older.timestamp,
+  let apiCall = null;
+  h.setApiHandler(async (endpoint, params) => {
+    apiCall = { endpoint, params };
+    return {
+      messages: [older],
+      hasMore: false,
+      oldestTimestamp: older.timestamp,
+    };
   });
 
   const loaded = await h.window.loadOlderMessages('pagination-session');
@@ -54,6 +58,14 @@ test('older history merge updates state without rebuilding the visible page', as
   assert.equal(h.state.wsHasMore, false);
   assert.equal(h.state.wsRunning, false);
   assert.equal(h.state.pendingSentMessages, pendingMessages);
+  assert.deepEqual(apiCall, {
+    endpoint: '/api/bridge/messages',
+    params: {
+      session: 'pagination-session',
+      before: current.timestamp,
+      limit: 200,
+    },
+  });
 });
 
 test('an older page cannot commit after switching sessions', async () => {

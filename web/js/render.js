@@ -1,5 +1,23 @@
+import './components/tool-run-group.js';
+
 // Message rendering orchestrator
 (function () {
+  window.registerToolRunGroup({
+    kind: 'codex-explore',
+    itemClass: 'codex-explore',
+    classPrefix: 'codex-explore',
+  });
+  window.registerToolRunGroup({
+    kind: 'codex-ran',
+    itemClass: 'codex-ran',
+    classPrefix: 'codex-ran',
+  });
+  window.registerToolRunGroup({
+    kind: 'claude-bash',
+    itemClass: 'claude-bash',
+    classPrefix: 'claude-bash',
+  });
+
   function escapeAttribute(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -9,70 +27,44 @@
       .replace(/'/g, '&#39;');
   }
 
-  window.markCodexExploreGroups = function (container) {
+  window.markCodexExploreGroups = window.markToolRunGroups;
+
+  window.normalizeCodexWaitGroups = function (container) {
     if (!container) return;
-    let exploreRows = [];
-    let exploreGroupSequence = 0;
-    const flushExploreRun = () => {
-      if (!exploreRows.length) return;
-      const items = exploreRows.flatMap((row) => Array.from(row.children));
-      for (const item of items) {
-        item.classList?.remove(
-          'codex-explore-continuation',
-          'codex-explore-group-start',
-          'codex-explore-group-connected',
-        );
-        if (item.dataset) delete item.dataset.toolDetailsGroup;
+    let previousWait = null;
+    for (const row of Array.from(container.children)) {
+      if (!row.classList?.contains('assistant-turn')) {
+        previousWait = null;
+        continue;
       }
-      for (let start = 0; start < items.length;) {
-        if (!items[start].classList?.contains('codex-explore')) {
-          start++;
+      for (const item of Array.from(row.children)) {
+        if (!item.classList?.contains('codex-terminal-wait')) {
+          previousWait = null;
           continue;
         }
-        let end = start + 1;
-        while (end < items.length && items[end].classList?.contains('codex-explore')) end++;
-        if (end - start > 1) {
-          const groupItems = items.slice(start, end);
-          const groupId = `codex-explore-${exploreGroupSequence++}`;
-          const collapsed = groupItems.every((item) =>
-            item.classList.contains('tool-details-collapsed'));
-          items[start].classList.add('codex-explore-group-start');
-          for (let index = start + 1; index < end; index++) {
-            items[index].classList.add('codex-explore-continuation');
-          }
-          for (const item of groupItems) {
-            item.dataset.toolDetailsGroup = groupId;
-            window.setToolDetailsCollapsed?.(item, collapsed);
-          }
-          if (end < items.length) {
-            for (let index = start; index < end; index++) {
-              items[index].classList.add('codex-explore-group-connected');
-            }
+        if (previousWait) {
+          const previousRow = previousWait.parentElement;
+          previousWait.remove();
+          if (previousRow?.classList.contains('assistant-turn')
+            && !previousRow.children.length) {
+            previousRow.remove();
           }
         }
-        start = end;
+        previousWait = item;
       }
-      exploreRows = [];
-    };
-    for (const row of container.children) {
-      if (row.classList?.contains('assistant-turn')) exploreRows.push(row);
-      else flushExploreRun();
     }
-    flushExploreRun();
   };
 
   window.normalizeCodexTimeline = function (container) {
     if (!container) return;
-    let previousWait = null;
+    window.normalizeCodexWaitGroups(container);
     let historicalPlans = [];
     for (const row of Array.from(container.children)) {
       if (!row.classList?.contains('assistant-turn')) {
-        previousWait = null;
         historicalPlans = [];
         continue;
       }
-      const rowItems = Array.from(row.children);
-      const rowPlans = rowItems.filter(item =>
+      const rowPlans = Array.from(row.children).filter(item =>
         item.dataset?.codexPlan === '1');
       if ((row.classList.contains('stream-preview')
           || row.classList.contains('stream-committed'))
@@ -90,24 +82,6 @@
         }
       } else {
         historicalPlans.push(...rowPlans);
-      }
-      for (const item of rowItems) {
-        const processId = item.classList?.contains('codex-terminal-wait')
-          ? String(item.dataset?.codexProcess || '')
-          : '';
-        if (!processId) {
-          previousWait = null;
-          continue;
-        }
-        if (previousWait?.dataset?.codexProcess === processId) {
-          const previousRow = previousWait.parentElement;
-          previousWait.remove();
-          if (previousRow?.classList.contains('assistant-turn')
-            && !previousRow.children.length) {
-            previousRow.remove();
-          }
-        }
-        previousWait = item;
       }
     }
     window.markCodexExploreGroups(container);
@@ -168,13 +142,19 @@
         const emptyTerminalWait = runtime === 'codex'
           && block.name === 'WriteStdin'
           && !String(block.input?.chars || '').length;
+        const codexExplore = runtime === 'codex'
+          && !!window.isCodexExploreTool?.(block, result);
         items.push({
           type: 'tool',
           state: window._lastToolState || '',
           toolDetails: !!window._lastToolHasDetails,
           html,
           toolId: block.id,
-          codexExplore: runtime === 'codex' && !!window.isCodexExploreTool?.(block, result),
+          codexExplore,
+          codexRan: runtime === 'codex'
+            && block.name === 'Bash'
+            && !codexExplore,
+          claudeBash: runtime === 'claude' && block.name === 'Bash',
           codexWait: emptyTerminalWait,
           codexProcessId: String(result?.codexProcessId || block.input?.session_id || ''),
           codexBackgroundComplete: result?.codexBackground === 'complete',
@@ -224,6 +204,8 @@
       cls += ' tool-node';
       if (item.toolDetails && collapseToolDetails) cls += ' tool-details-collapsed';
       if (item.codexExplore) cls += ' codex-explore';
+      if (item.codexRan) cls += ' codex-ran';
+      if (item.claudeBash) cls += ' claude-bash';
       if (item.codexWait) cls += ' codex-terminal-wait';
       if (item.codexBackgroundComplete) cls += ' codex-background-complete';
       if (item.state) cls += ' ' + item.state;

@@ -6,7 +6,7 @@ import { createServer } from 'vite';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
-test('message pagination prepends once, preserves the anchor, and hides the final loader', async () => {
+test('an underfilled message viewport auto-prepends once and preserves the anchor', async () => {
   const dom = new JSDOM(
     '<!doctype html><body>'
       + '<div class="top-bar"><div class="top-left"></div></div>'
@@ -99,8 +99,9 @@ test('message pagination prepends once, preserves the anchor, and hides the fina
     };
     stateModule.state.wsHasMore = true;
     stateModule.state.wsLoadingOlder = false;
+    stateModule.state.stickBottom = false;
 
-    await window.loadOlderAndPrepend();
+    assert.equal(await window.maybeLoadOlderAndPrepend(), true);
 
     const loader = container.querySelector(':scope > .loading-older');
     assert.equal(renderCalls, 1);

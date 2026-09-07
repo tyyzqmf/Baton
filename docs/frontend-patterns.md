@@ -476,8 +476,15 @@ After every DOM update (full render / incremental updateLastTurn / reconnect rec
   `Updated Plan`, and `Viewed Image`.
 - Codex command presentation follows persisted lifecycle metadata instead of shell regexes:
   `parsed_cmd` controls `Explored`, independent `Ran` nodes use completion order, repeated empty
-  `WriteStdin` calls collapse by process into one wait streak, and `CommandExecution` replaces
-  wrapper output without renaming the original command.
+  `WriteStdin` calls in one uninterrupted run keep only the last visible wait, and
+  `CommandExecution` replaces wrapper output without renaming the original command.
+- Consecutive Codex `Explored` nodes share one group control. History starts collapsed with only the
+  first summary and a count visible; realtime starts expanded. Collapsing hides continuation rows
+  entirely while preserving their tool identities and IN/OUT content for later expansion.
+- The same data-driven grouping component is registered for Codex `Ran` and Claude `Bash`.
+  Failed and warning commands remain in the run; a collapsed group uses the last command's state
+  dot. Adding a realtime command preserves a manual collapse and updates only the count without
+  moving or deleting the underlying tool nodes.
 - Codex MCP calls use persisted `McpToolCall.server/tool` metadata: pending calls display `Calling`,
   completed calls display `Called`, and the summary keeps `server.tool`. Claude generic tool names
   do not enter this runtime-specific path.

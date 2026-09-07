@@ -444,22 +444,26 @@ Codex `ViewImage` 是 agent 查看本地图片，不是用户发送图片。Brid
 - `Explored`、`Ran`、`Edited`、`Updated Plan`、`Viewed Image` 等展示名称。
 - 只有 Codex `parsed_cmd` 全部属于 `Read/ListFiles/Search` 且来源不是 `UserShell` 的
   `Bash` 才是 `Explored`；连续调用按 TUI `ExecCell` 语义组成一组，组内保持调用顺序。
-  子项使用 `Read/Search/List` 结构化摘要，只有组首显示时间线节点和 `Explored` 标题；
-  后续子项隐藏重复圆点；组位于末尾时不画悬空竖线，后续已有独立节点时则以一条连续
-  竖线穿过折叠组并连接下一个节点。底层 call ID、IN、OUT、结果和 UUID 仍分别保留。
-- 其他 `Bash` 显示为 `Ran`，最终位置以 `CommandExecution` 完成时间为准。此前用于猜测
-  只读命令的前端正则已删除，组合命令不会再因包含 `git diff`、`find` 等片段被误分组。
+  子项使用 `Read/Search/List` 结构化摘要；历史进入默认折叠为一行，显示首个子项摘要和
+  调用数量，后续子项整行隐藏。实时分组默认展开，点击组首箭头可展开或折叠全部 IN/OUT，
+  手动折叠后新子项到达仍保持折叠并只更新调用数量。底层 call ID、IN、OUT、结果和 UUID
+  仍分别保留。
+- 其他 `Bash` 显示为 `Ran`，最终位置以 `CommandExecution` 完成时间为准。连续 `Ran`
+  复用工具分组组件：历史默认折叠为首个命令摘要，实时默认展开；失败或警告命令仍参与
+  分组，折叠摘要圆点使用组内最后一个命令的状态。
+  此前用于猜测只读命令的前端正则已删除，组合命令不会再因包含 `git diff`、`find` 等
+  片段被误分组。
 - 空输入 `WriteStdin` 是后台终端轮询：等待中的实时节点显示 `Waiting for background
-  terminal`；同一 process 的连续轮询在历史中折叠为一个 `Waited for background
-  terminal`；较长命令默认单行省略，点击标题可展开完整内容。直接结束进程的轮询不创建
+  terminal`；连续轮询不区分 process，只保留最后一个节点，任何其他时间线节点都会结束
+  当前连续段。较长命令默认单行省略，点击标题可展开完整内容。直接结束进程的轮询不创建
   额外 Waited。非空终端输入仍显示为 `Ran`。
 - `CommandExecution` 的聚合输出是权威 OUT；`Chunk ID`、`Wall time`、token count 等
   wrapper 结果在最终事件存在时标记为 superseded。退出码作为节点状态展示，不拼入 OUT。
 - MCP 调用使用 `McpToolCall.server/tool` 作为权威身份：执行中显示 `Calling`，完成后显示
   `Called`，摘要保留 `server.tool`；通用 `function_call_output` wrapper 不重复展示。
-- 工具详情使用统一 runtime policy：Codex 历史加载默认只显示标题，实时 WS 新节点默认展开；
-  点击标题或箭头切换详情。`Explored` 组由组首一次控制全部成员，内部 `Show more` 仍作为
-  第二层长内容展开。Claude 当前保持原有展开行为，未来只需启用对应 policy。
+- 工具详情使用统一 runtime policy：历史加载默认只显示标题，实时 WS 新节点默认展开；
+  点击标题或箭头切换详情。`Explored`、`Ran` 和 Claude `Bash` 使用同一连续工具分组组件，
+  组首一次控制全部成员，内部 `Show more` 仍作为第二层长内容展开。
 - 历史 `Edit` 收起时不下载或执行 Diff2Html；首次展开才动态加载并渲染，后续展开复用结果。
 - Codex 局部强调色 `#13A7CD`；工具标题仍使用统一白色。
 - 底部运行文案固定为逐字循环的 `Working...`。

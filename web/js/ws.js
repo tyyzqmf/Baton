@@ -764,7 +764,13 @@ function resumeLateJoinAtCheckpoint(turnId) {
   var recovery = _turnEventQueue.resumeAtNextCheckpoint(turnId);
   if (!recovery) return false;
   if (!document.querySelector('[data-anchor="' + turnId + '"]')) {
-    console.warn('[ws] late-join turn has no user anchor; holding preview:', turnId);
+    var hasLoadedUser = !!document.querySelector('.messages > .msg-user');
+    console.warn(
+      hasLoadedUser
+        ? '[ws] late-join turn has no user anchor; holding preview:'
+        : '[ws] late-join history has no user messages; appending preview:',
+      turnId,
+    );
   }
   _checkpointResumedTurns.add(turnId);
   mergeLateJoinAuthority({
@@ -1039,6 +1045,9 @@ function getStrictStreamRenderer() {
         ? document.querySelector('[data-anchor="' + turnId + '"]')
         : null;
     },
+    canAppendWithoutAnchor: function (container) {
+      return !container?.querySelector(':scope > .msg-user');
+    },
     renderMarkdown: function (element, text) {
       if (window.renderStreamMd) window.renderStreamMd(element, text);
       else element.textContent = text;
@@ -1096,8 +1105,13 @@ function renderStrictToolBlock(element, block) {
       collapsed: false,
     });
     var toolState = window._lastToolState || 'tool-running';
-    var exploreClass = isLiveCodexExplore(toolUse.name, input) ? ' codex-explore' : '';
-    element.className = 'tl-item tool-node ' + toolState + exploreClass;
+    var commandClass = '';
+    if (toolUse.name === 'Bash') {
+      commandClass = state.appState.runtime === 'codex'
+        ? (isLiveCodexExplore(toolUse.name, input) ? ' codex-explore' : ' codex-ran')
+        : ' claude-bash';
+    }
+    element.className = 'tl-item tool-node ' + toolState + commandClass;
     if (block.toolUseId) element.dataset.toolId = block.toolUseId;
     if (toolUse.name === 'TodoWrite') {
       element.dataset.codexPlan = '1';
@@ -1110,7 +1124,10 @@ function renderStrictToolBlock(element, block) {
   var displayLabel = state.appState.runtime === 'codex' && label === 'Bash'
     ? 'Ran'
     : label;
-  element.className = 'tl-item tool-node tool-running';
+  var fallbackCommandClass = label === 'Bash'
+    ? (state.appState.runtime === 'codex' ? ' codex-ran' : ' claude-bash')
+    : '';
+  element.className = 'tl-item tool-node tool-running' + fallbackCommandClass;
   element.innerHTML = '<div class="tool-header"><span class="tool-name">'
     + esc(displayLabel) + '</span><span class="tool-desc">'
     + esc(description) + '</span><span class="tool-status">running</span></div>';
@@ -1167,6 +1184,12 @@ function applyToolResultMessages(messages) {
       if (state.appState.runtime === 'codex'
         && window.isCodexExploreTool?.(toolUse, result)) {
         classes.push('codex-explore');
+      } else if (state.appState.runtime === 'codex'
+        && toolUse.name === 'Bash') {
+        classes.push('codex-ran');
+      } else if (state.appState.runtime === 'claude'
+        && toolUse.name === 'Bash') {
+        classes.push('claude-bash');
       }
       if (state.appState.runtime === 'codex'
         && toolUse.name === 'WriteStdin'
@@ -1186,7 +1209,13 @@ function applyToolResultMessages(messages) {
       changed = true;
     }
   }
-  if (changed) window.afterToolDomMutation?.(container);
+  if (changed) {
+    if (state.appState.runtime === 'codex') {
+      window.normalizeCodexWaitGroups?.(container);
+    }
+    window.markToolRunGroups?.(container);
+    window.afterToolDomMutation?.(container);
+  }
   return changed;
 }
 
@@ -1775,6 +1804,8 @@ function markTurnAdjacency(container) {
   if (!container) return;
   if (state.appState.runtime === 'codex') {
     window.normalizeCodexTimeline?.(container);
+  } else {
+    window.markToolRunGroups?.(container);
   }
   window.afterToolDomMutation?.(container);
   var kids = container.children;
@@ -2178,7 +2209,11 @@ async function loadOlderMessages(sessionId) {
   var generation = _messagePaginationGeneration;
   state.wsLoadingOlder = true;
   try {
-    var data = await api('/api/bridge/messages', { session: sessionId, before: state.wsOldestTimestamp });
+    var data = await api('/api/bridge/messages', {
+      session: sessionId,
+      before: state.wsOldestTimestamp,
+      limit: 200,
+    });
     if (generation !== _messagePaginationGeneration
       || state.wsSessionId !== sessionId) {
       return null;

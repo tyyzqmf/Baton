@@ -323,6 +323,9 @@ body.browse-view #content { scrollbar-gutter: stable; }
 .tool-node::before { background: #74c991; }
 .tool-node.error::before { background: #c74e39; }
 .tool-node.warning::before { background: #e1c08d; }
+.tool-node.tool-run-summary-normal::before { background: #74c991; }
+.tool-node.tool-run-summary-error::before { background: #c74e39; }
+.tool-node.tool-run-summary-warning::before { background: #e1c08d; }
 
 .codex-explore-continuation .tool-name { display: none; }
 .codex-explore-continuation .tool-detail-chevron { visibility: hidden; }
@@ -340,6 +343,32 @@ body.browse-view #content { scrollbar-gutter: stable; }
 .codex-explore-continuation .tool-header::before {
   content: '└'; color: #6e7681; font-size: 11px; flex-shrink: 0;
 }
+.tool-run-continuation .tool-name { display: none; }
+.tool-run-continuation .tool-detail-chevron { visibility: hidden; }
+.tool-run-continuation::before { display: none; }
+.tool-run-continuation::after { display: none !important; }
+.tool-run-continuation .tool-header::before {
+  content: '└'; color: #6e7681; font-size: 11px; flex-shrink: 0;
+}
+.assistant-turn > .tool-run-group-start::after {
+  bottom: calc(100% - 16px) !important;
+}
+.assistant-turn > .tool-run-group-start.tool-run-group-connected::after {
+  bottom: -2px !important;
+}
+.assistant-turn > .tool-run-continuation.tool-run-group-connected::after {
+  display: block !important; top: -2px !important; bottom: -2px !important;
+}
+.assistant-turn.tool-run-row-hidden { display: none; }
+.tool-run-group-hidden { display: none; }
+.tool-run-group-count {
+  flex-shrink: 0; color: #8b949e; font-size: 11px; white-space: nowrap;
+}
+.assistant-turn.codex-explore-row-hidden { display: none; }
+.codex-explore-group-hidden { display: none; }
+.codex-explore-group-count {
+  flex-shrink: 0; color: #8b949e; font-size: 11px; white-space: nowrap;
+}
 
 .tool-header {
   display: flex; align-items: baseline; gap: 6px;
@@ -355,8 +384,6 @@ body.browse-view #content { scrollbar-gutter: stable; }
 .tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
 .tool-details-collapsed .tool-body { display: none; }
 .tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
-.codex-explore-group-start.tool-details-collapsed { padding-bottom: 1px; }
-.codex-explore-continuation.tool-details-collapsed { padding-top: 1px; padding-bottom: 1px; }
 .tool-name { font-weight: 700; }
 .tool-desc { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .shell-command .shell-command-name { color: #82aaff; }
@@ -376,6 +403,7 @@ body.browse-view #content { scrollbar-gutter: stable; }
 }
 .tool-status, .tool-flag { flex-shrink: 0; white-space: nowrap; font-size: 11px; color: #8b949e; }
 .tool-flag { color: #d29922; }
+.codex-terminal-wait { padding-bottom: 4px; }
 
 @media (max-width: 600px) {
   .codex-terminal-wait .tool-header { flex-wrap: wrap; row-gap: 0; }

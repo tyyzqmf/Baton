@@ -597,6 +597,103 @@ test('Codex WS keeps mixed Ran and Explored blocks in creation order', () => {
   );
 });
 
+test('Codex realtime Explored group keeps a manual collapse as new commands arrive', () => {
+  reset();
+  const explore = (id, command, action, timestamp) => ({
+    uuid: `${id}-use`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id,
+      name: 'Bash',
+      input: {
+        command,
+        codexCommandKind: 'explore',
+        codexCommandActions: [action],
+      },
+    }],
+    timestamp,
+  });
+
+  send([
+    explore('explore-one', 'rg -n tool web/js', {
+      type: 'search',
+      query: 'tool',
+      path: 'web/js',
+    }, '2026-08-10T05:00:00.000Z'),
+    explore('explore-two', "sed -n '1,80p' web/js/render.js", {
+      type: 'read',
+      name: 'render.js',
+      path: 'web/js/render.js',
+    }, '2026-08-10T05:00:01.000Z'),
+  ]);
+  send([
+    result('explore-one-result', 'explore-one', 'matches',
+      '2026-08-10T05:00:02.000Z', { codexCommandKind: 'explore' }),
+    result('explore-two-result', 'explore-two', 'source',
+      '2026-08-10T05:00:03.000Z', { codexCommandKind: 'explore' }),
+  ]);
+
+  let explores = Array.from(document.querySelectorAll('.codex-explore'));
+  assert.equal(explores.length, 2);
+  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 0);
+
+  window.toggleToolDetails(explores[0].querySelector('.tool-header'));
+  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 1);
+
+  send([
+    explore('explore-three', 'find web -type f', {
+      type: 'list_files',
+      path: 'web',
+    }, '2026-08-10T05:00:04.000Z'),
+    result('explore-three-result', 'explore-three', 'files',
+      '2026-08-10T05:00:05.000Z', { codexCommandKind: 'explore' }),
+  ]);
+
+  explores = Array.from(document.querySelectorAll('.codex-explore'));
+  assert.equal(explores.length, 3);
+  assert.equal(document.querySelectorAll('.codex-explore-group-hidden').length, 2);
+  assert.equal(explores[0].querySelector('.tool-desc').textContent, 'Search tool');
+  assert.equal(explores[0].querySelector('.codex-explore-group-count').textContent, '×3');
+});
+
+test('Codex realtime Ran group keeps a manual collapse as new commands arrive', () => {
+  reset();
+
+  send([
+    tool('ran-one-use', 'ran-one', 'echo one', '2026-08-10T05:10:00.000Z'),
+    tool('ran-two-use', 'ran-two', 'echo two', '2026-08-10T05:10:01.000Z'),
+  ]);
+  send([
+    result('ran-one-result', 'ran-one', 'one', '2026-08-10T05:10:02.000Z', {
+      codexCommandKind: 'ran',
+    }),
+    result('ran-two-result', 'ran-two', 'two', '2026-08-10T05:10:03.000Z', {
+      codexCommandKind: 'ran',
+    }),
+  ]);
+
+  let nodes = Array.from(document.querySelectorAll('.codex-ran'));
+  assert.equal(nodes.length, 2);
+  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 0);
+
+  window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
+  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 1);
+
+  send([
+    tool('ran-three-use', 'ran-three', 'echo three', '2026-08-10T05:10:04.000Z'),
+    result('ran-three-result', 'ran-three', 'three', '2026-08-10T05:10:05.000Z', {
+      codexCommandKind: 'ran',
+    }),
+  ]);
+
+  nodes = Array.from(document.querySelectorAll('.codex-ran'));
+  assert.equal(nodes.length, 3);
+  assert.equal(document.querySelectorAll('.tool-run-group-hidden').length, 2);
+  assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'echo one');
+  assert.equal(nodes[0].querySelector('.tool-run-group-count').textContent, '×3');
+});
+
 test('Codex WS keeps historical detail state and expands new realtime tools', () => {
   reset();
   const historicalUse = tool(
@@ -820,6 +917,66 @@ test('Codex startup recovery restores a wait missed during Bridge restart', asyn
   assert.match(waits[0].textContent, /Waited for background terminal/);
   assert.match(waits[0].textContent, /target=version/);
   assert.equal(document.querySelectorAll(`[data-tool-id="${commandId}"]`).length, 1);
+});
+
+test('Codex REST recovery keeps only the last wait in each uninterrupted run', async () => {
+  reset();
+
+  const wait = (suffix, processId, timestamp) => ({
+    uuid: `rest-wait-${suffix}`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: `rest-wait-${suffix}`,
+      name: 'WriteStdin',
+      input: { session_id: processId, chars: '' },
+    }],
+    timestamp,
+  });
+  apiResponse = {
+    messages: [
+      wait('one', 100, '2026-08-10T05:00:00.000Z'),
+      result('rest-wait-one-result', 'rest-wait-one',
+        'Process running with session ID 100', '2026-08-10T05:00:00.500Z', {
+          codexWait: 'waiting',
+          codexProcessId: '100',
+        }),
+      wait('two', 200, '2026-08-10T05:00:01.000Z'),
+      result('rest-wait-two-result', 'rest-wait-two',
+        'Process running with session ID 200', '2026-08-10T05:00:01.500Z', {
+          codexWait: 'waiting',
+          codexProcessId: '200',
+        }),
+      {
+        uuid: 'rest-status-text',
+        type: 'assistant',
+        content: [{ type: 'text', text: 'Continue querying' }],
+        timestamp: '2026-08-10T05:00:02.000Z',
+      },
+      wait('three', 300, '2026-08-10T05:00:03.000Z'),
+      result('rest-wait-three-result', 'rest-wait-three',
+        'Process running with session ID 300', '2026-08-10T05:00:03.500Z', {
+          codexWait: 'waiting',
+          codexProcessId: '300',
+        }),
+    ],
+    hasMore: false,
+  };
+
+  window.__wsTest.handleWsMessage({
+    action: 'bridge_recovery_complete',
+    deviceName: 'D',
+    count: apiResponse.messages.length,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const waits = Array.from(document.querySelectorAll('.codex-terminal-wait'));
+  assert.equal(waits.length, 2);
+  assert.deepEqual(
+    waits.map((node) => node.dataset.toolId),
+    ['rest-wait-two', 'rest-wait-three'],
+  );
+  assert.match(document.querySelector('.messages').textContent, /Continue querying/);
 });
 
 test('Codex WS keeps a foreground Ran before a later Explore completion', () => {

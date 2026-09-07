@@ -956,6 +956,8 @@ export class StreamingDomRenderer {
     this.document = options.document;
     this.getContainer = options.getContainer;
     this.findAnchor = options.findAnchor || function () { return null; };
+    this.canAppendWithoutAnchor =
+      options.canAppendWithoutAnchor || function () { return false; };
     this.renderMarkdown = options.renderMarkdown || function (element, text) {
       element.textContent = text;
     };
@@ -1055,6 +1057,12 @@ export class StreamingDomRenderer {
   insertTurn(container, turn, turnId) {
     var anchor = this.findAnchor(turnId);
     if (!anchor) {
+      if (this.canAppendWithoutAnchor(container, turnId)) {
+        var permissionPrompt = container.querySelector(':scope > #permission-prompt');
+        if (permissionPrompt) permissionPrompt.before(turn);
+        else container.appendChild(turn);
+        return true;
+      }
       return false;
     }
     var insertionPoint = anchor;

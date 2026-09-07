@@ -1790,6 +1790,7 @@ async function loadMessages(sessionId, preview, options) {
     requestAnimationFrame(function () {
       if (_navVersion !== myNav) return;
       content.scrollTop = content.scrollHeight;
+      maybeLoadOlderAndPrepend();
     });
     state.wsRenderedCount = state.wsAllMessages.length;
     showStats(state.wsMessageCount + ' messages | ' + latency + 'ms');
@@ -1934,14 +1935,14 @@ function scheduleScrollBtnPosition() {
     if (_scrollingToTop) { settleSoon(120); return; }
 
     // Load older messages when scrolling near top
-    if (content.scrollTop < 1200 && state.wsHasMore && !state.wsLoadingOlder) loadOlderAndPrepend();
+    maybeLoadOlderAndPrepend();
   });
 
   function settleSoon(ms) {
     clearTimeout(_scrollToTopTimer);
     _scrollToTopTimer = setTimeout(function () {
       _scrollingToTop = false;
-      if (content.scrollTop < 1200 && state.wsHasMore && !state.wsLoadingOlder) loadOlderAndPrepend();
+      maybeLoadOlderAndPrepend();
     }, ms);
   }
 
@@ -1959,6 +1960,18 @@ function scheduleScrollBtnPosition() {
 var _scrollingToTop = false, _scrollToTopTimer = null, _pinRo = null, _pinRoTimer = null;
 
 var _hasScrollAnchoring = window.CSS && CSS.supports && CSS.supports('overflow-anchor', 'auto');
+
+async function maybeLoadOlderAndPrepend() {
+  var content = document.getElementById('content');
+  if (!content
+    || content.scrollTop >= 1200
+    || !state.wsHasMore
+    || state.wsLoadingOlder) {
+    return false;
+  }
+  await loadOlderAndPrepend();
+  return true;
+}
 
 async function loadOlderAndPrepend() {
   if (!state.appState.session || state.appState.session === '__new__') return;
@@ -2092,6 +2105,7 @@ Object.assign(window, {
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
+  maybeLoadOlderAndPrepend,
 });
 
 if (window.__APEEK_TEST__) {

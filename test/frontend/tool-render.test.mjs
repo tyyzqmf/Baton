@@ -652,11 +652,15 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.equal(container.querySelectorAll('.codex-explore:not(.codex-explore-continuation)').length, 1);
   assert.equal(container.querySelectorAll('.codex-explore-group-start').length, 1);
   assert.equal(container.querySelectorAll('.codex-explore-group-connected').length, 0);
-  assert.deepEqual(Array.from(container.querySelectorAll('.tool-desc')).map((node) => node.textContent), [
+  assert.equal(container.querySelectorAll('.codex-explore-group-hidden').length, 2);
+  assert.equal(
+    container.querySelector('.codex-explore-group-start .tool-desc').textContent,
     'Search tool_use_id',
-    'Search CommandExecution',
-    'Read render.js',
-  ]);
+  );
+  assert.equal(
+    container.querySelector('.codex-explore-group-count').textContent,
+    '×3',
+  );
   assert.doesNotMatch(html, /wait-04/);
   const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
   assert.doesNotMatch(css, /\.tool-desc\.shell-command/);
@@ -667,8 +671,9 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.match(css, /\.codex-explore-group-start::after \{[\s\S]*bottom: calc\(100% - 16px\) !important;/);
   assert.match(css, /\.codex-explore-group-start\.codex-explore-group-connected::after \{[\s\S]*bottom: -2px !important;/);
   assert.match(css, /\.codex-explore-continuation\.codex-explore-group-connected::after \{[\s\S]*display: block !important;/);
-  assert.match(css, /\.codex-explore-group-start\.tool-details-collapsed \{ padding-bottom: 1px; \}/);
-  assert.match(css, /\.codex-explore-continuation\.tool-details-collapsed \{ padding-top: 1px; padding-bottom: 1px; \}/);
+  assert.doesNotMatch(css, /\.codex-explore-group-start\.tool-details-collapsed/);
+  assert.doesNotMatch(css, /\.codex-explore-continuation\.tool-details-collapsed/);
+  assert.match(css, /\.codex-explore-group-hidden \{ display: none; \}/);
   assert.match(css, /\.tool-header \{\s*display: flex; align-items: baseline;/);
   assert.match(css, /\.tool-detail-chevron \{\s*display: inline-block; align-self: center;/);
 });
@@ -759,14 +764,180 @@ test('Codex Explored title toggles every detail body in the group', () => {
   assert.equal(nodes.length, 2);
   assert.equal(nodes[0].dataset.toolDetailsGroup, nodes[1].dataset.toolDetailsGroup);
   assert.ok(nodes.every((node) => node.classList.contains('tool-details-collapsed')));
+  assert.equal(nodes[1].classList.contains('codex-explore-group-hidden'), true);
+  assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'Search tool');
+  assert.equal(nodes[0].querySelector('.codex-explore-group-count').textContent, '×2');
 
   window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
   assert.ok(nodes.every((node) => !node.classList.contains('tool-details-collapsed')));
+  assert.equal(nodes[1].classList.contains('codex-explore-group-hidden'), false);
+  assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'Search tool');
   assert.ok(nodes.every((node) =>
     !node.querySelector('.tool-body-content').classList.contains('open')));
 
   window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
   assert.ok(nodes.every((node) => node.classList.contains('tool-details-collapsed')));
+  assert.equal(nodes[1].classList.contains('codex-explore-group-hidden'), true);
+  assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'Search tool');
+
+  nodes[0].parentElement.insertAdjacentHTML('beforeend', window.renderSingleMessage(
+    explore('3', 'find web -type f', {
+      type: 'list_files',
+      path: 'web',
+    }),
+    [],
+    'codex',
+  ));
+  window.markCodexExploreGroups(container);
+
+  const updated = Array.from(container.querySelectorAll('.codex-explore'));
+  assert.equal(updated.length, 3);
+  assert.equal(container.querySelectorAll('.codex-explore-group-hidden').length, 2);
+  assert.equal(updated[0].querySelector('.tool-desc').textContent, 'Search tool');
+  assert.equal(updated[0].querySelector('.codex-explore-group-count').textContent, '×3');
+});
+
+test('Codex realtime Explored groups start expanded', () => {
+  const explore = (id, command, action) => ({
+    uuid: `realtime-explore-${id}`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: `realtime-explore-tool-${id}`,
+      name: 'Bash',
+      input: {
+        command,
+        codexCommandKind: 'explore',
+        codexCommandActions: [action],
+      },
+    }],
+  });
+  const messages = [
+    explore('one', 'rg -n tool web/js', {
+      type: 'search',
+      query: 'tool',
+      path: 'web/js',
+    }),
+    explore('two', "sed -n '1,80p' web/js/render.js", {
+      type: 'read',
+      name: 'render.js',
+      path: 'web/js/render.js',
+    }),
+  ];
+  document.body.innerHTML = `<div class="messages"><div class="assistant-turn">${
+    messages.map((message) =>
+      window.renderSingleMessage(message, messages, 'codex')).join('')
+  }</div></div>`;
+  const container = document.querySelector('.messages');
+
+  window.markCodexExploreGroups(container);
+
+  const nodes = Array.from(container.querySelectorAll('.codex-explore'));
+  assert.equal(nodes.length, 2);
+  assert.ok(nodes.every((node) =>
+    !node.classList.contains('tool-details-collapsed')));
+  assert.equal(container.querySelectorAll('.codex-explore-group-hidden').length, 0);
+  assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'Search tool');
+  assert.equal(nodes[0].querySelector('.codex-explore-group-count').textContent, '×2');
+});
+
+test('ToolRunGroup folds Codex Ran and Claude Bash history with the first summary', () => {
+  const bash = (runtime, id, command) => ({
+    uuid: `${runtime}-${id}`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: `${runtime}-${id}-tool`,
+      name: 'Bash',
+      input: {
+        command,
+        ...(runtime === 'codex' ? { codexCommandKind: 'ran' } : {}),
+      },
+    }],
+  });
+
+  for (const runtime of ['codex', 'claude']) {
+    const messages = [
+      bash(runtime, 'one', 'echo one'),
+      bash(runtime, 'two', 'echo two'),
+      bash(runtime, 'three', 'echo three'),
+    ];
+    document.body.innerHTML = `<div class="messages">${
+      window.renderMessages(messages, runtime)
+    }</div>`;
+    const container = document.querySelector('.messages');
+    if (runtime === 'codex') window.normalizeCodexTimeline(container);
+    else window.markToolRunGroups(container);
+
+    const selector = runtime === 'codex' ? '.codex-ran' : '.claude-bash';
+    const nodes = Array.from(container.querySelectorAll(selector));
+    assert.equal(nodes.length, 3);
+    assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 2);
+    assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'echo one');
+    assert.equal(nodes[0].querySelector('.tool-run-group-count').textContent, '×3');
+
+    window.toggleToolDetails(nodes[0].querySelector('.tool-header'));
+    assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 0);
+    assert.equal(nodes[0].querySelector('.tool-desc').textContent, 'echo one');
+  }
+});
+
+test('ToolRunGroup merges failed Ran commands and reflects the last state', () => {
+  const use = (id) => ({
+    uuid: `${id}-use`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id,
+      name: 'Bash',
+      input: { command: `echo ${id}`, codexCommandKind: 'ran' },
+    }],
+  });
+  const result = (id, failed = false) => ({
+    uuid: `${id}-result`,
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: id,
+      content: failed ? 'failed' : 'ok',
+      is_error: failed,
+      codexCommandKind: 'ran',
+      ...(failed ? { codexExitCode: 1 } : {}),
+    }],
+  });
+  let messages = [
+    use('one'),
+    result('one'),
+    use('failed'),
+    result('failed', true),
+    use('three'),
+    result('three'),
+  ];
+  document.body.innerHTML = `<div class="messages">${
+    window.renderMessages(messages, 'codex')
+  }</div>`;
+  const container = document.querySelector('.messages');
+
+  window.normalizeCodexTimeline(container);
+
+  let group = container.querySelector('.tool-run-group-start');
+  assert.equal(container.querySelectorAll('.codex-ran').length, 3);
+  assert.equal(container.querySelectorAll('.tool-run-group-hidden').length, 2);
+  assert.ok(group.classList.contains('tool-run-summary-normal'));
+  assert.ok(container.querySelector('[data-tool-id="failed"]').classList.contains('error'));
+
+  messages = [
+    use('one'),
+    result('one'),
+    use('failed'),
+    result('failed', true),
+  ];
+  document.body.innerHTML = `<div class="messages">${
+    window.renderMessages(messages, 'codex')
+  }</div>`;
+  window.normalizeCodexTimeline(document.querySelector('.messages'));
+  group = document.querySelector('.tool-run-group-start');
+  assert.ok(group.classList.contains('tool-run-summary-error'));
 });
 
 test('Codex Edit loads and renders the diff only after first expansion', async () => {
@@ -1289,6 +1460,9 @@ test('Codex Waited command expands from its truncated header', () => {
   window.toggleToolDesc(header);
   assert.equal(header.classList.contains('expanded-desc'), false);
   assert.equal(header.getAttribute('aria-expanded'), 'false');
+
+  const css = fs.readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.codex-terminal-wait \{ padding-bottom: 4px; \}/);
 });
 
 test('Codex background waits and completions preserve block order', () => {
@@ -1409,6 +1583,47 @@ test('Codex background waits and completions preserve block order', () => {
   assert.equal(container.querySelectorAll('.codex-terminal-wait').length, 2);
 });
 
+test('Codex keeps only the last consecutive terminal wait regardless of process', () => {
+  const wait = (id, sessionId) => ({
+    uuid: `message-${id}`,
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id,
+      name: 'WriteStdin',
+      input: { session_id: sessionId, chars: '' },
+    }],
+    timestamp: `2026-08-10T03:00:${id.slice(-1)}.000Z`,
+  });
+  const text = (value, suffix) => ({
+    uuid: `text-${suffix}`,
+    type: 'assistant',
+    content: [{ type: 'text', text: value }],
+    timestamp: `2026-08-10T03:01:0${suffix}.000Z`,
+  });
+  const messages = [
+    text('Now querying', '0'),
+    wait('wait-1', 100),
+    wait('wait-2', 200),
+    wait('wait-3', 300),
+    text('Continue querying', '1'),
+    wait('wait-4', 400),
+    wait('wait-5', 500),
+    text('Result: done', '2'),
+  ];
+
+  document.body.innerHTML = `<div class="messages">${window.renderMessages(messages, 'codex')}</div>`;
+  const container = document.querySelector('.messages');
+  window.normalizeCodexTimeline(container);
+
+  const waits = Array.from(container.querySelectorAll('.codex-terminal-wait'));
+  assert.equal(waits.length, 2);
+  assert.deepEqual(
+    waits.map((node) => node.dataset.toolId),
+    ['wait-3', 'wait-5'],
+  );
+});
+
 test('Codex non-empty terminal input remains visible', () => {
   const html = window.renderMessages([{
     uuid: 'message-input',
@@ -1428,8 +1643,8 @@ test('Codex non-empty terminal input remains visible', () => {
 
 test('Codex exploration grouping spans adjacent realtime assistant turns', () => {
   document.body.innerHTML = `<div class="messages">
-    <div class="assistant-turn"><div class="tl-item tool-node codex-explore"></div></div>
-    <div class="assistant-turn"><div class="tl-item tool-node codex-explore"></div></div>
+    <div class="assistant-turn"><div class="tl-item tool-node tool-details-collapsed codex-explore" data-tool-id="one"><div class="tool-header"><span class="tool-name">Explored</span><span class="tool-desc">First</span></div></div></div>
+    <div class="assistant-turn"><div class="tl-item tool-node tool-details-collapsed codex-explore" data-tool-id="two"><div class="tool-header"><span class="tool-name">Explored</span><span class="tool-desc">Second</span></div></div></div>
     <div class="assistant-turn"><div class="tl-item tool-node"></div></div>
     <div class="assistant-turn"><div class="tl-item tool-node codex-explore"></div></div>
   </div>`;
@@ -1443,5 +1658,7 @@ test('Codex exploration grouping spans adjacent realtime assistant turns', () =>
   assert.equal(explores[0].classList.contains('codex-explore-group-connected'), true);
   assert.equal(explores[1].classList.contains('codex-explore-continuation'), true);
   assert.equal(explores[1].classList.contains('codex-explore-group-connected'), true);
+  assert.equal(explores[1].classList.contains('codex-explore-group-hidden'), true);
+  assert.equal(explores[1].parentElement.classList.contains('codex-explore-row-hidden'), true);
   assert.equal(explores[2].classList.contains('codex-explore-continuation'), false);
 });

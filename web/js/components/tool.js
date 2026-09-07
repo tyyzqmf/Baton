@@ -559,6 +559,7 @@ import { state } from '../state.js';
   window.resetToolDetails = function () {
     diffSpecs.clear();
     diffInstances = new WeakMap();
+    window.resetToolRunGroupState?.();
   };
 
   window.afterToolDomMutation = function (root) {
@@ -864,6 +865,9 @@ import { state } from '../state.js';
         Promise.resolve(window.initializeToolDetails?.(member))
           .then(() => window.clampOverflow?.(member));
       }
+    }
+    if (groupId) {
+      window.setToolRunGroupCollapsed?.(groupId, collapsed, root);
     }
   };
 
