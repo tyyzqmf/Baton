@@ -24,6 +24,13 @@ import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
+import {
+  activateComposerDraft,
+  deactivateComposerDraft,
+  initComposerDrafts,
+} from './drafts/composer-draft.js';
+
+initComposerDrafts();
 
 var _navVersion = 0;
 var _listPrefetches = {};
@@ -733,6 +740,7 @@ function showInputBar(visible) {
     if (typeof initVoiceButton === 'function') initVoiceButton();
   }
   if (!visible) {
+    deactivateComposerDraft();
     if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
     if (typeof window.closeSlashPopup === 'function') window.closeSlashPopup();
     document.getElementById('scroll-bottom-btn').classList.remove('visible');
@@ -1589,6 +1597,7 @@ async function startNewSession(projectHash) {
   // route changes. Mark the new-session route before the async viewer load so
   // those stale events cannot re-show the session-only scroll indicator.
   state.appState.session = '__new__';
+  activateComposerDraft('__new__');
   state.stickBottom = true;
   document.getElementById('scroll-bottom-btn').classList.remove('visible');
   var myNav = ++_navVersion;
@@ -1680,6 +1689,8 @@ async function loadMessages(sessionId, preview, options) {
   state.rootSessionPreview = rootSessionPreview;
   state.activeThreadId = sessionId;
   state.activeThreadCanSend = options.canSend !== false;
+  if (state.activeThreadCanSend) activateComposerDraft(sessionId);
+  else deactivateComposerDraft();
   applyThreadInputState();
   if (!options.preserveThreads) {
     state.threadRequestVersion++;

@@ -1,5 +1,10 @@
 // Fit mobile layout to the visual viewport throughout keyboard transitions.
 import { state } from './state.js';
+import {
+  clearComposerDraft,
+  rekeyComposerDraft,
+  syncComposerDraft,
+} from './drafts/composer-draft.js';
 import { dedupeCodexUserMessages } from './message-dedup.js';
 import { FetchBarrierCoordinator } from './fetch-barrier.js';
 import {
@@ -893,6 +898,7 @@ function dispatchWsMessage(msg) {
         }];
         updateBreadcrumb();
         saveNav();
+        rekeyComposerDraft(msg.sessionId);
         state.wsRequestId = null;
         adoptNewSession(msg.sessionId);
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
@@ -2249,6 +2255,7 @@ function sendMessage() {
   renderStagedImages();
   input.value = '';
   input.style.height = 'auto';
+  clearComposerDraft();
   if (typeof stopDictation === 'function') stopDictation();  // sending ends dictation too
   if (!/Mobi|Android/i.test(navigator.userAgent)) input.focus();
 }
@@ -2261,21 +2268,23 @@ function handleCodexClientCommand(text, input) {
   var args = (match[2] || '').trim();
   if (command === 'new' || command === 'clear') {
     var project = state.appState.project;
-    if (project && window.startNewSession) window.startNewSession(project.hash);
     input.value = '';
     input.style.height = 'auto';
+    clearComposerDraft();
     updateSendBtn();
+    if (project && window.startNewSession) window.startNewSession(project.hash);
     return true;
   }
   if (command === 'resume') {
+    input.value = '';
+    input.style.height = 'auto';
+    clearComposerDraft();
+    updateSendBtn();
     if (args && window.loadMessages) {
       window.loadMessages(args.indexOf('codex:') === 0 ? args : 'codex:' + args, args);
     } else if (window.navigateUp) {
       window.navigateUp();
     }
-    input.value = '';
-    input.style.height = 'auto';
-    updateSendBtn();
     return true;
   }
   if (command === 'mention') {
@@ -2283,14 +2292,16 @@ function handleCodexClientCommand(text, input) {
     input.style.height = 'auto';
     input.style.height = input.scrollHeight + 'px';
     input.focus();
+    syncComposerDraft();
     updateSendBtn();
     return true;
   }
   if (command === 'exit') {
-    if (window.navigateUp) window.navigateUp();
     input.value = '';
     input.style.height = 'auto';
+    clearComposerDraft();
     updateSendBtn();
+    if (window.navigateUp) window.navigateUp();
     return true;
   }
 
@@ -2323,6 +2334,7 @@ function handleCodexClientCommand(text, input) {
   }
   input.value = '';
   input.style.height = 'auto';
+  clearComposerDraft();
   var original = input.placeholder;
   input.placeholder = response ? 'Copied last response' : 'No response to copy';
   setTimeout(function () { input.placeholder = original; }, 1600);

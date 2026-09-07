@@ -1,6 +1,10 @@
 // Runtime-aware command autocomplete. Codex commands preserve the TUI's
 // presentation order; Skills use the same "$name" composer syntax as Codex.
 import { state } from '../state.js';
+import {
+  clearComposerDraft,
+  syncComposerDraft,
+} from '../drafts/composer-draft.js';
 
 var CACHE_PREFIX = 'apeek_cmds:v6:';
 var CACHE_TTL_MS = 5 * 60 * 1000;
@@ -384,8 +388,10 @@ function runClientAction(item, input) {
     setInputValue(input, '@');
   } else if (item.clientAction === 'new' || item.clientAction === 'clear') {
     var project = state.appState.project;
+    clearInputValue(input);
     if (project && window.startNewSession) window.startNewSession(project.hash);
   } else if (item.clientAction === 'resume' || item.clientAction === 'exit') {
+    clearInputValue(input);
     if (window.navigateUp) window.navigateUp();
   } else {
     setInputValue(input, '/' + item.name);
@@ -399,6 +405,13 @@ function setInputValue(input, value) {
   input.style.height = 'auto';
   input.style.height = input.scrollHeight + 'px';
   input.focus();
+  syncComposerDraft();
+}
+
+function clearInputValue(input) {
+  input.value = '';
+  input.style.height = 'auto';
+  clearComposerDraft();
 }
 
 // --- wiring ---
