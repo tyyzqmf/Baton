@@ -133,14 +133,15 @@ test('a small user drag pauses bottom-follow until the user returns to the botto
     content.dispatchEvent(new window.Event('scroll'));
     assert.equal(scrollButton.classList.contains('visible'), true);
 
+    // On a real touch scroll, pointermove can observe the new scrollTop before
+    // the following scroll event. The first button update that hides it must
+    // therefore restore following directly.
     content.dispatchEvent(pointerEvent(window, 'pointerdown', 294));
-    content.dispatchEvent(pointerEvent(window, 'pointermove', 288));
     scrollTop = 770; // 50px from bottom: button hides, but not yet physical bottom.
+    content.dispatchEvent(pointerEvent(window, 'pointermove', 288));
     content.dispatchEvent(new window.Event('scroll'));
-    assert.equal(state.stickBottom, false);
-    assert.equal(scrollButton.classList.contains('visible'), false);
-    content.dispatchEvent(pointerEvent(window, 'pointerup', 288));
-    await new Promise(function (resolve) { setTimeout(resolve, 180); });
+    content.dispatchEvent(pointerEvent(window, 'pointermove', 282));
+    content.dispatchEvent(pointerEvent(window, 'pointerup', 282));
 
     assert.equal(state.stickBottom, true);
     assert.equal(scrollTop, 820);

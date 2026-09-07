@@ -1837,8 +1837,12 @@ function scheduleScrollBtnPosition() {
   }
 
   function updateScrollButton() {
+    var buttonWasVisible = btn.classList.contains('visible');
     var nearBottom = bottomDistance() < 100;
     btn.classList.toggle('visible', !nearBottom);
+    if (!state.stickBottom && buttonWasVisible && nearBottom) {
+      scrollToBottom();
+    }
     return !nearBottom;
   }
 
@@ -1860,10 +1864,16 @@ function scheduleScrollBtnPosition() {
 
   function interruptBottomFollow() {
     if (!state.appState.session || state.appState.session === '__new__') return;
-    if (!userScrollActive) resumeBottomWhenSettled = false;
+    var wasUserScrollActive = userScrollActive;
+    if (!wasUserScrollActive) {
+      resumeBottomWhenSettled = false;
+      state.stickBottom = false;
+    }
     userScrollActive = true;
-    state.stickBottom = false;
-    updateScrollButton();
+    var buttonIsVisible = updateScrollButton();
+    if (wasUserScrollActive && state.stickBottom && buttonIsVisible) {
+      state.stickBottom = false;
+    }
     settleUserScrollSoon();
   }
 
