@@ -3,6 +3,7 @@
 
 import { state } from './state.js';
 import { clearListCaches } from './list-cache.js';
+import { clearProjectDataCache } from './cache/project-data-cache.js';
 
 state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
 state.KEY = (function () {
@@ -27,6 +28,7 @@ function clearCachedAccountData() {
   localStorage.removeItem('baton-nav'); // legacy location
   sessionStorage.removeItem('baton-nav');
   clearListCaches();
+  clearProjectDataCache();
 }
 
 function setCredentials(key, server) {

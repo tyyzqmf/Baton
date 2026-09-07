@@ -1,0 +1,79 @@
+import { backButtonHtml } from '../components/back-button.js';
+import { setBreadcrumbItemsLoading } from '../components/breadcrumb.js';
+import { FOLDER_ICON_SVG } from '../components/icons.js';
+
+var page;
+var content;
+var header;
+var projectLabel;
+var onBack;
+var onFiles;
+var onRefresh;
+var returnFocus;
+
+function ensurePage() {
+  if (page) return;
+  page = document.createElement('section');
+  page.id = 'gitStatusPage';
+  page.className = 'git-status-page';
+  page.hidden = true;
+  page.innerHTML = '<div class="path-breadcrumb git-status-header">'
+    + backButtonHtml({ className: 'git-status-back' })
+    + '<div class="git-status-heading"><span class="git-status-title">Git Changes</span>'
+    + '<button class="path-breadcrumb-item git-status-project" type="button"'
+    + ' aria-label="Refresh Git changes"></button></div>'
+    + '<button class="workspace-switch" type="button" aria-label="Project files">'
+    + FOLDER_ICON_SVG + '</button></div>'
+    + '<div class="git-status-content"></div>';
+  document.body.appendChild(page);
+  header = page.querySelector('.git-status-header');
+  content = page.querySelector('.git-status-content');
+  projectLabel = page.querySelector('.git-status-project');
+  page.querySelector('.git-status-back').addEventListener('click', function () { onBack?.(); });
+  page.querySelector('.workspace-switch').addEventListener('click', function () { onFiles?.(); });
+  projectLabel.addEventListener('click', function () { onRefresh?.(); });
+  document.addEventListener('keydown', function (event) {
+    if (!page.hidden
+      && event.key === 'Escape'
+      && !document.querySelector('#gitDiffOverlay:not([hidden])')) {
+      onBack?.();
+    }
+  });
+}
+
+export function openGitPage(options) {
+  ensurePage();
+  if (page.hidden) returnFocus = document.activeElement;
+  onBack = options.onBack;
+  onFiles = options.onFiles;
+  onRefresh = options.onRefresh;
+  page.hidden = false;
+  window.attachScrollIndicator?.(content);
+}
+
+export function closeGitPage() {
+  if (!page) return;
+  setGitLoading(false);
+  page.hidden = true;
+  onBack = null;
+  onFiles = null;
+  onRefresh = null;
+  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  returnFocus = null;
+}
+
+export function renderGitHeader(projectName) {
+  ensurePage();
+  projectLabel.textContent = projectName || 'Project';
+}
+
+export function setGitLoading(value) {
+  ensurePage();
+  setBreadcrumbItemsLoading([projectLabel], !!value);
+  header.toggleAttribute('aria-busy', !!value);
+}
+
+export function gitContent() {
+  ensurePage();
+  return content;
+}

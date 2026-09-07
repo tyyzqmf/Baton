@@ -57,9 +57,14 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
     /cp "\$BRIDGE_DIR"\/\*\.mjs "\$BRIDGE_DIR\/package\.json" "\$BRIDGE_DIR\/package-lock\.json" "\$BRIDGE_STAGE\/"/,
   );
   assert.match(install, /cp -R "\$BRIDGE_DIR\/project" "\$BRIDGE_STAGE\/project"/);
+  assert.match(install, /-e "s#from '\.\.\/#from '\.\/#g"/);
   assert.match(
     install,
-    /sed "s#from '\.\.\/#from '\.\/#g" "\$BRIDGE_DIR\/project\/files\.mjs" > "\$BRIDGE_STAGE\/project-files\.mjs"/,
+    /-e "s#from '\.\/ws-frames\.mjs'#from '\.\/project\/ws-frames\.mjs'#g"/,
+  );
+  assert.match(
+    install,
+    /"\$BRIDGE_DIR\/project\/files\.mjs" > "\$BRIDGE_STAGE\/project-files\.mjs"/,
   );
   assert.match(install, /tar czf "\$BRIDGE_TAR" \*\.mjs project package\.json package-lock\.json/);
   assert.doesNotMatch(install, /cp\s+-r\s+"\$BRIDGE_DIR"/);

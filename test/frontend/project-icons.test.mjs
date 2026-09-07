@@ -21,7 +21,7 @@ test('project folder icon uses a compact square outline and shared icon source',
   assert.match(browser, /fileIconHtml\(entry\.name\)/);
   assert.match(
     app,
-    /topRight\.innerHTML = runtimeMark \+ filesButton[\s\S]*new-session-btn/,
+    /topRight\.innerHTML = gitButton \+ runtimeMark \+ filesButton[\s\S]*new-session-btn/,
   );
   assert.match(
     css,

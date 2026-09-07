@@ -14,7 +14,7 @@ test('file source and previews reuse the shared native edge-back layer', () => {
   assert.match(edgeBack, /gestureLayer\.navigateBack/);
   assert.match(viewer, /registerEdgeBackLayer\(\{[\s\S]*navigateBack: closeFileViewer,[\s\S]*'#fileOverlay'/);
   assert.match(viewer, /function openFile[\s\S]*_edgeBack\.activate\(\)/);
-  assert.match(viewer, /function closeFileViewer\(\) \{\s*_edgeBack\.deactivate\(\)/);
+  assert.match(viewer, /function closeFileViewer\(options\) \{[\s\S]*?_edgeBack\.deactivate\(\)/);
   assert.match(viewer, /function setFileViewMode\(mode\)/);
   assert.match(viewer, /loadingSpinner\(\{ label: 'Loading file' \}\)/);
   assert.doesNotMatch(viewer, /file-loading[^]*class="spinner"/);
@@ -54,8 +54,37 @@ test('project files use an independent full-screen layer and generic nested edge
     browser,
     /registerEdgeBackLayer\(\{[\s\S]*navigateBack: closeProjectFiles,[\s\S]*foregroundSelectors: \['#projectFilesPage'\],[\s\S]*foregroundZIndex: 900/,
   );
+  assert.match(browser, /underlaySelectors: function \(\) \{[\s\S]*return returnToGit \? \['#gitStatusPage'\] : \[\]/);
   assert.doesNotMatch(browser, /getElementById\('(?:content|breadcrumb)'\)/);
-  assert.match(browser, /if \(!state\.wsSessionId\) window\.disconnectWs\?\.\(\)/);
+  assert.match(
+    browser,
+    /if \(!keepWs && !state\.wsSessionId\) window\.disconnectWs\?\.\(\)/,
+  );
   assert.match(edgeBack, /foregroundZIndex: options\.foregroundZIndex/);
   assert.match(edgeBackCss, /z-index: var\(--edge-back-foreground-z, 301\) !important/);
+});
+
+test('Git status and Diff use two nested edge-back layers', () => {
+  const status = readFileSync(
+    new URL('../../web/js/git/status.js', import.meta.url),
+    'utf8',
+  );
+  const diff = readFileSync(
+    new URL('../../web/js/git/diff-viewer.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    status,
+    /registerEdgeBackLayer\(\{[\s\S]*navigateBack: closeGitStatus,[\s\S]*foregroundSelectors: \['#gitStatusPage'\],[\s\S]*foregroundZIndex: 900/,
+  );
+  assert.match(status, /underlaySelectors: function \(\) \{[\s\S]*return returnToFiles \? \['#projectFilesPage'\] : \[\]/);
+  assert.match(
+    diff,
+    /registerEdgeBackLayer\(\{[\s\S]*navigateBack: closeGitDiff,[\s\S]*foregroundSelectors: \['#gitDiffOverlay'\],[\s\S]*foregroundZIndex: 1001/,
+  );
+  const edgeBack = readFileSync(
+    new URL('../../web/js/edge-back.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(edgeBack, /\.path-breadcrumb, \.top-bar, \.git-diff-header/);
 });

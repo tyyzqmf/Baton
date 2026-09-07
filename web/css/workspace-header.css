@@ -1,0 +1,73 @@
+.workspace-switch {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8b949e;
+}
+.workspace-switch svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.workspace-switch svg.git-branch-icon {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+  stroke: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .git-status-header > .workspace-switch {
+    margin-right: 2px;
+  }
+}
+html.native-mobile .workspace-switch {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
+html.native-mobile .workspace-switch svg.git-branch-icon {
+  width: 22px;
+  height: 22px;
+}
+html.native-mobile .project-files-page-breadcrumb,
+html.native-mobile .git-status-header,
+html.native-mobile .git-diff-header {
+  padding-left: 2px;
+  padding-right: 2px;
+}
+html.native-mobile .project-files-page-breadcrumb > .back-button,
+html.native-mobile .git-status-header > .back-button,
+html.native-mobile .git-diff-header > .back-button {
+  width: 32px;
+  flex-basis: 32px;
+  margin-right: 8px;
+}
+html.native-mobile .project-files-page-breadcrumb > .back-button::before,
+html.native-mobile .git-status-header > .back-button::before,
+html.native-mobile .git-diff-header > .back-button::before {
+  left: -4px;
+  width: 36px;
+}
+html.native-mobile .project-files-page-breadcrumb > .back-button svg,
+html.native-mobile .git-status-header > .back-button svg,
+html.native-mobile .git-diff-header > .back-button svg {
+  transform: translateX(2px);
+}
+@media (orientation: landscape) {
+  html.native-mobile .project-files-page-breadcrumb,
+  html.native-mobile .git-status-header,
+  html.native-mobile .git-diff-header {
+    padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 2px);
+    padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 2px);
+  }
+}

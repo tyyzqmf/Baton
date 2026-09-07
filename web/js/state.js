@@ -20,6 +20,7 @@ export const state = {
   sessionThreads: [],
   threadRequestVersion: 0,
   projectFilesOpen: false,
+  gitStatusOpen: false,
 
   // ---- Batch-delete selection (app.js) ----
   selectMode: false,

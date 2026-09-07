@@ -1,4 +1,8 @@
 import { state } from '../state.js';
+import {
+  readProjectDataCache,
+  writeProjectDataCache,
+} from '../cache/project-data-cache.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { fileIconHtml } from '../components/file-icon.js';
 import { FOLDER_ICON_SVG } from '../components/icons.js';
@@ -18,10 +22,15 @@ import {
 
 var currentPath = '';
 var navigationVersion = 0;
+var returnToGit = false;
 var PROJECT_FILES_VIEW_KEY = 'baton-project-files-view';
+var directoryCache = new Map();
 var edgeBack = registerEdgeBackLayer({
   navigateBack: closeProjectFiles,
   foregroundSelectors: ['#projectFilesPage'],
+  underlaySelectors: function () {
+    return returnToGit ? ['#gitStatusPage'] : [];
+  },
   guardZIndex: 902,
   foregroundZIndex: 900,
 });
@@ -37,6 +46,57 @@ function escapeHtml(value) {
 
 function projectName() {
   return state.appState.project?.name || 'Project';
+}
+
+function directoryCacheKey(projectHash, path) {
+  return JSON.stringify([
+    state.SERVER,
+    state.appState.device || '',
+    projectHash,
+    path,
+  ]);
+}
+
+function cachedDirectory(projectHash, path) {
+  return directoryCache.get(directoryCacheKey(projectHash, path)) || null;
+}
+
+function persistentDirectoryFields(projectHash, path) {
+  return {
+    server: state.SERVER,
+    device: state.appState.device || '',
+    projectHash: projectHash,
+    type: 'files',
+    path: path,
+  };
+}
+
+function cacheDirectory(projectHash, path, entries, scrollTop, options) {
+  options = options || {};
+  var key = directoryCacheKey(projectHash, path);
+  directoryCache.set(key, {
+    entries: entries.slice(),
+    scrollTop: Math.max(0, scrollTop || 0),
+  });
+  if (options.persist !== false) {
+    writeProjectDataCache(
+      persistentDirectoryFields(projectHash, path),
+      { entries: entries },
+      { scrollTop: scrollTop },
+    );
+  }
+}
+
+function rememberDirectoryScroll() {
+  if (!state.projectFilesOpen || !state.appState.project) return;
+  var cached = cachedDirectory(state.appState.project.hash, currentPath);
+  if (!cached) return;
+  cached.scrollTop = projectFilesContent().scrollTop;
+  writeProjectDataCache(
+    persistentDirectoryFields(state.appState.project.hash, currentPath),
+    { entries: cached.entries },
+    { scrollTop: cached.scrollTop },
+  );
 }
 
 function saveProjectFilesView() {
@@ -107,49 +167,141 @@ function renderEntries(entries) {
   });
 }
 
-async function loadDirectory(version) {
+async function loadDirectory(version, options) {
+  options = options || {};
   var projectHash = state.appState.project?.hash || '';
+  var path = options.path == null ? currentPath : options.path;
   var entries = [];
   var cursor = '';
   do {
     var response = await requestProjectFiles('list', {
       projectHash: projectHash,
-      path: currentPath,
+      path: path,
       cursor: cursor,
     });
     if (!state.projectFilesOpen || version !== navigationVersion) return;
     entries = entries.concat(response.entries || []);
     cursor = response.nextCursor || '';
-    renderEntries(entries);
+    if (!options.deferRender) renderEntries(entries);
   } while (cursor);
+  if (options.deferRender
+    && state.projectFilesOpen
+    && version === navigationVersion) {
+    renderEntries(entries);
+  }
+  if (state.projectFilesOpen && version === navigationVersion) {
+    cacheDirectory(projectHash, path, entries, options.scrollTop);
+  }
+  return entries;
 }
 
 export async function openProjectFilesPath(path) {
   if (!state.appState.project) return;
+  rememberDirectoryScroll();
   currentPath = normalizeProjectPath(path);
+  var projectHash = state.appState.project.hash;
+  var cached = cachedDirectory(projectHash, currentPath);
   saveProjectFilesView();
   state.projectFilesOpen = true;
   edgeBack.activate();
   openProjectFilesPage({
     onBack: closeProjectFiles,
     onNavigate: openProjectFilesPath,
+    onGit: function () {
+      var returning = returnToGit;
+      returnToGit = false;
+      deactivateProjectFiles(true);
+      window.openGitStatusPage?.(returning ? {} : { returnToFiles: true });
+    },
   });
   navigationVersion++;
   var version = navigationVersion;
   renderProjectFilesBreadcrumb(projectBreadcrumbItems(projectName(), currentPath));
   setProjectFilesLoading(true);
   var content = projectFilesContent();
-  content.innerHTML = '';
-  content.scrollTop = 0;
-  await window.loadViewerLibs();
+  if (cached) {
+    renderEntries(cached.entries);
+    content.scrollTop = cached.scrollTop;
+  } else {
+    content.innerHTML = '';
+    content.scrollTop = 0;
+  }
+  var viewerPromise = window.loadViewerLibs();
+  if (!cached) {
+    var persisted = await readProjectDataCache(
+      persistentDirectoryFields(projectHash, currentPath),
+    );
+    if (!state.projectFilesOpen || version !== navigationVersion) return;
+    if (persisted?.data?.entries) {
+      cached = {
+        entries: persisted.data.entries,
+        scrollTop: persisted.scrollTop || 0,
+      };
+      cacheDirectory(
+        projectHash,
+        currentPath,
+        cached.entries,
+        cached.scrollTop,
+        { persist: false },
+      );
+      renderEntries(cached.entries);
+      content.scrollTop = cached.scrollTop;
+    }
+  }
+  await viewerPromise;
   if (!state.projectFilesOpen || version !== navigationVersion) return;
   window.connectWs();
   try {
-    await loadDirectory(version);
+    var entries = await loadDirectory(version, {
+      path: currentPath,
+      deferRender: !!cached,
+      scrollTop: cached?.scrollTop || 0,
+    });
+    if (cached && entries && state.projectFilesOpen && version === navigationVersion) {
+      content.scrollTop = Math.min(
+        cached.scrollTop,
+        Math.max(0, content.scrollHeight - content.clientHeight),
+      );
+      rememberDirectoryScroll();
+    }
   } catch (error) {
     if (!state.projectFilesOpen || version !== navigationVersion) return;
-    content.innerHTML = '<div class="empty">Unable to load files<br><br>'
-      + '<span class="project-files-error">' + escapeHtml(error.message) + '</span></div>';
+    if (!cached) {
+      content.innerHTML = '<div class="empty">Unable to load files<br><br>'
+        + '<span class="project-files-error">' + escapeHtml(error.message) + '</span></div>';
+    }
+  } finally {
+    if (state.projectFilesOpen && version === navigationVersion) {
+      setProjectFilesLoading(false);
+    }
+  }
+}
+
+export async function refreshProjectFiles() {
+  if (!state.projectFilesOpen) return false;
+  var path = currentPath;
+  var content = projectFilesContent();
+  var scrollTop = content.scrollTop;
+  var version = ++navigationVersion;
+  setProjectFilesLoading(true);
+  try {
+    await window.loadViewerLibs();
+    if (!state.projectFilesOpen || version !== navigationVersion) return false;
+    window.connectWs();
+    var entries = await loadDirectory(version, {
+      path: path,
+      deferRender: true,
+      scrollTop: scrollTop,
+    });
+    if (!entries || !state.projectFilesOpen || version !== navigationVersion) return false;
+    content.scrollTop = Math.min(
+      scrollTop,
+      Math.max(0, content.scrollHeight - content.clientHeight),
+    );
+    rememberDirectoryScroll();
+    return true;
+  } catch (error) {
+    return false;
   } finally {
     if (state.projectFilesOpen && version === navigationVersion) {
       setProjectFilesLoading(false);
@@ -158,23 +310,38 @@ export async function openProjectFilesPath(path) {
 }
 
 export function openProjectFiles() {
+  returnToGit = false;
   return openProjectFilesPath('');
 }
 
 export function closeProjectFiles() {
   if (!state.projectFilesOpen) return false;
-  deactivateProjectFiles();
+  var returning = returnToGit;
+  returnToGit = false;
+  deactivateProjectFiles(returning);
+  if (returning) window.openGitStatusPage?.();
   return true;
 }
 
-export function deactivateProjectFiles() {
+export function openProjectFilesFromGit() {
+  returnToGit = true;
+  return openProjectFilesPath('');
+}
+
+export function resumeProjectFilesFromGit() {
+  returnToGit = false;
+  return openProjectFilesPath(currentPath);
+}
+
+export function deactivateProjectFiles(keepWs) {
   if (!state.projectFilesOpen) return false;
   state.projectFilesOpen = false;
   clearProjectFilesView();
   navigationVersion++;
   edgeBack.deactivate();
   closeProjectFilesPage();
-  if (!state.wsSessionId) window.disconnectWs?.();
+  if (!keepWs) returnToGit = false;
+  if (!keepWs && !state.wsSessionId) window.disconnectWs?.();
   return true;
 }
 
@@ -185,6 +352,9 @@ export function projectFilesBack() {
 Object.assign(window, {
   openProjectFiles: openProjectFiles,
   openProjectFilesPath: openProjectFilesPath,
+  openProjectFilesFromGit: openProjectFilesFromGit,
+  resumeProjectFilesFromGit: resumeProjectFilesFromGit,
+  refreshProjectFiles: refreshProjectFiles,
   closeProjectFiles: closeProjectFiles,
   deactivateProjectFiles: deactivateProjectFiles,
   projectFilesBack: projectFilesBack,

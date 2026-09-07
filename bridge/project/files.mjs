@@ -4,13 +4,13 @@ import path from 'path';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { post } from '../http.mjs';
 import { projectHashToPath } from '../session.mjs';
+import { sendTextFrames } from './ws-frames.mjs';
 
 const FILE_MAX_BYTES = 5 * 1024 * 1024;
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 const INLINE_FRAME_LIMIT = Math.min(28_000, WS_FRAME_LIMIT - 3_000);
 const TEXT_WS_MAX_BYTES = 300 * 1024;
-const TEXT_CHUNK_CHARACTERS = 30_000;
 const DIRECTORY_PAGE_LIMIT = 200;
 const IMAGE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif',
@@ -164,52 +164,6 @@ function sendProgress(message, send, extra) {
   }));
 }
 
-function splitTextToFrames(text, envelope) {
-  if (!text) return [''];
-  const chunks = [];
-  let offset = 0;
-  while (offset < text.length) {
-    let end = Math.min(text.length, offset + TEXT_CHUNK_CHARACTERS);
-    let accepted = false;
-    while (end > offset) {
-      if (end < text.length) {
-        const code = text.charCodeAt(end - 1);
-        if (code >= 0xD800 && code <= 0xDBFF) end--;
-      }
-      const content = text.slice(offset, end);
-      const payload = {
-        ...envelope,
-        sequence: 9999,
-        content,
-        complete: false,
-      };
-      if (Buffer.byteLength(JSON.stringify(payload)) <= WS_FRAME_LIMIT) {
-        chunks.push(content);
-        offset = end;
-        accepted = true;
-        break;
-      }
-      end -= Math.min(1024, end - offset);
-    }
-    if (!accepted) {
-      throw new Error('file path metadata exceeds the WebSocket frame limit');
-    }
-  }
-  return chunks;
-}
-
-function sendTextChunks(metadata, buffer, send) {
-  const chunks = splitTextToFrames(buffer.toString('utf8'), metadata);
-  chunks.forEach((content, sequence) => {
-    send({
-      ...metadata,
-      sequence,
-      content,
-      complete: sequence === chunks.length - 1,
-    });
-  });
-}
-
 async function readProjectFile(message, context) {
   const {
     send,
@@ -275,7 +229,7 @@ async function readProjectFile(message, context) {
     image,
   };
   if (!image && !message.legacy && stat.size <= TEXT_WS_MAX_BYTES) {
-    sendTextChunks(metadata, buffer, send);
+    sendTextFrames(metadata, buffer.toString('utf8'), send);
     return;
   }
   if (!image && message.legacy) {

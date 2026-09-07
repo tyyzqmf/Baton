@@ -22,6 +22,34 @@ function refreshEdgeGuards() {
   edgeGuardRefreshers.forEach(function (refresh) { refresh(layer); });
 }
 
+function layerBackTarget(layer, clientY) {
+  for (const selector of layer?.foregroundSelectors || []) {
+    const root = document.querySelector(selector);
+    const button = root?.querySelector('.back-button');
+    const header = button?.closest('.path-breadcrumb, .top-bar, .git-diff-header');
+    if (!header) continue;
+    const rect = header.getBoundingClientRect();
+    return clientY >= rect.top && clientY <= rect.bottom
+      ? { button, header }
+      : null;
+  }
+  return null;
+}
+
+function passEdgeGuardTapThrough(edgeGuard, clientX, clientY) {
+  edgeGuard.style.pointerEvents = 'none';
+  const target = document.elementFromPoint?.(clientX, clientY);
+  edgeGuard.style.pointerEvents = '';
+  if (target && typeof target.click === 'function') target.click();
+}
+
+function layerUnderlaySelectors(layer) {
+  var selectors = typeof layer?.underlaySelectors === 'function'
+    ? layer.underlaySelectors()
+    : layer?.underlaySelectors;
+  return Array.isArray(selectors) ? selectors : [];
+}
+
 // Full-screen surfaces can reuse the same native edge-back gesture without
 // duplicating pointer logic. The most recently activated layer wins.
 export function registerEdgeBackLayer(options) {
@@ -30,6 +58,7 @@ export function registerEdgeBackLayer(options) {
     active: false,
     navigateBack: options.navigateBack,
     foregroundSelectors: options.foregroundSelectors || [],
+    underlaySelectors: options.underlaySelectors || [],
     guardZIndex: options.guardZIndex || 1001,
     foregroundZIndex: options.foregroundZIndex
       || Math.max(301, (options.guardZIndex || 1001) - 1),
@@ -214,6 +243,16 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   var settleTimer = null;
   var edgeGuard = null;
   var gestureLayer = null;
+  var guardBackButton = null;
+
+  function clearGuardBackButton(delay) {
+    var button = guardBackButton;
+    guardBackButton = null;
+    if (!button) return;
+    setTimeout(function () {
+      button.classList.remove('edge-back-tap-active');
+    }, delay || 0);
+  }
 
   function hasOpenOverlay() {
     var overlays = document.querySelectorAll('.modal-overlay, .mermaid-fs-overlay, .file-overlay, .img-overlay');
@@ -256,12 +295,43 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     return layer;
   }
 
+  function makeLayerUnderlay(selectors) {
+    var sources = selectors.map(function (selector) {
+      return document.querySelector(selector);
+    }).filter(Boolean);
+    if (!sources.length) return null;
+
+    var layer = document.createElement('div');
+    layer.className = 'edge-back-underlay';
+    sources.forEach(function (source) {
+      var clone = source.cloneNode(true);
+      var sourceNodes = [source].concat(Array.from(source.querySelectorAll('*')));
+      var cloneNodes = [clone].concat(Array.from(clone.querySelectorAll('*')));
+      clone.hidden = false;
+      clone.removeAttribute('hidden');
+      clone.style.position = 'absolute';
+      clone.style.inset = '0';
+      clone.style.zIndex = 'auto';
+      clone.style.transform = 'none';
+      removeIds(clone);
+      layer.appendChild(clone);
+      sourceNodes.forEach(function (node, index) {
+        if (!cloneNodes[index]) return;
+        cloneNodes[index].scrollTop = node.scrollTop;
+        cloneNodes[index].scrollLeft = node.scrollLeft;
+      });
+    });
+    document.body.insertBefore(layer, document.body.firstChild);
+    return layer;
+  }
+
   function setOffset(px) {
     document.body.style.setProperty('--edge-back-x', px + 'px');
   }
 
-  function beginSwipe(snapshot, dx, selectors) {
+  function beginSwipe(snapshot, dx, selectors, underlaySelectors) {
     if (snapshot) underlay = makeUnderlay(snapshot);
+    else if (underlaySelectors?.length) underlay = makeLayerUnderlay(underlaySelectors);
     selectors = selectors || options.foregroundSelectors || [
       'body > .top-bar',
       '#breadcrumb',
@@ -305,6 +375,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     document.body.style.removeProperty('--edge-back-x');
     settling = false;
     gestureLayer = null;
+    clearGuardBackButton();
   }
 
   function settleSwipe(complete) {
@@ -343,6 +414,9 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     hierarchyOnly = false;
     startX = e.clientX;
     startY = e.clientY;
+    var backTarget = layerBackTarget(gestureLayer, startY);
+    guardBackButton = backTarget?.button || null;
+    guardBackButton?.classList.add('edge-back-tap-active');
     lastX = e.clientX;
     lastTime = e.timeStamp;
     velocityX = 0;
@@ -357,9 +431,15 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
       return;
     }
     if (!claimed && dx > 10 && dx >= Math.abs(dy)) {
+      clearGuardBackButton();
       if (gestureLayer) {
         claimed = true;
-        beginSwipe(null, dx, gestureLayer.foregroundSelectors);
+        beginSwipe(
+          null,
+          dx,
+          gestureLayer.foregroundSelectors,
+          layerUnderlaySelectors(gestureLayer),
+        );
       } else {
         var previous = navigationStack[navigationStack.length - 1];
         var snapshot = !selectionOnly && previous && previous.snapshot;
@@ -393,7 +473,11 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     var dx = e.clientX - startX;
     var dy = e.clientY - startY;
     tracking = false;
-    if (!claimed) return;
+    if (!claimed) {
+      clearGuardBackButton(100);
+      return;
+    }
+    clearGuardBackButton();
     e.preventDefault();
     suppressClickUntil = performance.now() + 400;
     if (selectionOnly || hierarchyOnly) {
@@ -408,13 +492,27 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   document.addEventListener('pointercancel', function () {
     var wasTracking = tracking;
     tracking = false;
+    clearGuardBackButton();
     if (wasTracking && claimed && !selectionOnly && !hierarchyOnly) settleSwipe(false);
   }, true);
 
   document.addEventListener('click', function (e) {
-    if (e.target !== edgeGuard || performance.now() >= suppressClickUntil) return;
+    if (e.target !== edgeGuard) return;
+    if (performance.now() < suppressClickUntil) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    var layer = activeEdgeBackLayer();
     e.preventDefault();
     e.stopPropagation();
+    if (layer
+      && typeof layer.navigateBack === 'function'
+      && layerBackTarget(layer, startY)) {
+      layer.navigateBack();
+      return;
+    }
+    passEdgeGuardTapThrough(edgeGuard, startX, startY);
   }, true);
 
   edgeGuard = document.createElement('div');

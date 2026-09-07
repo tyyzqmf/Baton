@@ -94,6 +94,7 @@ const _turnPayloadRecovery = new Set();
 const CLIENT_TURN_ACK_LIMIT = 5000;
 let _claudeHookServer = null;
 let _projectFilesModule = null;
+let _gitStatusModule = null;
 
 async function projectFilesModule() {
   if (!_projectFilesModule) {
@@ -101,6 +102,13 @@ async function projectFilesModule() {
       .catch(() => import('./project-files.mjs'));
   }
   return _projectFilesModule;
+}
+
+async function gitStatusModule() {
+  if (!_gitStatusModule) {
+    _gitStatusModule = import('./project/git.mjs');
+  }
+  return _gitStatusModule;
 }
 
 // Idle pooled processes do not block terminal-driven status updates.
@@ -728,6 +736,9 @@ async function handleMessage(msg) {
       break;
     case 'project_files':
       await (await projectFilesModule()).handleProjectFilesMessage(msg, { send: wsSend });
+      break;
+    case 'git_status':
+      await (await gitStatusModule()).handleGitStatusMessage(msg, { send: wsSend });
       break;
     case 'delete_files':
       handleDeleteFiles(msg);

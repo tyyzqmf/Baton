@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Project data cache smoke test</title>
+<pre id="result">running</pre>
+<script type="module">
+import {
+  createProjectDataCache,
+} from '../../../web/js/cache/project-data-cache-core.js';
+import {
+  createIndexedDbProjectCacheBackend,
+} from '../../../web/js/cache/project-data-cache-idb.js';
+
+const result = document.getElementById('result');
+const dbName = `agentpeek-project-cache-test-${Date.now()}`;
+let backend = createIndexedDbProjectCacheBackend({ dbName });
+let clock = 0;
+let cache = createProjectDataCache(backend, {
+  maxRecords: 4,
+  evictCount: 2,
+  now: () => ++clock,
+  schedule: queueMicrotask,
+});
+
+function fields(projectHash, type = 'files', path = '') {
+  return {
+    server: 'https://server.test',
+    device: 'Browser',
+    projectHash,
+    type,
+    path,
+  };
+}
+
+function equal(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label}: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
+  }
+}
+
+try {
+  await cache.put(fields('a'), { entries: ['root'] }, { scrollTop: 14 });
+  await cache.put(fields('a', 'files', 'src'), { entries: ['src'] });
+  await cache.put(fields('a', 'git'), { groups: { changes: [] } });
+  equal(await cache.count(), 3, 'insert count');
+  equal((await cache.get(fields('a'))).data, { entries: ['root'] }, 'read');
+
+  await cache.put(fields('a'), { entries: ['updated'] }, { scrollTop: 21 });
+  equal(await cache.count(), 3, 'overwrite count');
+  equal((await cache.get(fields('a'))).scrollTop, 21, 'overwrite value');
+
+  await backend.close();
+  backend = createIndexedDbProjectCacheBackend({ dbName });
+  cache = createProjectDataCache(backend, {
+    maxRecords: 4,
+    evictCount: 2,
+    now: () => ++clock,
+    schedule: queueMicrotask,
+  });
+  equal((await cache.get(fields('a'))).data, { entries: ['updated'] }, 'reopen read');
+
+  equal(await cache.delete(fields('a', 'files', 'src')), true, 'single delete');
+  equal(await cache.get(fields('a', 'files', 'src')), null, 'single delete read');
+  equal(await cache.deleteProject(fields('a')), 2, 'project delete');
+  equal(await cache.count(), 0, 'project delete count');
+
+  for (let index = 0; index < 5; index++) {
+    await cache.put(fields('lru', 'files', `dir-${index}`), { index });
+  }
+  await cache.flushMaintenance();
+  equal(await cache.count(), 3, 'lru count');
+  equal(await cache.get(fields('lru', 'files', 'dir-0')), null, 'lru oldest 0');
+  equal(await cache.get(fields('lru', 'files', 'dir-1')), null, 'lru oldest 1');
+  equal((await cache.get(fields('lru', 'files', 'dir-2'))).data, { index: 2 }, 'lru survivor');
+
+  await cache.clear();
+  equal(await cache.count(), 0, 'clear');
+  result.textContent = JSON.stringify({ ok: true });
+  document.body.dataset.status = 'passed';
+} catch (error) {
+  result.textContent = JSON.stringify({
+    ok: false,
+    error: error.stack || error.message || String(error),
+  });
+  document.body.dataset.status = 'failed';
+} finally {
+  await backend.deleteDatabase();
+}
+</script>

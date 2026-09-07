@@ -3,8 +3,8 @@ import { state } from '../state.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { loadingSpinner } from '../components/loading.js';
 import { requestProjectFiles } from './rpc.js';
+import { renderSourceView } from './source-view.js';
 
-var HIGHLIGHT_MAX = 300 * 1024;
 var FILE_REQ_TIMEOUT = 20000;
 
 function esc(s) {
@@ -158,13 +158,16 @@ function buildPreviewHtml(html, basePath) {
   return Promise.all(jobs).then(function () { return '<!DOCTYPE html>' + doc.documentElement.outerHTML; });
 }
 
-function closeFileViewer() {
+function closeFileViewer(options) {
+  options = options || {};
+  var wasOpen = overlay()?.style.display === 'flex';
   _edgeBack.deactivate();
   var o = overlay();
   if (o) o.style.display = 'none';
   _current = null;
   _fileRequestToken++;
   showTabs(false);
+  if (wasOpen && options.refresh !== false) window.refreshProjectFiles?.();
 }
 
 async function sendFileRequest(absPath, line, snippet, retriesLeft) {
@@ -239,33 +242,6 @@ function snippetForTool(toolId) {
   return '';
 }
 
-// Resolve which lines to highlight, in priority order:
-//   1. content match (snippet's lines located in the latest file, trimmed compare)
-//   2. line hint ("226-280" / "312")
-//   3. null → caller shows from the top
-// Returns {from,to} (1-based) or null.
-function resolveRange(fileText, lineHint, snippet) {
-  if (snippet) {
-    var snip = snippet.replace(/\s+$/, '').split('\n').map(function (l) { return l.trim(); });
-    while (snip.length && !snip[snip.length - 1]) snip.pop();
-    if (snip.length && snip[0]) {
-      var file = fileText.split('\n');
-      var first = snip[0], last = file.length - snip.length;
-      for (var i = 0; i <= last; i++) {
-        if (file[i].trim() !== first) continue;
-        var ok = true;
-        for (var k = 1; k < snip.length; k++) {
-          if (file[i + k].trim() !== snip[k]) { ok = false; break; }
-        }
-        if (ok) return { from: i + 1, to: i + snip.length };
-      }
-    }
-  }
-  var m = String(lineHint || '').match(/(\d+)(?:-(\d+))?/);
-  if (m) return { from: +m[1], to: m[2] ? +m[2] : +m[1] };
-  return null;
-}
-
 function render(absPath, text, truncated, lineHint, snippet) {
   _current = { path: absPath, text: text, truncated: truncated, line: lineHint, snippet: snippet };
   showTabs(isPreviewable(absPath));
@@ -273,38 +249,15 @@ function render(absPath, text, truncated, lineHint, snippet) {
 }
 
 function renderSource(absPath, text, truncated, lineHint, snippet) {
-  var lang = window.detectLang ? window.detectLang(absPath) : null;
-  var code;
-  if (text.length > HIGHLIGHT_MAX || typeof window.hljs === 'undefined') {
-    code = esc(text);
-  } else if (lang) {
-    try { code = window.hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; }
-    catch (e) { code = esc(text); }
-  } else {
-    try { code = window.hljs.highlightAuto(text).value; }
-    catch (e) { code = esc(text); }
-  }
-  var n = code.split('\n').length;
-  var range = resolveRange(text, lineHint, snippet);
-  var nums = Array.from({ length: n }, function (_, i) {
-    var ln = i + 1;
-    var hit = range && ln >= range.from && ln <= range.to;
-    return hit ? '<span class="file-line-hl">' + ln + '</span>' : String(ln);
-  }).join('\n');
-  var warn = truncated ? '<div class="file-truncated">⚠ Truncated — showing first 5 MB</div>' : '';
-  setBody(
-    '<div class="file-code"><pre class="file-lineno">' + nums + '</pre>' +
-    '<pre class="file-content"><code>' + code + '</code></pre></div>' + warn
-  );
-  if (range) scrollToLine(range.from, n);
-}
-
-function scrollToLine(line, total) {
   var body = document.getElementById('fileOverlayBody');
-  var content = body && body.querySelector('.file-content');
-  if (!body || !content) return;
-  var y = content.offsetTop + (content.scrollHeight / total) * (line - 1);
-  body.scrollTop = Math.max(0, y - body.clientHeight / 2);
+  if (!body) return;
+  renderSourceView(body, {
+    path: absPath,
+    text: text,
+    truncated: truncated,
+    lineHint: lineHint,
+    snippet: snippet,
+  });
 }
 
 // Presigned GET URLs expire in 1h; cache them ~50min (10min safety margin) so
@@ -335,7 +288,7 @@ function handleFileResponse(msg, line, snippet) {
     var ext = (msg.key.split('.').pop() || '').toLowerCase();
     var mime = ext === 'svg' ? 'image/svg+xml' : 'image/' + (ext === 'jpg' ? 'jpeg' : ext);
     return window.getImageDataUrl(msg.key, mime).then(function (dataUrl) {
-      closeFileViewer();
+      closeFileViewer({ refresh: false });
       if (window.viewImage) window.viewImage(dataUrl);
     }).catch(function () {
       setBody('<div class="file-error">Failed to download image.</div>');

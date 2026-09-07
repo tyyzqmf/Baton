@@ -1,0 +1,77 @@
+const HIGHLIGHT_MAX = 300 * 1024;
+
+function esc(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function resolveSourceRange(fileText, lineHint, snippet) {
+  if (snippet) {
+    var snippetLines = snippet.replace(/\s+$/, '').split('\n').map(function (line) {
+      return line.trim();
+    });
+    while (snippetLines.length && !snippetLines[snippetLines.length - 1]) snippetLines.pop();
+    if (snippetLines.length && snippetLines[0]) {
+      var fileLines = fileText.split('\n');
+      var last = fileLines.length - snippetLines.length;
+      for (var index = 0; index <= last; index++) {
+        if (fileLines[index].trim() !== snippetLines[0]) continue;
+        var matches = true;
+        for (var offset = 1; offset < snippetLines.length; offset++) {
+          if (fileLines[index + offset].trim() !== snippetLines[offset]) {
+            matches = false;
+            break;
+          }
+        }
+        if (matches) return { from: index + 1, to: index + snippetLines.length };
+      }
+    }
+  }
+  var range = String(lineHint || '').match(/(\d+)(?:-(\d+))?/);
+  if (!range) return null;
+  return {
+    from: Number(range[1]),
+    to: range[2] ? Number(range[2]) : Number(range[1]),
+  };
+}
+
+function highlightedSource(path, text) {
+  var language = window.detectLang ? window.detectLang(path) : null;
+  if (text.length > HIGHLIGHT_MAX || typeof window.hljs === 'undefined') return esc(text);
+  try {
+    return language
+      ? window.hljs.highlight(text, { language: language, ignoreIllegals: true }).value
+      : window.hljs.highlightAuto(text).value;
+  } catch (error) {
+    return esc(text);
+  }
+}
+
+function scrollToSourceLine(container, line, total) {
+  var content = container.querySelector('.file-content');
+  if (!content || !total) return;
+  var y = content.offsetTop + (content.scrollHeight / total) * (line - 1);
+  container.scrollTop = Math.max(0, y - container.clientHeight / 2);
+}
+
+export function renderSourceView(container, options) {
+  options = options || {};
+  var text = String(options.text == null ? '' : options.text);
+  var code = highlightedSource(options.path || '', text);
+  var lineCount = code.split('\n').length;
+  var range = resolveSourceRange(text, options.lineHint, options.snippet);
+  var lineNumbers = Array.from({ length: lineCount }, function (_, index) {
+    var line = index + 1;
+    var highlighted = range && line >= range.from && line <= range.to;
+    return highlighted ? '<span class="file-line-hl">' + line + '</span>' : String(line);
+  }).join('\n');
+  var warning = options.truncated
+    ? '<div class="file-truncated">⚠ Truncated — showing first 5 MB</div>'
+    : '';
+  container.innerHTML = '<div class="file-code"><pre class="file-lineno">'
+    + lineNumbers + '</pre><pre class="file-content"><code>' + code
+    + '</code></pre></div>' + warning;
+  if (range) scrollToSourceLine(container, range.from, lineCount);
+}

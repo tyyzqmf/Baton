@@ -1,4 +1,5 @@
 import { createBreadcrumb } from '../components/breadcrumb.js';
+import { GIT_BRANCH_ICON_SVG } from '../components/icons.js';
 
 var page = null;
 var content = null;
@@ -6,6 +7,7 @@ var breadcrumb = null;
 var breadcrumbComponent = null;
 var onBack = null;
 var onNavigate = null;
+var onGit = null;
 var returnFocus = null;
 
 function ensurePage() {
@@ -42,6 +44,7 @@ export function openProjectFilesPage(options) {
   if (page.hidden) returnFocus = document.activeElement;
   onBack = options.onBack;
   onNavigate = options.onNavigate;
+  onGit = options.onGit;
   page.hidden = false;
   if (window.attachScrollIndicator) window.attachScrollIndicator(content);
 }
@@ -53,6 +56,7 @@ export function closeProjectFilesPage() {
   page.hidden = true;
   onBack = null;
   onNavigate = null;
+  onGit = null;
   if (returnFocus && returnFocus.isConnected) {
     returnFocus.focus({ preventScroll: true });
   }
@@ -62,6 +66,15 @@ export function closeProjectFilesPage() {
 export function renderProjectFilesBreadcrumb(items) {
   ensurePage();
   breadcrumbComponent.render(items);
+  if (onGit) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'workspace-switch';
+    button.setAttribute('aria-label', 'Git changes');
+    button.innerHTML = GIT_BRANCH_ICON_SVG;
+    button.addEventListener('click', onGit);
+    breadcrumb.appendChild(button);
+  }
 }
 
 export function setProjectFilesLoading(loading) {

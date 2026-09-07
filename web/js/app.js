@@ -21,7 +21,9 @@ import {
   preferredNewSessionRuntime,
 } from './new-session-runtime.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
-import { FOLDER_ICON_SVG } from './components/icons.js';
+import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG } from './components/icons.js';
+import { shouldRestoreGitStatus } from './git/view-state.js';
+import { deleteProjectDataCache } from './cache/project-data-cache.js';
 
 var _navVersion = 0;
 var _listPrefetches = {};
@@ -35,6 +37,7 @@ var _agentThreadsCache = new Map();
 var AGENT_THREADS_CACHE_LIMIT = 32;
 var _navPointer = null;
 var _breadcrumbUpdatePending = false;
+var _gitStatusModulePromise = null;
 
 // Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
 if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
@@ -42,6 +45,18 @@ if (typeof window.updateSpinner !== 'function') window.updateSpinner = function 
 
 function osName(os) {
   return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown';
+}
+
+function openGitStatusPage(options) {
+  if (!_gitStatusModulePromise) {
+    _gitStatusModulePromise = import('./git/status.js').catch(function (error) {
+      _gitStatusModulePromise = null;
+      throw error;
+    });
+  }
+  return _gitStatusModulePromise.then(function (module) {
+    module.openGitStatus(options);
+  });
 }
 
 function timeAgo(iso) {
@@ -269,7 +284,8 @@ function shortSessionId(sessionId, nativeId, runtime) {
 function runtimeIcon(sessionId, runtime) {
   var value = sessionRuntime(sessionId, runtime);
   var label = value === 'codex' ? 'Codex' : 'Claude Code';
-  return '<span class="runtime-mark" role="img" aria-label="' + label + '" title="' + label + '">'
+  return '<span class="runtime-mark' + (value === 'codex' ? ' runtime-mark-codex' : '')
+    + '" role="img" aria-label="' + label + '" title="' + label + '">'
     + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
 }
 
@@ -423,7 +439,11 @@ function updateBreadcrumb() {
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
-    topRight.innerHTML = runtimeMark + filesButton
+    var gitButton = state.appState.session && state.appState.session !== '__new__'
+      ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
+        + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
+      : '';
+    topRight.innerHTML = gitButton + runtimeMark + filesButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
@@ -1141,6 +1161,7 @@ function rememberDevices(data) {
 
 async function loadDevices() {
   window.deactivateProjectFiles?.();
+  window.deactivateGitStatus?.();
   resetSessionThreads();
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
@@ -1182,6 +1203,13 @@ function refreshForegroundView() {
   if (document.visibilityState !== 'visible') return Promise.resolve(false);
   if (_foregroundRefresh) return _foregroundRefresh;
   _foregroundRefresh = Promise.resolve().then(function () {
+    if (state.gitStatusOpen) {
+      var jobs = [window.refreshGitStatus?.()];
+      if (state.appState.session && typeof window.resumeSessionForeground === 'function') {
+        jobs.push(window.resumeSessionForeground());
+      }
+      return Promise.all(jobs);
+    }
     if (state.appState.session) {
       return typeof window.resumeSessionForeground === 'function'
         ? window.resumeSessionForeground()
@@ -1241,6 +1269,7 @@ function renderProjects(device, data) {
 
 async function loadProjects(device) {
   window.deactivateProjectFiles?.();
+  window.deactivateGitStatus?.();
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1334,6 +1363,7 @@ function renderSessions(device, projectHash, data) {
 
 async function loadSessions(device, projectHash, projectName) {
   window.deactivateProjectFiles?.();
+  window.deactivateGitStatus?.();
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1488,6 +1518,13 @@ async function submitDelete() {
   }
   closeDeleteModal();
   if (isProject) {
+    await Promise.all(ids.map(function (projectHash) {
+      return deleteProjectDataCache({
+        server: state.SERVER,
+        device: device,
+        projectHash: projectHash,
+      });
+    }));
     invalidatePagedList('projects:' + device);
     ids.forEach(function (projectHash) {
       invalidatePagedList('sessions:' + device + ':' + projectHash);
@@ -1544,6 +1581,7 @@ function toggleNewSessionRuntime() {
 
 async function startNewSession(projectHash) {
   window.deactivateProjectFiles?.();
+  window.deactivateGitStatus?.();
   resetSessionThreads();
   deactivateList();
   document.body.classList.remove('browse-view');
@@ -1621,6 +1659,7 @@ async function startNewSession(projectHash) {
 // ---- Messages ----
 async function loadMessages(sessionId, preview, options) {
   window.deactivateProjectFiles?.();
+  window.deactivateGitStatus?.();
   options = options || {};
   var rootSessionId = options.rootSessionId || sessionId;
   var rootSessionPreview = options.rootSessionPreview
@@ -1658,6 +1697,7 @@ async function loadMessages(sessionId, preview, options) {
   state._titleTier = preview ? 3 : 0;
   state.wsRunning = false;
   updateBreadcrumb();
+  if (options.restoreGitStatus) openGitStatusPage({ restoring: true });
   // Skeleton before any await — loadViewerLibs can take a while and the old page would linger.
   var content = document.getElementById('content');
   content.innerHTML = skeletonMessages();
@@ -1970,7 +2010,13 @@ async function loadOlderAndPrepend() {
     var hashProjectName = seg[1] ? seg[1].split('-').pop() || seg[1] : '';
     if (seg.length >= 3 && seg[2] && seg[2] !== '__new__') {
       state.appState = { device: seg[0], project: { hash: seg[1], name: hashProjectName }, session: null, sessionPreview: '' };
-      loadMessages(seg[2], '');
+      loadMessages(seg[2], '', {
+        restoreGitStatus: shouldRestoreGitStatus({
+          device: seg[0],
+          project: { hash: seg[1] },
+          session: seg[2],
+        }),
+      });
     } else if (seg.length >= 2 && seg[1]) { loadSessions(seg[0], seg[1], hashProjectName); }
     else if (seg.length >= 1 && seg[0]) { loadProjects(seg[0]); }
     else { loadDevices(); }
@@ -1979,7 +2025,13 @@ async function loadOlderAndPrepend() {
       var s = JSON.parse(nav);
       if (s.session && s.session !== '__new__') {
         state.appState = { device: s.device, project: s.project, session: null, sessionPreview: '' };
-        loadMessages(s.session, s.sessionPreview);
+        loadMessages(s.session, s.sessionPreview, {
+          restoreGitStatus: shouldRestoreGitStatus({
+            device: s.device,
+            project: s.project,
+            session: s.session,
+          }),
+        });
       } else if (s.project) {
         loadSessions(s.device, s.project.hash, s.project.name);
       } else if (s.device) {
@@ -2017,6 +2069,7 @@ Object.assign(window, {
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions, toggleRecentAgents,
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
+  openGitStatusPage,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
 });
 
