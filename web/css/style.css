@@ -1125,7 +1125,6 @@ html.native-mobile #top-right.syncing .new-session-btn::after { left: 9px; top: 
 html.native-mobile #top-right .runtime-mark,
 html.native-mobile #top-right .runtime-icon { width: 24px; height: 24px; }
 html.native-mobile #top-right .runtime-mark { flex-basis: 24px; }
-html.native-mobile #top-right .runtime-icon { transform: translateX(3px); }
 html.native-mobile #top-right .runtime-mark-codex::before {
   width: 24px; height: 24px; transform: translate(-50%, -50%);
 }
