@@ -176,11 +176,13 @@ findInsertBefore(container, timestamp):
 
 `state.stickBottom` records user intent separately from physical scroll position. Opening a Session,
 sending a message, or tapping the bottom button enables it. A real pointer drag or wheel gesture
-disables it immediately, even before the viewport moves beyond the bottom-button threshold. Ordinary
-`scroll` events update button state but never overwrite follow intent. Once the bottom button has
-been visible, manually scrolling back until it hides arms bottom-follow; after the user gesture and
-momentum settle, the view snaps to the physical bottom and following resumes. A small drag that never
-shows the button remains paused.
+disables it immediately at the start of that user-scroll sequence, even before the viewport moves
+beyond the bottom-button threshold. Once the bottom button has been visible, the first shared button
+state update that hides it immediately restores follow intent and scrolls to the physical bottom.
+This transition is detected inside `updateScrollButton()`, so it works whether `pointermove` or
+`scroll` observes the new position first. Further movement in the same gesture cannot disable the
+newly restored follow while the button remains hidden; reversing far enough to show the button
+disables it again. A small drag that never shows the button remains paused.
 
 Live insertions synchronously set `scrollTop = scrollHeight` only while that flag is true. A
 `ResizeObserver` bound to the current `.messages` container maintains the same invariant when OUT,
