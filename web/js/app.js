@@ -734,7 +734,9 @@ function switchAgentThread(sessionId) {
 
 function showInputBar(visible) {
   var bar = document.getElementById('input-bar');
+  var scrollButton = document.getElementById('scroll-bottom-btn');
   bar.style.display = visible ? 'flex' : 'none';
+  scrollButton.style.display = visible ? '' : 'none';
   if (visible) {
     applyThreadInputState();
     if (typeof initVoiceButton === 'function') initVoiceButton();
@@ -1849,6 +1851,10 @@ function scheduleScrollBtnPosition() {
   }
 
   function updateScrollButton() {
+    if (!state.appState.session || state.appState.session === '__new__') {
+      btn.classList.remove('visible');
+      return false;
+    }
     var buttonWasVisible = btn.classList.contains('visible');
     var nearBottom = bottomDistance() < 100;
     btn.classList.toggle('visible', !nearBottom);

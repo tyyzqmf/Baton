@@ -147,6 +147,20 @@ test('a small user drag pauses bottom-follow until the user returns to the botto
     assert.equal(scrollTop, 820);
     assert.equal(scrollButton.classList.contains('visible'), false);
 
+    scrollHeight = 1400;
+    scrollTop = 700;
+    state.stickBottom = true;
+    content.dispatchEvent(pointerEvent(window, 'pointerdown', 282));
+    content.dispatchEvent(pointerEvent(window, 'pointermove', 270));
+    content.dispatchEvent(pointerEvent(window, 'pointerup', 270));
+    assert.equal(scrollButton.classList.contains('visible'), true);
+
+    state.appState.session = null;
+    scrollButton.classList.remove('visible');
+    await new Promise(function (resolve) { setTimeout(resolve, 180); });
+
+    assert.equal(scrollButton.classList.contains('visible'), false);
+
   } finally {
     await vite.close();
     dom.window.close();

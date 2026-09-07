@@ -2472,7 +2472,8 @@ function interruptSession() {
     );
 
     el.style.height = 'auto';
-    el.style.height = el.scrollHeight + 'px';
+    var measuredHeight = el.scrollHeight;
+    if (measuredHeight > 0) el.style.height = measuredHeight + 'px';
 
     if (!preserveScroll) return;
     var restoreScroll = function () {

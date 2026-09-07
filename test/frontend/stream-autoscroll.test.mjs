@@ -179,6 +179,23 @@ test('typing preserves message scroll without refreshing the streaming spinner',
   assert.equal(spinnerUpdates, 0);
 });
 
+test('hidden composer measurement does not collapse the textarea to zero pixels', (t) => {
+  resetSession(h, { sessionId: 'codex:hidden-composer-height' });
+  const input = h.document.getElementById('msg-input');
+  Object.defineProperty(input, 'scrollHeight', {
+    configurable: true,
+    get: () => 0,
+  });
+  t.after(() => {
+    delete input.scrollHeight;
+  });
+
+  input.style.height = '0px';
+  input.dispatchEvent(new h.window.Event('input'));
+
+  assert.equal(input.style.height, 'auto');
+});
+
 test('first outside tap dismisses the keyboard without activating expandable content', async () => {
   resetSession(h, { sessionId: 'codex:keyboard-tap-guard' });
   const input = h.document.getElementById('msg-input');
