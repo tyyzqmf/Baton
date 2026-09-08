@@ -5,6 +5,7 @@ import {
   clearComposerDraft,
   syncComposerDraft,
 } from '../drafts/composer-draft.js';
+import { currentProjectHash } from '../project/project-hash.js';
 
 var CACHE_PREFIX = 'apeek_cmds:v6:';
 var CACHE_TTL_MS = 5 * 60 * 1000;
@@ -29,8 +30,7 @@ function esc(s) {
 }
 
 function projectHash() {
-  var project = state.appState.project;
-  return state.wsProjectHash || (project && project.hash) || '';
+  return currentProjectHash();
 }
 
 function runtime() {
