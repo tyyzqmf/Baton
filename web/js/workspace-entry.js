@@ -8,5 +8,5 @@ const workspace = createWorkspaceHome({
 });
 window.__renderWorkspace = workspace.render;
 if (window.__workspaceData && document.body.classList.contains('workspace-home')) {
-  workspace.render(window.__workspaceData.active, window.__workspaceData.devices);
+  workspace.render(window.__workspaceData.active, window.__workspaceData.devices, window.__workspaceData.refreshId);
 }

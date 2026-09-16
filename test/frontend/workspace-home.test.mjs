@@ -31,6 +31,9 @@ const group = (device = 'mac', hash = 'baton', count = 9, overrides = {}) => ({
 });
 const overview = (groups = [group('mac'), group('linux')]) => ({ projects: groups, hasMore: false, nextCursor: null });
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+const pointer = (h, target, type, overrides = {}) => target.dispatchEvent(new h.dom.window.PointerEvent(type, {
+  bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, ...overrides,
+}));
 
 function harness(request = async () => ({ projects: [], hasMore: false }), saved, stored = {}) {
   const dom = new JSDOM('<body class="workspace-home"><div id="content"></div></body>', { url: 'https://test/index.html', pretendToBeVisual: true });
@@ -101,6 +104,118 @@ test('project data and expanded sessions render from persistent cache before the
     h.close();
     h = harness(() => new Promise(() => {}), updated.saved, updated.stored);
     assert.equal(h.doc.querySelector('[data-device=mac].wh-session .wh-row-title').textContent, 'Updated title');
+  } finally { h.close(); }
+});
+
+test('background project refresh preserves a pressed session through pointerup and click', async () => {
+  let resolve;
+  let refresh = false;
+  const h = harness(() => refresh ? new Promise(done => { resolve = done; }) : Promise.resolve(overview([group('mac', 'baton', 1)])));
+  try {
+    h.click('mode', 'project');
+    await tick();
+    h.click('project', JSON.stringify(['mac', 'baton']));
+    refresh = true;
+    h.workspace.render(active, devices);
+    const row = h.doc.querySelector('.wh-session');
+    pointer(h, row, 'pointerdown');
+    resolve(overview([group('mac', 'baton', 1, {
+      sessionPage: { sessions: [session('mac-first0', { preview: 'Fresh title' })], hasMore: false, nextCursor: null },
+    })]));
+    await tick();
+    assert.equal(row.isConnected, true, 'API completion must not remove the pressed link');
+    assert.notEqual(row.querySelector('.wh-row-title').textContent, 'Fresh title');
+    pointer(h, row, 'pointerup');
+    await tick();
+    assert.equal(row.isConnected, true, 'keep the link until the subsequent click is delivered');
+    let clicked = false;
+    h.doc.getElementById('content').addEventListener('click', event => {
+      event.preventDefault();
+      clicked = event.target.closest('.wh-session') === row;
+    }, { once: true });
+    row.click();
+    assert.equal(clicked, true);
+    await tick();
+    assert.equal(h.doc.querySelector('.wh-row-title').textContent, 'Fresh title');
+  } finally { h.close(); }
+});
+
+test('a deferred refresh cannot overwrite navigation triggered by the protected click', async () => {
+  const h = harness();
+  try {
+    const row = h.doc.querySelector('.wh-session');
+    pointer(h, row, 'pointerdown', { pointerType: 'touch' });
+    h.workspace.render({ sessions: [session('fresh')], recentSessions: [] }, devices);
+    assert.equal(row.isConnected, true);
+    h.doc.getElementById('content').addEventListener('click', event => {
+      event.preventDefault();
+      h.doc.body.classList.remove('workspace-home');
+      h.doc.getElementById('content').innerHTML = '<div class="next-page">Destination</div>';
+    }, { once: true });
+    pointer(h, row, 'pointerup', { pointerType: 'touch' });
+    row.click();
+    await tick();
+    assert.equal(h.doc.querySelector('.next-page').textContent, 'Destination');
+    assert.equal(h.doc.querySelector('.wh-workspace'), null);
+  } finally { h.close(); }
+});
+
+test('pointer cancellation and window blur release deferred home paints', async () => {
+  for (const end of ['pointercancel', 'blur']) {
+    const h = harness();
+    try {
+      const row = h.doc.querySelector('.wh-session');
+      pointer(h, row, 'pointerdown', { pointerType: 'touch' });
+      h.workspace.render({ sessions: [session('fresh')], recentSessions: [] }, devices);
+      assert.equal(row.isConnected, true);
+      if (end === 'blur') h.dom.window.dispatchEvent(new h.dom.window.Event('blur'));
+      else pointer(h, row, end, { pointerType: 'touch' });
+      await tick();
+      assert.equal(h.doc.querySelector('.wh-session').dataset.sid, 'fresh');
+    } finally { h.close(); }
+  }
+});
+
+test('disposed workspaces do not flush a queued pointer-protected paint', async () => {
+  const h = harness();
+  try {
+    const row = h.doc.querySelector('.wh-session');
+    pointer(h, row, 'pointerdown');
+    h.workspace.render({ sessions: [session('fresh')], recentSessions: [] }, devices);
+    assert.equal(row.isConnected, true);
+    pointer(h, row, 'pointerup');
+    h.workspace.dispose();
+    await tick();
+    assert.equal(row.isConnected, true);
+  } finally { h.close(); }
+});
+
+test('a protected tab click applies its action immediately instead of replaying a deferred old view', async () => {
+  const h = harness();
+  try {
+    const tab = h.doc.querySelector('[data-wh=mode][data-value=device]');
+    pointer(h, tab, 'pointerdown');
+    h.workspace.render({ sessions: [session('fresh')], recentSessions: [] }, devices);
+    assert.equal(tab.isConnected, true);
+    pointer(h, tab, 'pointerup');
+    tab.click();
+    assert.equal(h.doc.querySelector('.file-tab.active').dataset.value, 'device');
+    await tick();
+    assert.equal(h.doc.querySelector('.file-tab.active').dataset.value, 'device');
+    assert.equal(h.doc.querySelector('.wh-session'), null);
+  } finally { h.close(); }
+});
+
+test('pointerup without a click eventually releases a deferred refresh', async () => {
+  const h = harness();
+  try {
+    const row = h.doc.querySelector('.wh-session');
+    pointer(h, row, 'pointerdown');
+    h.workspace.render({ sessions: [session('fresh')], recentSessions: [] }, devices);
+    pointer(h, h.doc.body, 'pointerup');
+    assert.equal(row.isConnected, true);
+    await new Promise(resolve => h.dom.window.setTimeout(resolve, 550));
+    assert.equal(h.doc.querySelector('.wh-session').dataset.sid, 'fresh');
   } finally { h.close(); }
 });
 

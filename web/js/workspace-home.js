@@ -77,8 +77,13 @@ export function createWorkspaceHome({ window: win, request, onRender = () => {} 
   };
   let data = { active: { sessions: [], recentSessions: [] }, devices: { devices: [] } };
   let version = 0;
+  let homeRefreshId;
   let disposed = false;
   let pendingScroll = ui.scroll || null;
+  let pressed = null;
+  let pointerTimer = null;
+  let paintTimer = null;
+  let deferredPaint = null;
   // Loaded groups own their pages; opening many groups must not evict the catalog or each other.
   const pages = createListPageStore(Infinity);
   const catalog = createListPageStore(1);
@@ -275,10 +280,18 @@ export function createWorkspaceHome({ window: win, request, onRender = () => {} 
       + (entry?.hasMore && !errors.has(PROJECT_CATALOG_KEY) ? `<div class="wh-footer"><button type="button" class="text-btn" data-wh="more-projects" ${entry.loading || refreshes.has(PROJECT_CATALOG_KEY) || fetchedVersion.get(PROJECT_CATALOG_KEY) !== version ? 'disabled' : ''}>加载更多项目 ↓</button></div>` : '');
   }
 
-  function paint({ restoreScroll = false } = {}) {
-    if (!visible()) return;
+  function paint(options = {}) {
+    if (!visible()) { deferredPaint = null; return; }
     const content = doc.getElementById('content');
     if (!content) return;
+    if (pressed?.target.isConnected && content.contains(pressed.target)) {
+      deferredPaint = options;
+      return;
+    }
+    deferredPaint = null;
+    win.clearTimeout(paintTimer);
+    paintTimer = null;
+    const { restoreScroll = false } = options;
     const previousScroll = content.scrollTop;
     const focused = content.contains(doc.activeElement) ? doc.activeElement : null;
     const focusKey = focused?.dataset.wh;
@@ -406,12 +419,15 @@ export function createWorkspaceHome({ window: win, request, onRender = () => {} 
     }
   }
 
-  function render(active, deviceData) {
+  function render(active, deviceData, refreshId) {
     if (account === undefined) account = accountScope();
     data = { active: active || {}, devices: deviceData || {} };
-    version++;
-    errors.clear();
-    refreshes.clear();
+    if (refreshId === undefined || refreshId !== homeRefreshId) {
+      homeRefreshId = refreshId;
+      version++;
+      errors.clear();
+      refreshes.clear();
+    }
     restoreProjectCache();
     save();
     paint({ restoreScroll: true });
@@ -425,6 +441,7 @@ export function createWorkspaceHome({ window: win, request, onRender = () => {} 
     const action = target.dataset.wh;
     const value = target.dataset.value;
     event.preventDefault();
+    if (pressed?.target === target) releasePointer();
     if (action === 'more-projects') {
       fetchProjects(!!catalog.peek(PROJECT_CATALOG_KEY)?.loaded && fetchedVersion.get(PROJECT_CATALOG_KEY) === version);
       return;
@@ -460,7 +477,42 @@ export function createWorkspaceHome({ window: win, request, onRender = () => {} 
   function cancelScrollRestore(event) {
     if (visible() && event.target.closest?.('#content')) pendingScroll = null;
   }
+  function releasePointer() {
+    pressed = null;
+    win.clearTimeout(pointerTimer);
+    pointerTimer = null;
+    if (deferredPaint && paintTimer === null) {
+      // Flush after click dispatch and link activation, never between pointerup and click.
+      paintTimer = win.setTimeout(() => {
+        paintTimer = null;
+        if (deferredPaint) paint(deferredPaint);
+      }, 0);
+    }
+  }
+  function pointerDown(event) {
+    const target = event.target.closest?.('.wh-workspace a, .wh-workspace button');
+    if (!target || !visible() || event.isPrimary === false || event.button > 0) return;
+    win.clearTimeout(pointerTimer);
+    pointerTimer = null;
+    pressed = { id: event.pointerId, target };
+  }
+  function pointerEnd(event) {
+    if (!pressed || pressed.id !== event.pointerId) return;
+    if (event.type === 'pointercancel') releasePointer();
+    else {
+      win.clearTimeout(pointerTimer);
+      pointerTimer = win.setTimeout(releasePointer, 500);
+    }
+  }
+  function clickEnd(event) {
+    if (pressed?.target.contains(event.target)) releasePointer();
+  }
   doc.addEventListener('click', click);
+  doc.addEventListener('click', clickEnd);
+  doc.addEventListener('pointerdown', pointerDown, true);
+  doc.addEventListener('pointerup', pointerEnd, true);
+  doc.addEventListener('pointercancel', pointerEnd, true);
+  win.addEventListener('blur', releasePointer);
   doc.addEventListener('scroll', scroll, true);
   doc.addEventListener('pointerdown', cancelScrollRestore, { passive: true });
   doc.addEventListener('wheel', cancelScrollRestore, { passive: true });
@@ -469,7 +521,16 @@ export function createWorkspaceHome({ window: win, request, onRender = () => {} 
     dispose() {
       disposed = true;
       version++;
+      win.clearTimeout(pointerTimer);
+      win.clearTimeout(paintTimer);
+      pressed = null;
+      deferredPaint = null;
       doc.removeEventListener('click', click);
+      doc.removeEventListener('click', clickEnd);
+      doc.removeEventListener('pointerdown', pointerDown, true);
+      doc.removeEventListener('pointerup', pointerEnd, true);
+      doc.removeEventListener('pointercancel', pointerEnd, true);
+      win.removeEventListener('blur', releasePointer);
       doc.removeEventListener('scroll', scroll, true);
       doc.removeEventListener('pointerdown', cancelScrollRestore);
       doc.removeEventListener('wheel', cancelScrollRestore);

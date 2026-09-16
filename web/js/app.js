@@ -1177,8 +1177,9 @@ async function loadDevices() {
   resetSessionThreads();
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
+  var homeRun = wasHome ? window.__homeLoadPromise : null;
   prepareNavigation({ device: null, project: null, session: null });
-  var myNav = ++_navVersion;
+  var myNav = homeRun ? _navVersion : ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: null, project: null, session: null, sessionPreview: '' };
   markCurrentRoute(state.appState);
@@ -1190,9 +1191,9 @@ async function loadDevices() {
 
   // The inline shell starts the cold-load run before app.js arrives. Reuse it
   // instead of launching a second request/render pipeline.
-  if (window.__homeLoadPromise && wasHome) {
+  if (homeRun) {
     window.__preload = null;
-    return window.__homeLoadPromise.then(function (fresh) {
+    return homeRun.then(function (fresh) {
       if (_navVersion !== myNav || !fresh || !fresh[1]) return;
       rememberDevices(fresh[1]);
     });
