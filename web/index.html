@@ -67,6 +67,7 @@
   body.browse-view #content{scrollbar-gutter:stable}
 </style>
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/workspace-home.css">
 <!-- Inline shell: auth guard + parallel fetch (devices + active-sessions) + first paint.
      Runs before entry-index.js so the network request flies out at HTML parse time.
      entry-index.js loads in parallel (browser default for type=module) and takes over interactivity. -->
@@ -161,28 +162,13 @@
     check();
   }
 
-  function timeAgo(iso) {
-    var d = Date.now() - new Date(iso).getTime();
-    if (d < 60000) return 'just now';
-    if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
-    if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
-    return Math.floor(d / 86400000) + 'd ago';
-  }
-  function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
-  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
-  function runtimeIcon(s) {
-    var runtime = String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
-    var label = runtime === 'codex' ? 'Codex' : 'Claude Code';
-    return '<span class="runtime-mark' + (runtime === 'codex' ? ' runtime-mark-codex' : '') + '" role="img" aria-label="' + label + '" title="' + label + '">'
-      + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
-  }
-
   function bindHomeNavigation(content) {
     if (content.__homeNavBound) return;
     content.__homeNavBound = true;
     content.addEventListener('click', function (e) {
       var t = e.target.closest('[data-nav]');
-      if (!t) return;
+      if (!t || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button > 0) return;
+      e.preventDefault();
       var act = t.dataset.nav;
       var run = function () {
         if (act === 'device' && typeof window.loadProjects === 'function') window.loadProjects(t.dataset.name);
@@ -193,6 +179,8 @@
     });
   }
 
+  window.__bindHomeNavigation = bindHomeNavigation;
+
   function restoreReturningHomePreview() {
     if (!window.__returningHome) return false;
     if (window.__homePreviewRestored) return true;
@@ -202,6 +190,10 @@
       snapshot = JSON.parse(sessionStorage.getItem('baton-page-preview') || 'null');
     } catch (e) {}
     if (!snapshot || typeof snapshot.contentHtml !== 'string') return false;
+    if ((snapshot.topBarHtml || '').includes('top-home-button')) {
+      sessionStorage.removeItem('baton-page-preview');
+      return false;
+    }
 
     var topBar = document.querySelector('body > .top-bar');
     var breadcrumb = document.getElementById('breadcrumb');
@@ -211,6 +203,11 @@
     topBar.innerHTML = snapshot.topBarHtml || '';
     breadcrumb.innerHTML = snapshot.breadcrumbHtml || '';
     breadcrumb.style.display = snapshot.breadcrumbDisplay || 'none';
+    document.body.classList.toggle('workspace-home', snapshot.contentHtml.indexOf('wh-workspace') >= 0);
+    if (document.body.classList.contains('workspace-home')) {
+      var cachedHome = readCache();
+      if (cachedHome) window.__workspaceData = { active: cachedHome.active, devices: cachedHome.devices };
+    }
     content.innerHTML = snapshot.contentHtml;
     content.scrollTop = snapshot.scrollTop || 0;
     sessionStorage.removeItem('baton-page-preview');
@@ -226,122 +223,32 @@
   function renderInline(activeData, devData) {
     var content = document.getElementById('content');
     if (!content) return;
-    var devs = (devData && devData.devices) || [];
-    var deviceDisplayNames = {};
-    devs.forEach(function (device) {
-      deviceDisplayNames[device.deviceName] = device.deviceDisplayName || device.deviceName;
+    window.__workspaceData = { active: activeData, devices: devData };
+    window.__deviceDisplayNames = {};
+    ((devData && devData.devices) || []).forEach(function (device) {
+      window.__deviceDisplayNames[device.deviceName] = device.deviceDisplayName || device.deviceName;
     });
-    window.__deviceDisplayNames = deviceDisplayNames;
-    var displayDeviceName = function (deviceName) {
-      return deviceDisplayNames[deviceName] || deviceName;
-    };
-    var html = '';
-    var actives = (activeData && activeData.sessions) || [];
-    if (actives.length) {
-      var activeCollapsible = actives.length > 10;
-      var activeCollapsed = activeCollapsible && sessionStorage.getItem('apeek_activeCollapsed') === '1';
-      var activeChevron = '<svg class="collapse-arrow" width="12" height="12" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
-      html += '<div class="section-title' + (activeCollapsible ? ' collapsible' + (activeCollapsed ? '' : ' expanded') : '') + '"' + (activeCollapsible ? ' onclick="toggleActiveSessions()"' : '') + '>Active Sessions (' + actives.length + ')' + (activeCollapsible ? ' ' + activeChevron : '') + '</div>';
-      html += '<div id="active-section" class="active-grid" style="' + (activeCollapsed ? 'display:none' : '') + '">';
-      html += actives.map(function (s) {
-        var agentCount = Math.max(0, Number(s.agentCount) || 0);
-        var agentBadge = s.isAgent && !agentCount ? '<span class="badge agent">Agent</span>' : '';
-        var childAgentsBadge = agentCount ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>' : '';
-        var displayStatus = s.status;
-        var statusLabel = displayStatus === 'running' ? 'Running' : displayStatus === 'needs_input' ? 'Needs input' : 'Done';
-        var statusClass = displayStatus === 'running' ? 'running' : displayStatus === 'needs_input' ? 'idle' : 'stopped';
-        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-        var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
-        return '<div class="active-card ' + esc(statusClass) + '"'
-          + ' data-nav="active"'
-          + ' data-sid="' + esc(s.sessionId) + '"'
-          + ' data-preview="' + esc(s.preview || '') + '"'
-          + ' data-device="' + esc(s.deviceName) + '"'
-          + ' data-phash="' + esc(s.projectHash) + '"'
-          + ' data-pname="' + esc(s.projectName) + '"'
-          + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + childAgentsBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span>' + runtimeIcon(s) + '</span></div>'
-          + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
-          + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
-          + '</div>';
-      }).join('');
-      html += '</div>';
-    }
-    var recentSessions = (activeData && activeData.recentSessions) || [];
-    if (recentSessions.length) {
-      var raCollapsed = localStorage.getItem('apeek_raCollapsed') !== '0';
-      var chevron = '<svg class="collapse-arrow" width="12" height="12" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>';
-      html += '<div id="recent-agents-section">';
-      html += '<div class="section-title collapsible' + (raCollapsed ? '' : ' expanded') + '" onclick="toggleRecentAgents()">Completed Sessions (' + recentSessions.length + ') ' + chevron + '</div>';
-      html += '<div class="active-grid" id="recent-agents-grid" style="' + (raCollapsed ? 'display:none' : '') + '">';
-      html += recentSessions.map(function (s) {
-        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-        var agentCount = Math.max(0, Number(s.agentCount) || 0);
-        var agentBadge = s.isAgent && !agentCount ? '<span class="badge agent">Agent</span>' : '';
-        var childAgentsBadge = agentCount ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>' : '';
-        return '<div class="active-card stopped" data-nav="active"'
-          + ' data-sid="' + esc(s.sessionId) + '"'
-          + ' data-preview="' + esc(s.preview || '') + '"'
-          + ' data-device="' + esc(s.deviceName) + '"'
-          + ' data-phash="' + esc(s.projectHash) + '"'
-          + ' data-pname="' + esc(s.projectName) + '"'
-          + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + childAgentsBadge + '<span class="badge stopped">Done</span>' + runtimeIcon(s) + '</span></div>'
-          + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
-          + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
-          + '</div>';
-      }).join('');
-      html += '</div></div>';
-    }
-    if (devs.length) {
-      html += '<div class="section-title">Devices (' + devs.length + ')</div>';
-      html += '<div id="devices-section" class="list">';
-      html += devs.map(function (d) {
-        var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
-        var dotClass = d.online ? 'online' : 'offline';
-        return '<div class="item device-item" data-nav="device" data-name="' + esc(d.deviceName) + '">'
-          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
-          + '</div>';
-      }).join('');
-      html += '</div>';
-    }
-    if (!html) html = '<div class="empty">No devices yet</div>';
-    content.innerHTML = html;
-    if (window.__returningHome) document.body.classList.add('ready');
+    document.body.classList.add('workspace-home');
+    if (window.__renderWorkspace) window.__renderWorkspace(activeData, devData);
+    else renderSkeleton(true);
     bindHomeNavigation(content);
-
-    // Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
     if (typeof window.loadViewerLibs === 'function') setTimeout(window.loadViewerLibs, 1500);
     else window.__preheatViewer = true;
-
     window.__inlineRendered = true;
     markFirstWebFrameReady();
   }
 
-  // First-frame skeleton mirrors the final content geometry. Once it has painted,
-  // the native overlay fades to this animated Web skeleton.
-  function skelCard() {
-    return '<div class="active-card skeleton-card">'
-      + '<div class="card-header"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="card-title"><span class="skel skel-w80 skel-h14"></span></div>'
-      + '<div class="card-bottom"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
-      + '</div>';
-  }
-  function skelItem() {
-    return '<div class="item device-item skeleton-item skeleton-item-device">'
-      + '<div class="item-top"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="item-bottom"><span class="skel skel-w60"></span><span class="skel skel-w24"></span></div>'
-      + '</div>';
-  }
   function renderSkeleton(force) {
     var content = document.getElementById('content');
     if (!content || (window.__inlineRendered && !force)) return;
-    content.innerHTML = '<div class="section-title">Active Sessions</div>'
-      + '<div id="active-section" class="active-grid">' + skelCard() + skelCard() + skelCard() + skelCard() + '</div>'
-      + '<div id="recent-agents-section"></div>'
-      + '<div class="section-title">Devices</div>'
-      + '<div id="devices-section" class="list">' + skelItem() + skelItem() + '</div>';
+    document.body.classList.add('workspace-home');
+    var row = '<div class="item session-item skeleton-item skeleton-item-session"><div class="item-main">'
+      + '<div class="item-top"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
+      + '<div class="item-bottom session-item-bottom"><span class="skel skel-w60"></span><span class="skel skel-w24"></span></div></div></div>';
+    content.innerHTML = '<main class="wh-workspace" aria-label="Loading sessions" aria-busy="true">'
+      + '<div class="wh-toolbar"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
+      + '<div class="section-title">Active</div><div class="list wh-session-list">' + row.repeat(4) + '</div>'
+      + '<div class="section-title">Completed</div><div class="list wh-session-list">' + row.repeat(3) + '</div></main>';
     if (document.body) document.body.classList.add('ready');
     markFirstWebFrameReady();
   }
@@ -387,7 +294,7 @@
     setSync(true);
     whenContentReady(function () {
       if (!isCurrent()) return;
-      document.body.classList.add('browse-view');
+      document.body.classList.add('browse-view', 'workspace-home');
       setSync(true);
       var restoredPreview = usePagePreview
         && (window.__homePreviewRestored || restoreReturningHomePreview());
@@ -440,7 +347,12 @@
         });
       });
     }).catch(function () {
-      // Cache remains usable when revalidation fails.
+      if (isCurrent()) {
+        var content = document.getElementById('content');
+        var error = '<div class="ws-banner error wh-feedback wh-home-error" role="alert">无法刷新会话。请检查网络后重试。 <button type="button" class="text-btn" onclick="loadDevices()">重试</button></div>';
+        if (!hasCached && !window.__workspaceData) content.innerHTML = '<main class="wh-workspace">' + error + '</main>';
+        else if (!content.querySelector('.wh-home-error')) content.insertAdjacentHTML('afterbegin', error);
+      }
       return null;
     }).then(function (fresh) {
       if (isCurrent()) stopSync();

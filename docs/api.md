@@ -388,6 +388,75 @@ Get all devices under the current account.
 
 ---
 
+### GET /api/bridge/project-sessions
+
+Homepage-only project overview across all devices in the current account, including
+offline devices. Groups are identified by `(deviceName, projectHash)`, not the
+display name. Device records are used for display names, never to filter projects.
+
+**Query**:
+| Param | Required | Description |
+|-------|----------|-------------|
+| `limit` | No | Project groups per page (`1-50`, default `50`) |
+| `cursor` | No | Opaque project `nextCursor` from the previous response |
+
+There is no device filter. Each returned group includes up to five of its newest
+root Sessions; subagent threads remain inside their parent Session.
+
+```json
+{
+  "projects": [
+    {
+      "deviceName": "MacBook-Pro",
+      "deviceDisplayName": "Office Mac",
+      "projectHash": "-Users-user-baton",
+      "projectName": "baton",
+      "projectPath": "/Users/user/baton",
+      "sessionCount": 1,
+      "lastActive": "2026-09-16T10:30:00.000Z",
+      "sessionPage": {
+        "sessions": [
+          {
+            "sessionId": "codex:example",
+            "preview": "Review the changes",
+            "lastActive": "2026-09-16T10:30:00.000Z",
+            "size": 1024,
+            "model": "",
+            "status": "completed",
+            "agentCount": 0
+          }
+        ],
+        "hasMore": false,
+        "nextCursor": null
+      }
+    }
+  ],
+  "hasMore": false,
+  "nextCursor": null
+}
+```
+
+`sessionPage.sessions` uses the same list fields and effective statuses as
+`GET /api/bridge/sessions`. To load more Sessions, pass
+`sessionPage.nextCursor` to `/api/bridge/sessions` with that group's `deviceName`,
+`projectHash`, and `limit=5`. Do not use the top-level project cursor for Sessions.
+
+Project order is descending by `(lastActive, deviceName, projectHash)`. The project
+cursor is bound to the account and this endpoint; invalid cursors return `400`.
+This is a live list, not a frozen snapshot: refresh to see activity that moves a
+project ahead of the current cursor. Clients deduplicate by the composite group key.
+
+The server queries all account-scoped `PROJ#` metadata pages before sorting and
+selecting the requested group page. It then reads first Session pages only for
+those groups from the existing list index, with at most eight concurrent reads.
+AWS query failures return `503`, not a successful response with missing groups.
+No new index, metadata writes, or Bridge protocol changes are required. Existing
+Session rows must have the list-index fields, as required by `/sessions` pagination.
+
+For local-only testing against an existing stack, see [Local project overview API](local-project-overview.md).
+
+---
+
 ### GET /api/bridge/projects
 
 Get projects under a specific device.

@@ -5,13 +5,19 @@ Usage: app.include_router(read_router) in main.py
 
 from fastapi import APIRouter, HTTPException, Request, Query, Response
 from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.types import TypeDeserializer
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 import asyncio
 import base64
 import binascii
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import os
 import re
+import threading
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -79,6 +85,21 @@ DEVICE_LIST_ATTRIBUTE_NAMES = {
     "#last": "lastActive",
 }
 DEVICE_LIST_PROJECTION = ", ".join(DEVICE_LIST_ATTRIBUTE_NAMES)
+HOME_PROJECT_SESSION_LIMIT = 5
+HOME_PROJECT_ATTRIBUTE_NAMES = {
+    "#device": "deviceName",
+    "#project": "projectHash",
+    "#name": "projectName",
+    "#count": "sessionCount",
+    "#last": "lastActive",
+}
+HOME_DEVICE_ATTRIBUTE_NAMES = {
+    "#device": "deviceName",
+    "#display": "deviceDisplayName",
+}
+_home_client = None
+_home_client_lock = threading.Lock()
+_home_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="home-projects")
 
 
 def _tables():
@@ -283,6 +304,190 @@ def _query_list_page(
     response = table.query(**kwargs)
     next_key = response.get("LastEvaluatedKey")
     return response.get("Items", []), _encode_list_cursor(next_key) if next_key else None
+
+
+def _session_list_item(item):
+    session = {
+        "sessionId": item.get("sessionId", ""),
+        "preview": item.get("preview", ""),
+        "lastActive": item.get("lastActive", ""),
+        "size": item.get("size", 0),
+        "model": item.get("model", ""),
+        "status": _public_active_status(item),
+        "agentCount": item.get("agentCount", 0),
+    }
+    if item.get("isAgent"):
+        session["isAgent"] = True
+        session["agentName"] = item.get("agentName", "")
+    if item.get("status") == "needs_input" and item.get("agentDetail"):
+        session["agentDetail"] = item["agentDetail"]
+    return session
+
+
+def _project_home_client():
+    global _home_client
+    with _home_client_lock:
+        if _home_client is None:
+            import boto3
+            _home_client = boto3.Session().client(
+                "dynamodb",
+                region_name=os.environ.get("AWS_REGION", "us-east-1"),
+                config=Config(
+                    max_pool_connections=8,
+                    connect_timeout=5,
+                    read_timeout=10,
+                    retries={"mode": "standard", "total_max_attempts": 3},
+                ),
+            )
+    return _home_client
+
+
+def _deserialize_home_item(item):
+    decoder = TypeDeserializer()
+    return {name: decoder.deserialize(value) for name, value in item.items()}
+
+
+def _home_prefix_items(client, table_name, account_id, prefix, attributes):
+    paginator = client.get_paginator("query")
+    pages = paginator.paginate(
+        TableName=table_name,
+        KeyConditionExpression="#account = :account AND begins_with(#sk, :prefix)",
+        ProjectionExpression=", ".join(attributes),
+        ExpressionAttributeNames={
+            **attributes, "#account": "accountId", "#sk": "sk",
+        },
+        ExpressionAttributeValues={
+            ":account": {"S": account_id}, ":prefix": {"S": prefix},
+        },
+    )
+    return [
+        _deserialize_home_item(item)
+        for page in pages
+        for item in page.get("Items", [])
+    ]
+
+
+def _home_project_order(project):
+    return (project["lastActive"], project["deviceName"], project["projectHash"])
+
+
+def _decode_home_project_cursor(cursor, account_id):
+    try:
+        if len(cursor) > 8192:
+            raise ValueError
+        raw = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
+        data = json.loads(raw.decode())
+        if not isinstance(data, dict) or data.get("v") != 1 or data.get("scope") != "home-projects":
+            raise ValueError
+        if data.get("accountId") != account_id:
+            raise ValueError
+        after = data.get("after")
+        if not isinstance(after, list) or len(after) != 3 or any(not isinstance(v, str) for v in after):
+            raise ValueError
+        if not after[1] or not after[2]:
+            raise ValueError
+        return tuple(after)
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid project pagination cursor") from None
+
+
+def _home_session_page(client, table_name, account_id, device, project):
+    params = {
+        "TableName": table_name,
+        "IndexName": LIST_INDEX_NAME,
+        "KeyConditionExpression": "#list = :list",
+        "ExpressionAttributeValues": {
+            ":list": {"S": _session_list_pk(account_id, device, project)},
+        },
+        "ProjectionExpression": LEGACY_SESSION_LIST_PROJECTION,
+        "ExpressionAttributeNames": {
+            **LEGACY_SESSION_LIST_ATTRIBUTE_NAMES, "#list": "listPk",
+        },
+        "ScanIndexForward": False,
+    }
+    sessions = []
+    next_key = None
+    while len(sessions) < HOME_PROJECT_SESSION_LIMIT:
+        page = client.query(**params, Limit=HOME_PROJECT_SESSION_LIMIT - len(sessions))
+        for raw in page.get("Items", []):
+            item = _deserialize_home_item(raw)
+            if not item.get("parentSessionId"):
+                sessions.append(_session_list_item(item))
+        next_key = page.get("LastEvaluatedKey")
+        if not next_key:
+            break
+        params["ExclusiveStartKey"] = next_key
+    sessions.sort(key=lambda item: (item["lastActive"], item["sessionId"]), reverse=True)
+    return {
+        "sessions": sessions,
+        "hasMore": bool(next_key),
+        "nextCursor": _encode_list_cursor(_deserialize_home_item(next_key)) if next_key else None,
+    }
+
+
+@read_router.get("/project-sessions")
+async def get_project_sessions(
+    request: Request,
+    limit: int = Query(50, ge=1, le=50),
+    cursor: str = Query(None),
+):
+    """Account-wide project groups with a first page of root Sessions per group."""
+    account_id = _account_id(request)
+    after = _decode_home_project_cursor(cursor, account_id) if cursor else None
+    loop = asyncio.get_running_loop()
+    try:
+        client = await loop.run_in_executor(_home_executor, _project_home_client)
+        table_name = os.environ["BRIDGE_SESSIONS_TABLE"]
+        items, devices = await asyncio.gather(
+            loop.run_in_executor(
+                _home_executor, _home_prefix_items, client, table_name, account_id,
+                "PROJ#", HOME_PROJECT_ATTRIBUTE_NAMES,
+            ),
+            loop.run_in_executor(
+                _home_executor, _home_prefix_items, client, table_name, account_id,
+                "DEV#", HOME_DEVICE_ATTRIBUTE_NAMES,
+            ),
+        )
+        display_names = {
+            item["deviceName"]: item.get("deviceDisplayName") or item["deviceName"]
+            for item in devices if item.get("deviceName")
+        }
+        projects = []
+        for item in items:
+            device, project = item.get("deviceName"), item.get("projectHash")
+            if not device or not project:
+                continue
+            name = item.get("projectName") or project
+            projects.append({
+                "deviceName": device,
+                "deviceDisplayName": display_names.get(device, device),
+                "projectHash": project,
+                "projectName": name.rsplit("/", 1)[-1],
+                "projectPath": name,
+                "sessionCount": int(item.get("sessionCount", 0)),
+                "lastActive": item.get("lastActive") or "",
+            })
+        projects.sort(key=_home_project_order, reverse=True)
+        if after is not None:
+            projects = [project for project in projects if _home_project_order(project) < after]
+        has_more = len(projects) > limit
+        projects = projects[:limit]
+        session_pages = await asyncio.gather(*(
+            loop.run_in_executor(
+                _home_executor, _home_session_page, client, table_name, account_id,
+                project["deviceName"], project["projectHash"],
+            ) for project in projects
+        ))
+        for project, session_page in zip(projects, session_pages):
+            project["sessionPage"] = session_page
+        next_cursor = _encode_list_cursor({
+            "v": 1, "scope": "home-projects", "accountId": account_id,
+            "after": _home_project_order(projects[-1]),
+        }) if has_more else None
+        return {"projects": projects, "hasMore": has_more, "nextCursor": next_cursor}
+    except (ClientError, BotoCoreError) as error:
+        logging.getLogger(__name__).warning("Project overview query failed: %s", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Unable to load project sessions") from None
 
 
 @read_router.get("/config")
@@ -509,23 +714,7 @@ async def get_sessions(
         )
     items = [item for item in items if not item.get("parentSessionId")]
 
-    sessions = []
-    for item in items:
-        s = {
-            "sessionId": item.get("sessionId", ""),
-            "preview": item.get("preview", ""),
-            "lastActive": item.get("lastActive", ""),
-            "size": item.get("size", 0),
-            "model": item.get("model", ""),
-            "status": _public_active_status(item),
-            "agentCount": item.get("agentCount", 0),
-        }
-        if item.get("isAgent"):
-            s["isAgent"] = True
-            s["agentName"] = item.get("agentName", "")
-        if item.get("status") == "needs_input" and item.get("agentDetail"):
-            s["agentDetail"] = item.get("agentDetail", "")
-        sessions.append(s)
+    sessions = [_session_list_item(item) for item in items]
     sessions.sort(key=lambda x: (x["lastActive"], x["sessionId"]), reverse=True)
     result = {"sessions": sessions}
     if limit is not None:

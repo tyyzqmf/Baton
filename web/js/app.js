@@ -411,6 +411,8 @@ function displayDeviceName(deviceName) {
 }
 
 function updateBreadcrumb() {
+  document.body.classList.toggle('workspace-home',
+    !state.appState.device && !state.appState.project && !state.appState.session);
   if (_navPointer && _navPointer.target.closest('#breadcrumb')) {
     _breadcrumbUpdatePending = true;
     return;
@@ -1201,7 +1203,8 @@ async function loadDevices() {
   var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
   var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
   return window.__loadHome(activePromise, devicesPromise, {
-    resetScroll: true,
+    resetScroll: wasHome,
+    isCurrent: function () { return _navVersion === myNav; },
     onFresh: function (_activeData, devData) {
       rememberDevices(devData);
       showStats(devData.devices.length + ' device(s)');

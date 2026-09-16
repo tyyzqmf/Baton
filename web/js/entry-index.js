@@ -14,6 +14,7 @@ import '../css/project-files.css';
 import '../css/git-status.css';
 import '../css/workspace-header.css';
 import './globals.js';   // defines window.loadViewerLibs (does NOT download libs yet)
+import './workspace-entry.js';
 import './app.js';
 import './project/browser.js';
 import './scroll-indicator.js';
