@@ -3,16 +3,17 @@ Bridge sync routes — receives session metadata and messages from bridge client
 Usage: app.include_router(bridge_router) in main.py
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional
-from boto3.dynamodb.conditions import Key
+from typing import Dict, List, Optional, Literal
+from boto3.dynamodb.conditions import Key, Attr
 import boto3
 import os
 import json
 import hashlib
 from datetime import datetime
 import time
+from session_archive import is_archived
 
 MESSAGE_TTL_DAYS = 90  # message rows are a rebuildable cache (jsonl is truth); expire after 90d
 
@@ -84,6 +85,8 @@ class RuntimeCapability(BaseModel):
     canRead: bool = False
     canCreate: bool = False
     canSend: bool = False
+    canArchive: bool = False
+    canUnarchive: bool = False
     version: str = ""
 
 
@@ -282,6 +285,97 @@ def _broadcast_session_thread_changes(account_id: str, device_name: str, roots: 
         print(f"session thread notification failed: {e}")
 
 
+def _update_session_metadata(table, item, incoming, existing):
+    fields = incoming.model_fields_set
+    attributes = {key: value for key, value in item.items() if key not in ("accountId", "sk")}
+    for field in SessionItem.model_fields:
+        if field not in fields and field in existing:
+            attributes.pop(field, None)
+    names = {f"#m{i}": key for i, key in enumerate(attributes)}
+    values = {f":m{i}": value for i, value in enumerate(attributes.values())}
+    assignments = [f"#m{i} = :m{i}" for i in range(len(attributes))]
+    removed = []
+    if item.get("parentSessionId"):
+        removed.extend(["listPk", "listSk", "activeStatus"])
+    elif "parentSessionId" in fields:
+        removed.extend(["parentSessionId", "threadKind", "agentPath", "agentDepth"])
+    if "agentDetail" in fields and not incoming.agentDetail:
+        removed.append("agentDetail")
+    if "isAgent" in fields and not incoming.isAgent:
+        removed.extend(["isAgent", "agentName", "agentRole"])
+    for index, field in enumerate(removed):
+        names[f"#r{index}"] = field
+    expression = "SET " + ", ".join(assignments)
+    if removed:
+        expression += " REMOVE " + ", ".join(f"#r{i}" for i in range(len(removed)))
+    condition = Attr("sessionId").eq(existing["sessionId"]) if "sessionId" in existing else Attr("sessionId").not_exists()
+    # Fence the inputs used to derive index keys, not independent archive observations.
+    for field in ("status", "parentSessionId", "agentCount", "runningAgentCount", "needsInputAgentCount", "threadRootId"):
+        condition &= Attr(field).eq(existing[field]) if field in existing else Attr(field).not_exists()
+    table.update_item(
+        Key={key: item[key] for key in ("accountId", "sk")},
+        UpdateExpression=expression,
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues=values,
+        ConditionExpression=condition,
+    )
+
+
+class ArchiveObservation(BaseModel):
+    sessionId: str = Field(pattern=r"^codex:.+")
+    projectHash: str = Field(min_length=1)
+    archiveState: Literal["archived", "unarchived"]
+    archiveVersion: int = Field(gt=0, le=9007199254740991)
+
+
+class SyncArchivesRequest(BaseModel):
+    deviceName: str = Field(min_length=1)
+    observations: List[ArchiveObservation] = Field(max_length=100)
+
+
+@bridge_router.post("/sync-archives")
+async def sync_archives(req: SyncArchivesRequest, raw: Request):
+    sessions_table, _ = _tables()
+    account = _hash_key(raw.headers.get("x-api-key", ""))
+    changes = []
+    ignored = []
+    for observation in req.observations:
+        key = {"accountId": account, "sk": f"SESS#{req.deviceName}#{observation.projectHash}#{observation.sessionId}"}
+        try:
+            sessions_table.update_item(
+                Key=key,
+                UpdateExpression="SET archiveState = :state, archiveVersion = :version",
+                ExpressionAttributeValues={":state": observation.archiveState, ":version": observation.archiveVersion},
+                ConditionExpression=Attr("sessionId").eq(observation.sessionId) & (
+                    Attr("archiveVersion").not_exists() | Attr("archiveVersion").lt(observation.archiveVersion)
+                ),
+            )
+        except sessions_table.meta.client.exceptions.ConditionalCheckFailedException:
+            existing = sessions_table.get_item(Key=key, ConsistentRead=True).get("Item")
+            if not existing or existing.get("sessionId") != observation.sessionId:
+                raise HTTPException(status_code=409, detail="Sync session metadata before archive observations")
+            if int(existing.get("archiveVersion", 0)) == observation.archiveVersion:
+                if existing.get("archiveState") != observation.archiveState:
+                    raise HTTPException(status_code=409, detail="Conflicting archive observation version")
+                changes.append(observation.model_dump())
+            else:
+                ignored.append({
+                    **observation.model_dump(),
+                    "reason": "stale",
+                    "currentArchiveState": existing.get("archiveState", "unknown"),
+                    "currentArchiveVersion": int(existing.get("archiveVersion", 0)),
+                })
+            continue
+        changes.append(observation.model_dump())
+    if changes:
+        _reconcile_device(sessions_table, account, req.deviceName, "", prune=False)
+        endpoint = os.environ.get("WS_API_ENDPOINT", "")
+        if endpoint:
+            from bridge_ws import notify_session_archives_changed
+            notify_session_archives_changed(account, endpoint, req.deviceName, changes)
+    return {"synced": len(changes), "acknowledged": changes, "ignored": ignored}
+
+
 @bridge_router.post("/sync-sessions")
 async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     sessions_table, _ = _tables()
@@ -296,32 +390,24 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
     has_status_deltas = bool(incoming_status_deltas)
 
     preserved_session_fields = {}
-    for s in req.sessions:
-        needs_agent_summary = not s.parentSessionId and (
-            s.agentCount is None
-            or s.runningAgentCount is None
-            or s.needsInputAgentCount is None
-        )
-        needs_thread_root = s.threadRootId is None
-        needs_previous_status = not s.parentSessionId and has_status_deltas
-        if not needs_agent_summary and not needs_thread_root and not needs_previous_status:
-            continue
-        _, _, storage_id = _session_ids(s.runtime, s.id, s.nativeSessionId)
-        existing = sessions_table.get_item(Key={
-            "accountId": key_hash,
-            "sk": f"SESS#{req.deviceName}#{s.project}#{storage_id}",
-        }).get("Item", {})
-        preserved_session_fields[(s.project, storage_id)] = existing
-
     effective_status_deltas = []
 
     # 1. Write SESS# items (always).
-    with sessions_table.batch_writer() as batch:
-        for s in req.sessions:
-            runtime, native_id, storage_id = _session_ids(s.runtime, s.id, s.nativeSessionId)
+    for incoming in req.sessions:
+        runtime, native_id, storage_id = _session_ids(incoming.runtime, incoming.id, incoming.nativeSessionId)
+        key = {
+            "accountId": key_hash,
+            "sk": f"SESS#{req.deviceName}#{incoming.project}#{storage_id}",
+        }
+        for attempt in range(3):
+            existing = sessions_table.get_item(Key=key, ConsistentRead=True).get("Item", {})
+            s = incoming.model_copy(update={
+                field: existing[field]
+                for field in SessionItem.model_fields
+                if field not in incoming.model_fields_set and field in existing
+            })
             item = {
-                "accountId": key_hash,
-                "sk": f"SESS#{req.deviceName}#{s.project}#{storage_id}",
+                **key,
                 "entityType": "session",
                 "deviceName": req.deviceName,
                 "os": req.os,
@@ -362,7 +448,6 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 item["agentDepth"] = s.agentDepth
                 item["canSend"] = s.canSend
             if not s.parentSessionId:
-                existing = preserved_session_fields.get((s.project, storage_id), {})
                 agent_count = s.agentCount
                 if agent_count is None:
                     agent_count = existing.get("agentCount", 0)
@@ -384,31 +469,32 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                     needs_input_agent_count,
                 )
                 item["activeStatus"] = _active_status_value(effective_status, s.lastActive)
-                if has_status_deltas:
-                    old_status = (
-                        _effective_status_from_item(existing)
-                        if existing else "new"
-                    )
-                    effective_status_deltas.append(StatusDelta(
-                        deviceName=req.deviceName,
-                        projectHash=s.project,
-                        projectName=s.projectName or s.project,
-                        from_=old_status,
-                        to=effective_status,
-                        lastActive=s.lastActive,
-                    ))
             thread_root_id = s.threadRootId
             if thread_root_id is None:
-                thread_root_id = preserved_session_fields.get(
-                    (s.project, storage_id), {}
-                ).get("threadRootId")
+                thread_root_id = existing.get("threadRootId")
             if thread_root_id:
                 item["threadRootId"] = thread_root_id
                 item["threadRootPk"] = _thread_root_pk(
                     key_hash, req.deviceName, s.project, thread_root_id
                 )
                 item["threadRootSk"] = storage_id
-            batch.put_item(Item=item)
+            try:
+                _update_session_metadata(sessions_table, item, incoming, existing)
+            except sessions_table.meta.client.exceptions.ConditionalCheckFailedException:
+                if attempt == 2:
+                    raise HTTPException(status_code=409, detail="Session metadata changed concurrently; retry sync")
+                continue
+            break
+        preserved_session_fields[(s.project, storage_id)] = existing
+        if not s.parentSessionId and has_status_deltas and not is_archived(existing):
+            effective_status_deltas.append(StatusDelta(
+                deviceName=req.deviceName,
+                projectHash=s.project,
+                projectName=s.projectName or s.project,
+                from_=_effective_status_from_item(existing) if existing else "new",
+                to=_effective_status_from_item(item),
+                lastActive=s.lastActive,
+            ))
 
     thread_changes = {}
     for update in req.agentCountUpdates or []:
@@ -453,7 +539,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 ":now": now,
             },
         )
-        if old_effective_status != new_effective_status:
+        if old_effective_status != new_effective_status and not is_archived(root):
             _apply_status_delta(key_hash, StatusDelta(
                 deviceName=req.deviceName,
                 projectHash=update.project,
@@ -527,7 +613,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
 
     # 2b. Incremental path: root counters follow the effective Main+agents
     # status. Fall back to legacy deltas only when no root session was included.
-    deltas = effective_status_deltas or incoming_status_deltas
+    deltas = effective_status_deltas if req.sessions else incoming_status_deltas
     for d in deltas:
         try:
             _apply_status_delta(key_hash, d)
@@ -549,6 +635,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             list(thread_changes.values()),
         )
 
+    if any(is_archived(item) for item in preserved_session_fields.values()):
+        _reconcile_device(sessions_table, key_hash, req.deviceName, req.os, prune=False)
     return {"synced": len(req.sessions)}
 
 
@@ -575,6 +663,7 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
     sess = _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
                       & Key("sk").begins_with(f"SESS#{device}#"))
     roots = [session for session in sess if not session.get("parentSessionId")]
+    visible_count = sum(not is_archived(session) for session in roots)
     proj = {}  # projectHash -> {count, name, lastActive}
     device_last = ""
     device_running = 0
@@ -590,6 +679,8 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
             "name": s.get("projectName", ph),
             "lastActive": "",
         })
+        if is_archived(s):
+            continue
         p["count"] += 1
         active_status = _effective_status_from_item(s)
         if active_status == "running":
@@ -644,13 +735,13 @@ def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
                           "runningCount = :rc, idleCount = :ic, entityType = :et, "
                           "deviceName = :dn, os = if_not_exists(os, :os), lastActive = :la"),
         ExpressionAttributeValues={
-            ":sc": len(roots), ":pc": project_count,
+            ":sc": visible_count, ":pc": project_count,
             ":rc": device_running, ":ic": device_needs_input, ":et": "device",
             ":dn": device, ":os": os_, ":la": device_last,
         },
     )
     return {
-        "sessionCount": len(roots),
+        "sessionCount": visible_count,
         "projectCount": project_count,
         "runningCount": device_running,
         "idleCount": device_needs_input,
