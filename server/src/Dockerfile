@@ -21,6 +21,7 @@ COPY terminal_ws.py terminal_direct_ws.py ./
 COPY project/ project/
 COPY --from=web-builder /build/dist web/
 RUN pip install --no-cache-dir -r requirements.txt
+RUN chmod -R a+rX /app
 
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
