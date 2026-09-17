@@ -369,6 +369,5 @@ test('runtime icons load on demand instead of using unconditional image preloads
     indexHtml,
     /<link[^>]+rel="preload"[^>]+(?:claude-code|codex)\.svg/,
   );
-  const workspaceSource = readFileSync(new URL('../../web/js/workspace-home.js', import.meta.url), 'utf8');
-  assert.match(workspaceSource, /runtime === 'codex' \? 'codex\.svg' : 'claude-code\.svg'/);
+  assert.match(indexHtml, /runtime === 'codex' \? 'codex\.svg' : 'claude-code\.svg'/);
 });

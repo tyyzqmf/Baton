@@ -1036,6 +1036,8 @@ html.native-mobile .slash-description {
   font-size: 11px; font-weight: 600; color: #58a6ff; text-transform: uppercase;
   padding: 16px 16px 8px;
 }
+.active-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
+.active-section-heading .collapse-arrow { flex-shrink: 0; }
 
 /* === Active session cards === */
 .active-grid {
@@ -1097,6 +1099,84 @@ html.native-mobile .slash-description {
   .card-path { display: none; }
   .section-title { padding: 12px 12px 6px; }
 }
+
+/* Recent project groups reuse the dashboard's surfaces and session badges. */
+.section-title.home-section-heading { padding: 0; }
+.home-section-toggle {
+  display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 44px;
+  padding: 16px 16px 8px; border: 0; background: transparent; color: inherit; font: inherit;
+  text-transform: inherit; text-align: left; cursor: pointer;
+}
+.recent-project-list { display: grid; gap: 8px; padding: 0 12px 8px; }
+.recent-project-list[hidden], .recent-project-sessions[hidden], .home-device-list[hidden] { display: none; }
+.recent-project { min-width: 0; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; }
+.recent-project-header { display: flex; align-items: stretch; background: #21262d; }
+.recent-project-toggle {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 46px; padding: 10px 14px;
+  border: 0; background: transparent; color: #e6edf3; font: inherit; text-align: left; cursor: pointer;
+}
+.home-section-toggle .collapse-arrow { flex-shrink: 0; }
+.home-section-toggle[aria-expanded="true"] .collapse-arrow { transform: rotate(90deg); }
+.recent-project-link {
+  display: flex; align-items: center; justify-content: center; gap: 4px; flex-shrink: 0;
+  min-height: 46px; padding: 10px 14px; border-left: 1px solid #30363d; color: #8b949e; text-decoration: none;
+}
+.recent-project-icon { color: #8b949e; flex-shrink: 0; }
+.recent-folder-open, .recent-project-toggle[aria-expanded="true"] .recent-folder-closed { display: none; }
+.recent-project-toggle[aria-expanded="true"] .recent-folder-open { display: inline; }
+.recent-project-context { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
+.recent-project-name { min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.recent-project-device { flex-shrink: 0; max-width: 45%; font-size: 11px; color: #8b949e; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.recent-project-more { font-size: 11px; white-space: nowrap; }
+.recent-session {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 64px; align-items: center; gap: 12px;
+  min-height: 46px; padding: 10px 14px; border-top: 1px solid #21262d;
+  color: #c9d1d9; text-decoration: none; -webkit-user-drag: none;
+}
+.recent-session-title { min-width: 0; font-size: 13px; line-height: 1.5; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.recent-session-status { white-space: nowrap; }
+.recent-session-time { justify-self: end; font-size: 11px; color: #8b949e; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.recent-session-time-short { display: none; }
+.recent-time-measure {
+  position: absolute; top: 0; left: 0; display: grid; grid-template-columns: max-content;
+  width: max-content; visibility: hidden; pointer-events: none;
+}
+.recent-projects-empty { padding: 12px 4px; color: #8b949e; font-size: 13px; }
+.recent-projects-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px; min-height: 44px; }
+.recent-projects-show-more {
+  width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid #30363d; border-radius: 8px;
+  background: #21262d; color: #8b949e; font: inherit; font-size: 12px; cursor: pointer;
+}
+.recent-projects-show-more:disabled { cursor: wait; }
+.recent-projects-error { padding: 10px 14px; font-size: 12px; color: #f85149; }
+.home-device-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0 12px 8px; }
+.device-card { min-width: 0; padding: 12px 14px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; }
+.device-card .item-bottom { flex-wrap: wrap; gap: 4px 12px; }
+.recent-projects-show-more:focus-visible, .home-section-toggle:focus-visible, .recent-project-toggle:focus-visible,
+.recent-project-link:focus-visible, .recent-session:focus-visible, .device-card:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.recent-project-toggle:active, .recent-project-link:active, .recent-session:active, .device-card:active { background: #21262d; }
+@media (hover: hover) and (pointer: fine) {
+  .recent-project-toggle:hover, .recent-project-link:hover { background: #272d35; }
+  .recent-project-link:hover { color: #58a6ff; }
+  .recent-session:hover { background: #161b22; }
+  .recent-session:hover .recent-session-title { color: #e6edf3; }
+  .device-card:hover { background: #1c2128; }
+  .recent-projects-show-more:hover { background: #272d35; color: #e6edf3; }
+}
+@media (max-width: 600px) {
+  .recent-session { grid-template-columns: minmax(0, 1fr) auto var(--recent-time-width, 32px); gap: 6px; }
+  .recent-session-title { font-size: 14px; }
+  .recent-session-time-full { display: none; }
+  .recent-session-time-short { display: inline; }
+}
+@media (max-width: 480px) {
+  .recent-project-list, .home-device-list { padding-inline: 8px; }
+  .home-section-toggle { padding: 12px 12px 6px; }
+  .device-card { padding: 12px; }
+  .recent-project-toggle, .recent-project-link, .recent-session { padding-inline: 12px; }
+}
+html.native-mobile .recent-project-name, html.native-mobile .recent-session-title { font-size: 15px; }
+html.native-mobile .recent-project-device, html.native-mobile .recent-project-more, html.native-mobile .recent-session-time { font-size: 12px; }
 
 /* Native mobile readability: CSS px maps to logical points in the Tauri WebView. */
 html.native-mobile .top-bar {

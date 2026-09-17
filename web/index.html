@@ -67,7 +67,6 @@
   body.browse-view #content{scrollbar-gutter:stable}
 </style>
 <link rel="stylesheet" href="css/style.css">
-<link rel="stylesheet" href="css/workspace-home.css">
 <!-- Inline shell: auth guard + parallel fetch (devices + active-sessions) + first paint.
      Runs before entry-index.js so the network request flies out at HTML parse time.
      entry-index.js loads in parallel (browser default for type=module) and takes over interactivity. -->
@@ -94,7 +93,18 @@
 
   // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
   var CACHE_KEY = 'apeek_home_cache';
-  var homeRefreshId = 0;
+  var recentProjectsCollapsed = false;
+  var devicesCollapsed = false;
+  var collapsedRecentProjects = new Set();
+  var recentTimeObserver = null;
+  var allRecentProjects = false;
+  var loadingRecentProjects = false;
+  var homeActiveData = null;
+  var homeDeviceData = null;
+  var homeLoadVersion = 0;
+  window.__homeActiveParams = function () {
+    return allRecentProjects ? { allProjects: true } : undefined;
+  };
   function readCache() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) { return null; }
   }
@@ -163,24 +173,140 @@
     check();
   }
 
+  function timeAgo(iso) {
+    var d = Date.now() - new Date(iso).getTime();
+    if (d < 60000) return 'just now';
+    if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
+    if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
+    return Math.floor(d / 86400000) + 'd ago';
+  }
+  function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function runtimeIcon(s) {
+    var runtime = String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
+    var label = runtime === 'codex' ? 'Codex' : 'Claude Code';
+    return '<span class="runtime-mark' + (runtime === 'codex' ? ' runtime-mark-codex' : '') + '" role="img" aria-label="' + label + '" title="' + label + '">'
+      + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
+  }
+
+  function fitRecentTimeColumn() {
+    if (recentTimeObserver) recentTimeObserver.disconnect();
+    var section = document.getElementById('recent-projects-section');
+    if (!section) return;
+    var previous = section.querySelector('.recent-time-measure');
+    if (previous) previous.remove();
+    var labels = section.querySelectorAll('.recent-session-time-short');
+    if (!labels.length) return;
+    // Measure every loaded label, including folded projects, using the same
+    // font as the visible times. One shared width keeps runtime icons aligned.
+    var measure = document.createElement('span');
+    measure.className = 'recent-session-time recent-time-measure';
+    measure.setAttribute('aria-hidden', 'true');
+    labels.forEach(function (label) {
+      var sample = document.createElement('span');
+      sample.textContent = label.textContent;
+      measure.appendChild(sample);
+    });
+    section.appendChild(measure);
+    function updateWidth() {
+      var width = Math.ceil(measure.getBoundingClientRect().width);
+      if (width > 0) section.style.setProperty('--recent-time-width', width + 'px');
+    }
+    updateWidth();
+    if (window.ResizeObserver) {
+      recentTimeObserver = new ResizeObserver(updateWidth);
+      recentTimeObserver.observe(measure);
+    }
+  }
+
+  function moreProjectsControl() {
+    return '<button class="recent-projects-show-more' + (loadingRecentProjects ? ' recent-projects-loading' : '')
+      + '" type="button" data-show-more-projects' + (loadingRecentProjects ? ' disabled aria-busy="true"' : '') + '>'
+      + (loadingRecentProjects ? 'Loading…' : 'Show more') + '</button>';
+  }
+
+  function showMoreProjects() {
+    if (loadingRecentProjects) return;
+    var footer = document.getElementById('recent-projects-footer');
+    if (!footer) return;
+    var button = footer.querySelector('[data-show-more-projects]');
+    if (!button) return;
+    var previousMode = allRecentProjects;
+    var account = localStorage.getItem('_ak');
+    var accountServer = localStorage.getItem('_as');
+    var devices = homeDeviceData || (readCache() || {}).devices || { devices: [] };
+    allRecentProjects = true;
+    loadingRecentProjects = true;
+    button.textContent = 'Loading…';
+    button.disabled = true;
+    button.classList.add('recent-projects-loading');
+    button.setAttribute('aria-busy', 'true');
+    var activePromise = Promise.resolve().then(function () {
+      return window.api('/api/bridge/active-sessions', { allProjects: true });
+    }).then(function (data) {
+      if (!Array.isArray(data.recentProjects) || data.hasMoreProjects !== false) {
+        throw new Error('Incomplete project snapshot');
+      }
+      return data;
+    });
+    var run = loadHome(activePromise, Promise.resolve(devices), {
+      keepContent: true,
+      appendProjects: true,
+      isCurrent: function () {
+        return !!document.getElementById('recent-projects-section')
+          && localStorage.getItem('_ak') === account
+          && localStorage.getItem('_as') === accountServer;
+      }
+    });
+    var version = homeLoadVersion;
+    run.then(function (fresh) {
+      if (version !== homeLoadVersion) return;
+      loadingRecentProjects = false;
+      if (!fresh) {
+        allRecentProjects = previousMode;
+        var currentFooter = document.getElementById('recent-projects-footer');
+        if (currentFooter) currentFooter.innerHTML =
+          '<span class="recent-projects-error" role="alert">Unable to load more projects.</span>' + moreProjectsControl();
+      }
+    });
+  }
+
   function bindHomeNavigation(content) {
     if (content.__homeNavBound) return;
     content.__homeNavBound = true;
     content.addEventListener('click', function (e) {
+      if (e.target.closest('[data-show-more-projects]')) {
+        if (typeof window.api === 'function') showMoreProjects();
+        else (window.__navQueue = window.__navQueue || []).push(showMoreProjects);
+        return;
+      }
+      var toggle = e.target.closest('[data-home-toggle]');
+      if (toggle) {
+        var panel = document.getElementById(toggle.getAttribute('aria-controls'));
+        if (!panel) return;
+        var expanded = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', String(expanded));
+        panel.hidden = !expanded;
+        var key = toggle.dataset.homeToggle;
+        if (key === 'recent-projects') recentProjectsCollapsed = !expanded;
+        else if (key === 'devices') devicesCollapsed = !expanded;
+        else if (expanded) collapsedRecentProjects.delete(key);
+        else collapsedRecentProjects.add(key);
+        return;
+      }
       var t = e.target.closest('[data-nav]');
       if (!t || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button > 0) return;
       e.preventDefault();
       var act = t.dataset.nav;
       var run = function () {
         if (act === 'device' && typeof window.loadProjects === 'function') window.loadProjects(t.dataset.name);
+        else if (act === 'project' && typeof window.loadSessions === 'function') window.loadSessions(t.dataset.device, t.dataset.phash, t.dataset.pname);
         else if (act === 'active' && typeof window.openActiveSession === 'function') window.openActiveSession(t);
       };
       if (typeof window.loadProjects === 'function') run();
       else (window.__navQueue = window.__navQueue || []).push(run);
     });
   }
-
-  window.__bindHomeNavigation = bindHomeNavigation;
 
   function restoreReturningHomePreview() {
     if (!window.__returningHome) return false;
@@ -191,10 +317,6 @@
       snapshot = JSON.parse(sessionStorage.getItem('baton-page-preview') || 'null');
     } catch (e) {}
     if (!snapshot || typeof snapshot.contentHtml !== 'string') return false;
-    if ((snapshot.topBarHtml || '').includes('top-home-button')) {
-      sessionStorage.removeItem('baton-page-preview');
-      return false;
-    }
 
     var topBar = document.querySelector('body > .top-bar');
     var breadcrumb = document.getElementById('breadcrumb');
@@ -204,12 +326,8 @@
     topBar.innerHTML = snapshot.topBarHtml || '';
     breadcrumb.innerHTML = snapshot.breadcrumbHtml || '';
     breadcrumb.style.display = snapshot.breadcrumbDisplay || 'none';
-    document.body.classList.toggle('workspace-home', snapshot.contentHtml.indexOf('wh-workspace') >= 0);
-    if (document.body.classList.contains('workspace-home')) {
-      var cachedHome = readCache();
-      if (cachedHome) window.__workspaceData = { active: cachedHome.active, devices: cachedHome.devices, refreshId: homeRefreshId };
-    }
     content.innerHTML = snapshot.contentHtml;
+    fitRecentTimeColumn();
     content.scrollTop = snapshot.scrollTop || 0;
     sessionStorage.removeItem('baton-page-preview');
     bindHomeNavigation(content);
@@ -221,35 +339,190 @@
   }
   window.__restoreHomePreview = restoreReturningHomePreview;
 
-  function renderInline(activeData, devData, refreshId) {
+  function recentProjectHtml(project, index) {
+    var folderIcon = '<svg class="recent-project-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<path class="recent-folder-closed" d="M3 10V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V10ZM3 10h18"/>'
+      + '<g class="recent-folder-open"><path d="M3 18V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v1"/>'
+      + '<path d="M3 18 6 11.4Q6.6 10 8 10h11q2 0 2 2l-2 6.5Q18.5 20 17 20H5q-2 0-2-2Z"/></g></svg>';
+    var arrowIcon = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>';
+    var deviceLabel = (window.__deviceDisplayNames || {})[project.deviceName] || project.deviceName;
+    var projectHref = '#/' + encodeURIComponent(project.deviceName) + '/' + encodeURIComponent(project.projectHash);
+    var projectData = ' data-device="' + esc(project.deviceName) + '" data-phash="' + esc(project.projectHash) + '" data-pname="' + esc(project.projectName) + '"';
+    var projectKey = JSON.stringify([project.deviceName, project.projectHash]);
+    var collapsed = collapsedRecentProjects.has(projectKey);
+    var panelId = 'recent-project-sessions-' + index;
+    return '<section class="recent-project" aria-labelledby="recent-project-name-' + index + '">'
+      + '<div class="recent-project-header">'
+      + '<button class="recent-project-toggle" type="button" data-home-toggle="' + esc(projectKey) + '" aria-expanded="' + !collapsed + '" aria-controls="' + panelId + '">'
+      + folderIcon + '<span class="recent-project-context"><span class="recent-project-name" id="recent-project-name-' + index + '" title="' + esc(project.projectName) + '">' + esc(project.projectName) + '</span>'
+      + '<span class="recent-project-device" title="' + esc(deviceLabel) + '">' + esc(deviceLabel) + '</span></span></button>'
+      + '<a class="recent-project-link" href="' + esc(projectHref) + '" data-nav="project"' + projectData + '>'
+      + '<span class="recent-project-more">View all</span>' + arrowIcon + '</a></div>'
+      + '<div class="recent-project-sessions" id="' + panelId + '"' + (collapsed ? ' hidden' : '') + '>' + project.sessions.map(function (s) {
+        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+        var detail = s.status === 'needs_input' && s.agentDetail ? '\n' + s.agentDetail : '';
+        var label = s.status === 'running' ? 'Running' : s.status === 'needs_input' ? 'Needs input' : 'Done';
+        var statusClass = s.status === 'running' ? 'running' : s.status === 'needs_input' ? 'idle' : 'stopped';
+        var elapsed = timeAgo(s.lastActive);
+        var compactElapsed = elapsed === 'just now' ? 'now' : elapsed.replace(' ago', '');
+        return '<a class="recent-session" href="' + esc(projectHref + '/' + encodeURIComponent(s.sessionId)) + '" data-nav="active"' + projectData
+          + ' data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '"'
+          + ' title="' + esc(title + detail) + '">'
+          + '<span class="recent-session-title">' + esc(title) + '</span>'
+          + '<span class="session-badges"><span class="badge recent-session-status ' + statusClass + '">' + label + '</span>'
+          + runtimeIcon(s) + '</span><time class="recent-session-time" datetime="' + esc(s.lastActive) + '" aria-label="' + esc(elapsed) + '">'
+          + '<span class="recent-session-time-full">' + elapsed + '</span>'
+          + '<span class="recent-session-time-short" aria-hidden="true">' + compactElapsed + '</span></time></a>';
+      }).join('') + '</div></section>';
+  }
+
+  function appendRecentProjects(fresh) {
+    var content = document.getElementById('content');
+    var footer = document.getElementById('recent-projects-footer');
+    var current = homeActiveData || (readCache() || {}).active;
+    if (!footer || !current) throw new Error('Home is no longer available');
+    var existing = current.recentProjects || [];
+    var seen = new Set(existing.map(function (p) { return JSON.stringify([p.deviceName, p.projectHash]); }));
+    var added = [];
+    fresh.recentProjects.forEach(function (p) {
+      var key = JSON.stringify([p.deviceName, p.projectHash]);
+      if (seen.has(key) || added.length >= 10 || existing.length + added.length >= 15) return;
+      seen.add(key);
+      added.push(p);
+    });
+    var keepScroll = content.scrollTop;
+    footer.insertAdjacentHTML('beforebegin', added.map(function (p, i) {
+      return recentProjectHtml(p, existing.length + i);
+    }).join(''));
+    footer.remove();
+    fitRecentTimeColumn();
+    content.scrollTop = keepScroll;
+    // Cache exactly what remains displayed; a normal home refresh replaces it
+    // with current activity and the latest project ordering.
+    homeActiveData = Object.assign({}, current, {
+      recentProjects: existing.concat(added), hasMoreProjects: false,
+    });
+    return homeActiveData;
+  }
+
+  function renderInline(activeData, devData) {
     var content = document.getElementById('content');
     if (!content) return;
-    window.__workspaceData = { active: activeData, devices: devData, refreshId: refreshId };
-    window.__deviceDisplayNames = {};
-    ((devData && devData.devices) || []).forEach(function (device) {
-      window.__deviceDisplayNames[device.deviceName] = device.deviceDisplayName || device.deviceName;
+    homeActiveData = activeData;
+    homeDeviceData = devData;
+    var devs = (devData && devData.devices) || [];
+    var deviceDisplayNames = {};
+    devs.forEach(function (device) {
+      deviceDisplayNames[device.deviceName] = device.deviceDisplayName || device.deviceName;
     });
-    document.body.classList.add('workspace-home');
-    if (window.__renderWorkspace) window.__renderWorkspace(activeData, devData, refreshId);
-    else renderSkeleton(true);
+    window.__deviceDisplayNames = deviceDisplayNames;
+    var displayDeviceName = function (deviceName) {
+      return deviceDisplayNames[deviceName] || deviceName;
+    };
+    var html = '';
+    var collapseIcon = '<svg class="collapse-arrow" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>';
+    var actives = (activeData && activeData.sessions) || [];
+    if (actives.length) {
+      var activeCollapsible = actives.length > 10;
+      var activeCollapsed = activeCollapsible && sessionStorage.getItem('apeek_activeCollapsed') === '1';
+      html += '<div class="section-title active-section-heading' + (activeCollapsible ? ' collapsible' + (activeCollapsed ? '' : ' expanded') : '') + '"' + (activeCollapsible ? ' onclick="toggleActiveSessions()"' : '') + '>Active Sessions (' + actives.length + ')' + (activeCollapsible ? collapseIcon : '') + '</div>';
+      html += '<div id="active-section" class="active-grid" style="' + (activeCollapsed ? 'display:none' : '') + '">';
+      html += actives.map(function (s) {
+        var agentCount = Math.max(0, Number(s.agentCount) || 0);
+        var agentBadge = s.isAgent && !agentCount ? '<span class="badge agent">Agent</span>' : '';
+        var childAgentsBadge = agentCount ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>' : '';
+        var displayStatus = s.status;
+        var statusLabel = displayStatus === 'running' ? 'Running' : displayStatus === 'needs_input' ? 'Needs input' : 'Done';
+        var statusClass = displayStatus === 'running' ? 'running' : displayStatus === 'needs_input' ? 'idle' : 'stopped';
+        var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
+        var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
+        return '<div class="active-card ' + esc(statusClass) + '"'
+          + ' data-nav="active"'
+          + ' data-sid="' + esc(s.sessionId) + '"'
+          + ' data-preview="' + esc(s.preview || '') + '"'
+          + ' data-device="' + esc(s.deviceName) + '"'
+          + ' data-phash="' + esc(s.projectHash) + '"'
+          + ' data-pname="' + esc(s.projectName) + '"'
+          + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + childAgentsBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span>' + runtimeIcon(s) + '</span></div>'
+          + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
+          + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
+          + '</div>';
+      }).join('');
+      html += '</div>';
+    }
+    var recentProjects = activeData && activeData.recentProjects;
+    if (Array.isArray(recentProjects)) {
+      var hasMoreProjects = activeData.hasMoreProjects || (!allRecentProjects && recentProjects.length > 5);
+      recentProjects = recentProjects.slice(0, allRecentProjects ? 15 : 5);
+      homeActiveData = Object.assign({}, activeData, { recentProjects: recentProjects, hasMoreProjects: hasMoreProjects });
+      html += '<section id="recent-projects-section" aria-labelledby="recent-projects-heading">'
+        + '<h2 class="section-title home-section-heading" id="recent-projects-heading">'
+        + '<button class="home-section-toggle recent-projects-toggle" type="button" data-home-toggle="recent-projects" aria-expanded="' + !recentProjectsCollapsed + '" aria-controls="recent-project-list">'
+        + 'Recent Projects' + collapseIcon + '</button></h2>'
+        + '<div class="recent-project-list" id="recent-project-list"' + (recentProjectsCollapsed ? ' hidden' : '') + '>';
+      html += recentProjects.map(recentProjectHtml).join('');
+      if (!recentProjects.length) html += '<p class="recent-projects-empty">No recent sessions yet</p>';
+      if (hasMoreProjects) html += '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl() + '</div>';
+      html += '</div></section>';
+    }
+    if (devs.length) {
+      html += '<section aria-labelledby="devices-heading">'
+        + '<h2 class="section-title home-section-heading" id="devices-heading">'
+        + '<button class="home-section-toggle devices-toggle" type="button" data-home-toggle="devices" aria-expanded="' + !devicesCollapsed + '" aria-controls="devices-section">'
+        + 'Devices (' + devs.length + ')' + collapseIcon + '</button></h2>';
+      html += '<div id="devices-section" class="home-device-list"' + (devicesCollapsed ? ' hidden' : '') + '>';
+      html += devs.map(function (d) {
+        var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
+        var dotClass = d.online ? 'online' : 'offline';
+        return '<a class="item device-item device-card" href="#/' + esc(encodeURIComponent(d.deviceName)) + '" data-nav="device" data-name="' + esc(d.deviceName) + '">'
+          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
+          + '</a>';
+      }).join('');
+      html += '</div></section>';
+    }
+    if (!html) html = '<div class="empty">No devices yet</div>';
+    content.innerHTML = html;
+    fitRecentTimeColumn();
+    if (window.__returningHome) document.body.classList.add('ready');
     bindHomeNavigation(content);
+
+    // Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
     if (typeof window.loadViewerLibs === 'function') setTimeout(window.loadViewerLibs, 1500);
     else window.__preheatViewer = true;
+
     window.__inlineRendered = true;
     markFirstWebFrameReady();
   }
 
+  // First-frame skeleton mirrors the final content geometry. Once it has painted,
+  // the native overlay fades to this animated Web skeleton.
+  function skelCard() {
+    return '<div class="active-card skeleton-card">'
+      + '<div class="card-header"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
+      + '<div class="card-title"><span class="skel skel-w80 skel-h14"></span></div>'
+      + '<div class="card-bottom"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
+      + '</div>';
+  }
+  function skelItem() {
+    return '<div class="item device-item device-card skeleton-item skeleton-item-device">'
+      + '<div class="item-top"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
+      + '<div class="item-bottom"><span class="skel skel-w60"></span><span class="skel skel-w24"></span></div>'
+      + '</div>';
+  }
   function renderSkeleton(force) {
     var content = document.getElementById('content');
     if (!content || (window.__inlineRendered && !force)) return;
-    document.body.classList.add('workspace-home');
-    var row = '<div class="item session-item skeleton-item skeleton-item-session"><div class="item-main">'
-      + '<div class="item-top"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="item-bottom session-item-bottom"><span class="skel skel-w60"></span><span class="skel skel-w24"></span></div></div></div>';
-    content.innerHTML = '<main class="wh-workspace" aria-label="Loading sessions" aria-busy="true">'
-      + '<div class="wh-toolbar"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="section-title">Active</div><div class="list wh-session-list">' + row.repeat(4) + '</div>'
-      + '<div class="section-title">Completed</div><div class="list wh-session-list">' + row.repeat(3) + '</div></main>';
+    content.innerHTML = '<div class="section-title">Active Sessions</div>'
+      + '<div id="active-section" class="active-grid">' + skelCard() + skelCard() + skelCard() + skelCard() + '</div>'
+      + '<div class="section-title">Recent Projects</div>'
+      + '<div class="recent-project-list" aria-hidden="true"><div class="recent-project">'
+      + '<div class="recent-project-header"><div class="recent-project-toggle"><span class="skel skel-w40"></span></div></div>'
+      + '<div class="recent-session"><span class="skel skel-w60"></span></div>'
+      + '<div class="recent-session"><span class="skel skel-w40"></span></div></div></div>'
+      + '<div class="section-title">Devices</div>'
+      + '<div id="devices-section" class="home-device-list">' + skelItem() + skelItem() + '</div>';
     if (document.body) document.body.classList.add('ready');
     markFirstWebFrameReady();
   }
@@ -269,7 +542,8 @@
   // Shared SWR path for both cold start and logo refresh.
   function loadHome(activePromise, devicesPromise, options) {
     options = options || {};
-    var refreshId = ++homeRefreshId;
+    var version = ++homeLoadVersion;
+    if (!options.appendProjects) loadingRecentProjects = false;
     var cached = readCache();
     var hasCached = !!(cached && cached.active && cached.devices);
     var usePagePreview = !options.resetScroll && !!window.__returningHome;
@@ -280,9 +554,10 @@
     // briefly after handoff so cached data cannot replace it in the same frame.
     var nativeSkeletonUntil = stageNativeSkeleton ? performance.now() + 650 : 0;
     var cachedRenderTimer = null;
-    var isCurrent = options.isCurrent || function () {
+    var isVisible = options.isCurrent || function () {
       return !!document.querySelector('.top-gear');
     };
+    var isCurrent = function () { return version === homeLoadVersion && isVisible(); };
 
     function afterNativeSkeleton(fn) {
       var delay = nativeSkeletonUntil - performance.now();
@@ -296,8 +571,9 @@
     setSync(true);
     whenContentReady(function () {
       if (!isCurrent()) return;
-      document.body.classList.add('browse-view', 'workspace-home');
+      document.body.classList.add('browse-view');
       setSync(true);
+      if (options.keepContent) return;
       var restoredPreview = usePagePreview
         && (window.__homePreviewRestored || restoreReturningHomePreview());
       if (!restoredPreview) {
@@ -307,11 +583,11 @@
             cachedRenderTimer = afterNativeSkeleton(function () {
               cachedRenderTimer = null;
               if (isCurrent() && !window.__inlineRendered) {
-                renderInline(cached.active, cached.devices, refreshId);
+                renderInline(cached.active, cached.devices);
               }
             });
           }
-        } else if (hasCached) renderInline(cached.active, cached.devices, refreshId);
+        } else if (hasCached) renderInline(cached.active, cached.devices);
         else renderSkeleton(!!options.resetScroll);
       }
       if (options.resetScroll) document.getElementById('content').scrollTop = 0;
@@ -324,13 +600,17 @@
           if (!fresh[0] || !fresh[1]) { reject(new Error('Home refresh failed')); return; }
           var applyFresh = function () {
             if (!isCurrent()) { resolve(fresh); return; }
-            var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
-            var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
-            if (!window.__inlineRendered || freshRaw !== cachedRaw) {
-              var content = document.getElementById('content');
-              var keepScroll = content ? content.scrollTop : 0;
-              renderInline(fresh[0], fresh[1], refreshId);
-              if (content) content.scrollTop = keepScroll;
+            if (options.appendProjects) {
+              fresh[0] = appendRecentProjects(fresh[0]);
+            } else {
+              var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
+              var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
+              if (!window.__inlineRendered || freshRaw !== cachedRaw) {
+                var content = document.getElementById('content');
+                var keepScroll = content ? content.scrollTop : 0;
+                renderInline(fresh[0], fresh[1]);
+                if (content) content.scrollTop = keepScroll;
+              }
             }
             writeCache(fresh[0], fresh[1]);
             if (options.onFresh) options.onFresh(fresh[0], fresh[1]);
@@ -349,12 +629,7 @@
         });
       });
     }).catch(function () {
-      if (isCurrent()) {
-        var content = document.getElementById('content');
-        var error = '<div class="ws-banner error wh-feedback wh-home-error" role="alert">无法刷新会话。请检查网络后重试。 <button type="button" class="text-btn" onclick="loadDevices()">重试</button></div>';
-        if (!hasCached && !window.__workspaceData) content.innerHTML = '<main class="wh-workspace">' + error + '</main>';
-        else if (!content.querySelector('.wh-home-error')) content.insertAdjacentHTML('afterbegin', error);
-      }
+      // Cache remains usable when revalidation fails.
       return null;
     }).then(function (fresh) {
       if (isCurrent()) stopSync();

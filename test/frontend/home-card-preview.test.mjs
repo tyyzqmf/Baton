@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { createWorkspaceHome } from '../../web/js/workspace-home.js';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
@@ -16,7 +15,7 @@ async function waitFor(predicate) {
   throw new Error('Timed out waiting for inline home render');
 }
 
-test('compact home preserves quoted session previews, runtime and agent identity for navigation', async () => {
+test('inline home cards preserve quoted session previews for detail navigation', async () => {
   const preview = '{"action":"send_message","text":"quoted title"}';
   const active = {
     sessions: [{
@@ -44,8 +43,6 @@ test('compact home preserves quoted session previews, runtime and agent identity
     runScripts: 'dangerously',
     pretendToBeVisual: true,
     beforeParse(window) {
-      const workspace = createWorkspaceHome({ window, request: async () => ({}) });
-      window.__renderWorkspace = workspace.render;
       window.localStorage.setItem('_ak', window.btoa('test-key'));
       window.fetch = async function (url) {
         return {
@@ -60,30 +57,32 @@ test('compact home preserves quoted session previews, runtime and agent identity
 
   try {
     await waitFor(function () {
-      return dom.window.document.querySelector('.wh-session[data-nav="active"]');
+      return dom.window.document.querySelector('.active-card[data-nav="active"]');
     });
     assert.equal(
-      dom.window.document.querySelector('.wh-session[data-nav="active"]').dataset.preview,
+      dom.window.document.querySelector('.active-card[data-nav="active"]').dataset.preview,
       preview,
     );
     assert.equal(
-      dom.window.document.querySelector('.wh-session[data-nav="active"]').dataset.device,
+      dom.window.document.querySelector('.active-card[data-nav="active"]').dataset.device,
       'MacBook-Pro',
     );
-    assert.match(dom.window.document.querySelector('.wh-scope').textContent, /Office Mac/);
-    assert.equal(dom.window.document.querySelector('.wh-agent').textContent, '3 agents');
-    assert.equal(dom.window.document.querySelector('.wh-status').textContent, 'Running');
-    assert.equal(dom.window.document.querySelector('.wh-runtime').getAttribute('aria-label'), 'Codex');
-    assert.equal(dom.window.document.querySelector('.wh-runtime img').alt, '');
-    const row = dom.window.document.querySelector('.wh-session');
-    assert.equal(row.dataset.runtime, 'codex');
-    assert.equal(row.dataset.isagent, 'true');
-    let opened;
-    dom.window.loadProjects = () => {};
-    dom.window.openActiveSession = element => { opened = element.dataset.preview; };
-    row.click();
-    assert.equal(opened, preview);
-    assert.equal(dom.window.location.hash, '', 'normal click uses existing message navigation');
+    assert.equal(dom.window.document.querySelector('.card-device').textContent, 'Office Mac');
+    assert.deepEqual(
+      Array.from(dom.window.document.querySelector('.card-badges').children, function (element) {
+        if (element.classList.contains('agent')) return 'agent';
+        if (element.classList.contains('running')) return 'status';
+        if (element.classList.contains('runtime-mark')) return 'runtime';
+        return 'unknown';
+      }),
+      ['agent', 'status', 'runtime'],
+    );
+    assert.deepEqual(
+      Array.from(dom.window.document.querySelectorAll('.card-badges .badge.agent'), function (element) {
+        return element.textContent;
+      }),
+      ['3 agents'],
+    );
   } finally {
     dom.window.close();
   }

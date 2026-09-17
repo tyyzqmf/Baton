@@ -27,9 +27,6 @@ function clearCachedAccountData() {
   localStorage.removeItem('apeek_home_cache');
   localStorage.removeItem('baton-nav'); // legacy location
   sessionStorage.removeItem('baton-nav');
-  sessionStorage.removeItem('baton-home-ui');
-  sessionStorage.removeItem('baton-page-preview');
-  sessionStorage.removeItem('baton-returning-home');
   clearListCaches();
   clearProjectDataCache();
 }

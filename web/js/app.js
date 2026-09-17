@@ -411,8 +411,6 @@ function displayDeviceName(deviceName) {
 }
 
 function updateBreadcrumb() {
-  document.body.classList.toggle('workspace-home',
-    !state.appState.device && !state.appState.project && !state.appState.session);
   if (_navPointer && _navPointer.target.closest('#breadcrumb')) {
     _breadcrumbUpdatePending = true;
     return;
@@ -1128,16 +1126,6 @@ function toggleActiveSessions() {
   sessionStorage.setItem('apeek_activeCollapsed', show ? '0' : '1');
 }
 
-function toggleRecentAgents() {
-  var grid = document.getElementById('recent-agents-grid');
-  var title = grid && grid.previousElementSibling;
-  if (!grid) return;
-  var show = grid.style.display === 'none';
-  grid.style.display = show ? '' : 'none';
-  if (title) title.classList.toggle('expanded', show);
-  localStorage.setItem('apeek_raCollapsed', show ? '0' : '1');
-}
-
 // ---- Active session card click ----
 function openActiveSession(el) {
   var d = el.dataset;
@@ -1177,9 +1165,8 @@ async function loadDevices() {
   resetSessionThreads();
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
-  var homeRun = wasHome ? window.__homeLoadPromise : null;
   prepareNavigation({ device: null, project: null, session: null });
-  var myNav = homeRun ? _navVersion : ++_navVersion;
+  var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: null, project: null, session: null, sessionPreview: '' };
   markCurrentRoute(state.appState);
@@ -1191,9 +1178,9 @@ async function loadDevices() {
 
   // The inline shell starts the cold-load run before app.js arrives. Reuse it
   // instead of launching a second request/render pipeline.
-  if (homeRun) {
+  if (window.__homeLoadPromise && wasHome) {
     window.__preload = null;
-    return homeRun.then(function (fresh) {
+    return window.__homeLoadPromise.then(function (fresh) {
       if (_navVersion !== myNav || !fresh || !fresh[1]) return;
       rememberDevices(fresh[1]);
     });
@@ -1201,11 +1188,10 @@ async function loadDevices() {
 
   var preload = wasHome ? window.__preload : null;
   window.__preload = null;
-  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
+  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions', window.__homeActiveParams?.());
   var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
   return window.__loadHome(activePromise, devicesPromise, {
-    resetScroll: wasHome,
-    isCurrent: function () { return _navVersion === myNav; },
+    resetScroll: true,
     onFresh: function (_activeData, devData) {
       rememberDevices(devData);
       showStats(devData.devices.length + ' device(s)');
@@ -2111,7 +2097,7 @@ Object.assign(window, {
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
-  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions, toggleRecentAgents,
+  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions,
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,

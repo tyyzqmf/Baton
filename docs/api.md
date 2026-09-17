@@ -318,7 +318,12 @@ systemd user service on Linux, or Task Scheduler on native Windows.
 ### GET /api/bridge/active-sessions
 
 Returns all `running`/`needs_input` Sessions plus the 20 most recently completed Sessions across
-devices and runtimes.
+devices and runtimes. Also returns `recentProjects`: by default up to 5 recent projects,
+each with up to 5 Sessions, computed from the same query results.
+
+**Query**: optional `allProjects=true` selects the expanded view, returning up to 15 projects
+from a freshly queried recent 100-Session window. It does not read additional history or
+query individual projects.
 
 ```json
 {
@@ -333,13 +338,66 @@ devices and runtimes.
       "lastActive": "2026-08-09T08:00:00.000Z"
     }
   ],
-  "recentSessions": []
+  "recentSessions": [],
+  "hasMoreProjects": false,
+  "recentProjects": [
+    {
+      "deviceName": "MacBook-Pro",
+      "projectHash": "-Users-user-project",
+      "projectName": "project",
+      "lastActive": "2026-08-09T08:00:00.000Z",
+      "sessions": [
+        {
+          "sessionId": "codex:019e...",
+          "status": "running",
+          "deviceName": "MacBook-Pro",
+          "projectHash": "-Users-user-project",
+          "projectName": "project",
+          "preview": "Inspect the current changes",
+          "lastActive": "2026-08-09T08:00:00.000Z"
+        }
+      ]
+    }
+  ]
 }
 ```
 
 Active cards return only fields consumed by the home page. `status` is the
 effective root-plus-agents status. Completed cards omit `status` because their
 collection already defines the state.
+
+`recentProjects` is a bounded snapshot of recent work:
+
+- Merge the visible active root Sessions with the completed root Sessions from the existing
+  single descending query page (`Limit=100`). The existing offline-device and stale
+  `needs_input` visibility rules still apply to active Sessions.
+- Deduplicate by `(deviceName, projectHash, sessionId)`, keeping the newer `lastActive`;
+  active data wins ties. Omit rows missing any of these navigation identifiers.
+- Sort by `lastActive` descending and keep at most 100 Sessions **before** grouping.
+  Equal timestamps sort by device name, project hash, then Session ID descending.
+- Group by `(deviceName, projectHash)`, not the display name. Return the 5 projects with
+  the newest Sessions; each group's `lastActive` is its newest Session's timestamp.
+  Each group contains up to 5 Sessions ordered by `lastActive` descending.
+  With `allProjects=true`, return up to 15 groups from this same bounded window instead.
+- Nested Sessions include `status` (`running`, `needs_input`, or `completed`), along with
+  the existing home-card fields, including agent identity and pending-input detail when present.
+- Counts are upper bounds. Filtering and DynamoDB page size may yield fewer candidates.
+  No extra project queries, history queries, or pagination are performed to fill a group.
+  These groups do not represent complete project history or project-wide Session counts.
+
+The existing `sessions` and `recentSessions` fields retain their previous behavior and limits.
+
+`hasMoreProjects` indicates whether the default view can be expanded beyond 5 projects.
+It is false in expanded mode (`allProjects=true`), even if the candidate window contains
+more than 15 groups. A client can show **Show more** when it is true, then request
+`?allProjects=true`, exclude already displayed `(deviceName, projectHash)` pairs, and append
+up to 10 unseen groups, keeping at most 15 displayed projects. This request reruns the
+existing queries and needs no additional `/devices` request.
+
+The Web client preserves the existing project order, Session rows, and Active Sessions during
+this append operation, and caches the combined displayed snapshot. Regular home refreshes
+replace the whole snapshot with the latest data and ordering, requesting 5 or 15 projects
+according to the current in-memory view mode. Reloading the page resets the view to 5.
 
 ---
 
@@ -385,75 +443,6 @@ Get all devices under the current account.
 - `lastActive`: most recent session's lastActive on this device
 - `online`: whether bridge WS is connected (checks Connections table for role=bridge with matching deviceName)
 - Sorted by `lastActive` descending
-
----
-
-### GET /api/bridge/project-sessions
-
-Homepage-only project overview across all devices in the current account, including
-offline devices. Groups are identified by `(deviceName, projectHash)`, not the
-display name. Device records are used for display names, never to filter projects.
-
-**Query**:
-| Param | Required | Description |
-|-------|----------|-------------|
-| `limit` | No | Project groups per page (`1-50`, default `50`) |
-| `cursor` | No | Opaque project `nextCursor` from the previous response |
-
-There is no device filter. Each returned group includes up to five of its newest
-root Sessions; subagent threads remain inside their parent Session.
-
-```json
-{
-  "projects": [
-    {
-      "deviceName": "MacBook-Pro",
-      "deviceDisplayName": "Office Mac",
-      "projectHash": "-Users-user-baton",
-      "projectName": "baton",
-      "projectPath": "/Users/user/baton",
-      "sessionCount": 1,
-      "lastActive": "2026-09-16T10:30:00.000Z",
-      "sessionPage": {
-        "sessions": [
-          {
-            "sessionId": "codex:example",
-            "preview": "Review the changes",
-            "lastActive": "2026-09-16T10:30:00.000Z",
-            "size": 1024,
-            "model": "",
-            "status": "completed",
-            "agentCount": 0
-          }
-        ],
-        "hasMore": false,
-        "nextCursor": null
-      }
-    }
-  ],
-  "hasMore": false,
-  "nextCursor": null
-}
-```
-
-`sessionPage.sessions` uses the same list fields and effective statuses as
-`GET /api/bridge/sessions`. To load more Sessions, pass
-`sessionPage.nextCursor` to `/api/bridge/sessions` with that group's `deviceName`,
-`projectHash`, and `limit=5`. Do not use the top-level project cursor for Sessions.
-
-Project order is descending by `(lastActive, deviceName, projectHash)`. The project
-cursor is bound to the account and this endpoint; invalid cursors return `400`.
-This is a live list, not a frozen snapshot: refresh to see activity that moves a
-project ahead of the current cursor. Clients deduplicate by the composite group key.
-
-The server queries all account-scoped `PROJ#` metadata pages before sorting and
-selecting the requested group page. It then reads first Session pages only for
-those groups from the existing list index, with at most eight concurrent reads.
-AWS query failures return `503`, not a successful response with missing groups.
-No new index, metadata writes, or Bridge protocol changes are required. Existing
-Session rows must have the list-index fields, as required by `/sessions` pagination.
-
-For local-only testing against an existing stack, see [Local project overview API](local-project-overview.md).
 
 ---
 

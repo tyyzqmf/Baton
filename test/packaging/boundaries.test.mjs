@@ -10,7 +10,6 @@ const SKIP_DIRS = new Set([
   '.git',
   '.build',
   '.pytest_cache',
-  '.venv',
   'dist',
   'gen',
   'node_modules',
