@@ -155,8 +155,8 @@ body.browse-view #content { scrollbar-gutter: stable; }
 .runtime-mark-codex::before {
   content: ""; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px;
   background: #6e7681; transform: translate(-50%, -50%); transition: background 0.15s;
-  -webkit-mask: url("../assets/codex.svg") center / contain no-repeat;
-  mask: url("../assets/codex.svg") center / contain no-repeat;
+  -webkit-mask: var(--runtime-codex-image, url("../assets/codex.svg")) center / contain no-repeat;
+  mask: var(--runtime-codex-image, url("../assets/codex.svg")) center / contain no-repeat;
 }
 #top-right .runtime-mark, #top-right .runtime-icon { width: 20px; height: 20px; }
 #top-right .runtime-mark { flex-basis: 20px; }
@@ -1036,7 +1036,8 @@ html.native-mobile .slash-description {
   font-size: 11px; font-weight: 600; color: #58a6ff; text-transform: uppercase;
   padding: 16px 16px 8px;
 }
-.active-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
+.active-section-heading { display: flex; align-items: center; justify-content: space-between; }
+.section-title.active-section-heading { padding-top: 16px; padding-bottom: 12px; }
 .active-section-heading .collapse-arrow { flex-shrink: 0; }
 
 /* === Active session cards === */
@@ -1107,6 +1108,8 @@ html.native-mobile .slash-description {
   padding: 16px 16px 8px; border: 0; background: transparent; color: inherit; font: inherit;
   text-transform: inherit; text-align: left; cursor: pointer;
 }
+.home-section-toggle.recent-projects-toggle { min-height: 0; padding-top: 8px; padding-bottom: 12px; }
+section:first-child > .home-section-heading > .recent-projects-toggle { padding-top: 16px; }
 .recent-project-list { display: grid; gap: 8px; padding: 0 12px 8px; }
 .recent-project-list[hidden], .recent-project-sessions[hidden], .home-device-list[hidden] { display: none; }
 .recent-project { min-width: 0; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; }
@@ -1149,7 +1152,7 @@ html.native-mobile .slash-description {
 }
 .recent-projects-show-more:disabled { cursor: wait; }
 .recent-projects-error { padding: 10px 14px; font-size: 12px; color: #f85149; }
-.home-device-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0 12px 8px; }
+.home-device-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0 12px calc(8px + var(--sab, env(safe-area-inset-bottom, 0px))); }
 .device-card { min-width: 0; padding: 12px 14px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; }
 .device-card .item-bottom { flex-wrap: wrap; gap: 4px 12px; }
 .recent-projects-show-more:focus-visible, .home-section-toggle:focus-visible, .recent-project-toggle:focus-visible,
@@ -1305,8 +1308,8 @@ html.native-mobile .section-title .collapse-arrow {
 }
 html.native-mobile .card-project { font-size: 15px; }
 html.native-mobile .card-header { min-height: 21px; }
-html.native-mobile .card-title { min-height: 21.75px; font-size: 15px; line-height: 1.45; }
-html.native-mobile .card-bottom { min-height: 17px; }
+html.native-mobile .card-title { min-height: 22px; font-size: 15px; line-height: 1.45; }
+html.native-mobile .card-bottom { min-height: 18px; }
 html.native-mobile .card-device,
 html.native-mobile .card-time { font-size: 14px; }
 html.native-mobile .skeleton-card .card-title { align-items: center; }

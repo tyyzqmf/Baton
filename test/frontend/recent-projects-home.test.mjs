@@ -133,6 +133,33 @@ test('an empty project snapshot has a quiet empty state without hiding devices',
   } finally { h.win.close(); }
 });
 
+test('recent projects account for the active list spacing only when active sessions are present', async () => {
+  const h = harness();
+  try {
+    const style = h.doc.createElement('style');
+    style.textContent = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+    h.doc.head.appendChild(style);
+    await h.win.__homeLoadPromise;
+    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.recent-projects-toggle')).paddingTop, '8px');
+
+    await h.win.__loadHome(Promise.resolve({ ...active, sessions: [] }), Promise.resolve(devices));
+    const content = h.doc.getElementById('content');
+    assert.equal(content.firstElementChild.id, 'recent-projects-section');
+    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.recent-projects-toggle')).paddingTop, '16px');
+    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.devices-toggle')).minHeight, '44px');
+
+    const edgePreview = content.cloneNode(true);
+    edgePreview.removeAttribute('id');
+    edgePreview.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
+    h.doc.body.appendChild(edgePreview);
+    assert.equal(h.win.getComputedStyle(edgePreview.querySelector('.recent-projects-toggle')).paddingTop, '16px');
+    edgePreview.remove();
+
+    await h.win.__loadHome(Promise.resolve(active), Promise.resolve(devices));
+    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.recent-projects-toggle')).paddingTop, '8px');
+  } finally { h.win.close(); }
+});
+
 test('section and project collapse independently; View all never toggles the project', async () => {
   const h = harness();
   try {

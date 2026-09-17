@@ -293,7 +293,7 @@ function runtimeIcon(sessionId, runtime) {
   var label = value === 'codex' ? 'Codex' : 'Claude Code';
   return '<span class="runtime-mark' + (value === 'codex' ? ' runtime-mark-codex' : '')
     + '" role="img" aria-label="' + label + '" title="' + label + '">'
-    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(window.__runtimeIconSource?.(value) || './assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg')) + '" alt="" aria-hidden="true"></span>';
 }
 
 function activeSessionThread() {

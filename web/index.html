@@ -45,7 +45,7 @@
   #top-right.syncing .new-session-btn::after{content:"";position:absolute;left:3px;top:3px;box-sizing:border-box;width:22px;height:22px;border:1px solid currentColor;border-top-color:transparent;border-radius:50%;animation:apk-spin .7s linear infinite;pointer-events:none}
   .runtime-mark{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;vertical-align:middle}
   .runtime-icon{display:block;width:16px;height:16px;object-fit:contain}
-  .runtime-mark-codex{position:relative}.runtime-mark-codex .runtime-icon{visibility:hidden}.runtime-mark-codex::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:#6e7681;transform:translate(-50%,-50%);-webkit-mask:url("assets/codex.svg") center/contain no-repeat;mask:url("assets/codex.svg") center/contain no-repeat;transition:background .15s}
+  .runtime-mark-codex{position:relative}.runtime-mark-codex .runtime-icon{visibility:hidden}.runtime-mark-codex::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:#6e7681;transform:translate(-50%,-50%);-webkit-mask:var(--runtime-codex-image,url("assets/codex.svg")) center/contain no-repeat;mask:var(--runtime-codex-image,url("assets/codex.svg")) center/contain no-repeat;transition:background .15s}
   @media(hover:hover) and (pointer:fine){#top-right>.runtime-mark-codex:hover::before,.runtime-switch:hover .runtime-mark-codex::before,.agent-thread-trigger:hover .runtime-mark-codex::before{background:#e6edf3}}
   html.native-mobile .top-bar{min-height:calc(var(--sat,env(safe-area-inset-top,0px)) + 44px);padding:var(--sat,env(safe-area-inset-top,0px)) 8px 0 12px;border-bottom:0;box-shadow:inset 0 -1px #30363d}
   html.native-mobile .top-left{min-height:44px;gap:6px;font-size:17px;line-height:21px}
@@ -115,7 +115,6 @@
   function setSync(syncing) {
     var topRight = document.getElementById('top-right');
     if (!topRight) return;
-    if (window.__returningHome && syncing) syncing = false;
     topRight.classList.toggle('syncing', syncing);
     var legacyGear = topRight.querySelector('.top-gear.syncing');
     if (legacyGear) legacyGear.classList.remove('syncing');
@@ -182,11 +181,48 @@
   }
   function osName(os) { return { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[os] || os || 'unknown'; }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  var runtimeIconCacheKey = 'baton-runtime-icons-v1';
+  var runtimeIconCache = {};
+  var runtimeIconPending = {};
+  function validRuntimeSvg(svg) {
+    return typeof svg === 'string' && svg.length < 16384 && /^<svg\s[\s\S]*<\/svg>\s*$/.test(svg);
+  }
+  try {
+    var savedIcons = JSON.parse(sessionStorage.getItem(runtimeIconCacheKey) || '{}');
+    ['claude', 'codex'].forEach(function (runtime) {
+      if (savedIcons && validRuntimeSvg(savedIcons[runtime])) runtimeIconCache[runtime] = savedIcons[runtime];
+    });
+  } catch (e) {}
+  function runtimeIconSource(runtime) {
+    var svg = runtimeIconCache[runtime];
+    return svg ? 'data:image/svg+xml,' + encodeURIComponent(svg)
+      : './assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg');
+  }
+  window.__runtimeIconSource = runtimeIconSource;
+  if (runtimeIconCache.codex) {
+    document.documentElement.style.setProperty('--runtime-codex-image', 'url("' + runtimeIconSource('codex') + '")');
+  }
+  document.addEventListener('load', function (event) {
+    var image = event.target;
+    if (image.tagName !== 'IMG' || !image.classList.contains('runtime-icon')) return;
+    var runtime = image.closest('.runtime-mark-codex') ? 'codex' : 'claude';
+    if (runtimeIconCache[runtime] || runtimeIconPending[runtime]) return;
+    runtimeIconPending[runtime] = true;
+    fetch(image.currentSrc || image.src, { cache: 'force-cache' }).then(function (response) {
+      return response.ok ? response.text() : '';
+    }).then(function (svg) {
+      if (!validRuntimeSvg(svg)) return;
+      runtimeIconCache[runtime] = svg;
+      try { sessionStorage.setItem(runtimeIconCacheKey, JSON.stringify(runtimeIconCache)); } catch (e) {}
+    }).catch(function () {}).finally(function () {
+      delete runtimeIconPending[runtime];
+    });
+  }, true);
   function runtimeIcon(s) {
     var runtime = String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
     var label = runtime === 'codex' ? 'Codex' : 'Claude Code';
     return '<span class="runtime-mark' + (runtime === 'codex' ? ' runtime-mark-codex' : '') + '" role="img" aria-label="' + label + '" title="' + label + '">'
-      + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="./assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg') + '" alt="" aria-hidden="true"></span>';
+      + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(runtimeIconSource(runtime)) + '" alt="" aria-hidden="true"></span>';
   }
 
   function fitRecentTimeColumn() {
@@ -326,7 +362,12 @@
     topBar.innerHTML = snapshot.topBarHtml || '';
     breadcrumb.innerHTML = snapshot.breadcrumbHtml || '';
     breadcrumb.style.display = snapshot.breadcrumbDisplay || 'none';
-    content.innerHTML = snapshot.contentHtml;
+    var preview = document.createElement('template');
+    preview.innerHTML = snapshot.contentHtml;
+    preview.content.querySelectorAll('img.runtime-icon').forEach(function (image) {
+      image.src = runtimeIconSource(image.closest('.runtime-mark-codex') ? 'codex' : 'claude');
+    });
+    content.replaceChildren(preview.content);
     fitRecentTimeColumn();
     content.scrollTop = snapshot.scrollTop || 0;
     sessionStorage.removeItem('baton-page-preview');
@@ -505,24 +546,19 @@
       + '<div class="card-bottom"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
       + '</div>';
   }
-  function skelItem() {
-    return '<div class="item device-item device-card skeleton-item skeleton-item-device">'
-      + '<div class="item-top"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="item-bottom"><span class="skel skel-w60"></span><span class="skel skel-w24"></span></div>'
-      + '</div>';
-  }
   function renderSkeleton(force) {
     var content = document.getElementById('content');
     if (!content || (window.__inlineRendered && !force)) return;
-    content.innerHTML = '<div class="section-title">Active Sessions</div>'
-      + '<div id="active-section" class="active-grid">' + skelCard() + skelCard() + skelCard() + skelCard() + '</div>'
-      + '<div class="section-title">Recent Projects</div>'
+    content.innerHTML = '<div class="section-title active-section-heading">Active Sessions</div>'
+      + '<div id="active-section" class="active-grid">' + skelCard() + skelCard() + '</div>'
+      + '<div class="section-title home-section-heading"><div class="home-section-toggle recent-projects-toggle">Recent Projects</div></div>'
       + '<div class="recent-project-list" aria-hidden="true"><div class="recent-project">'
       + '<div class="recent-project-header"><div class="recent-project-toggle"><span class="skel skel-w40"></span></div></div>'
       + '<div class="recent-session"><span class="skel skel-w60"></span></div>'
-      + '<div class="recent-session"><span class="skel skel-w40"></span></div></div></div>'
-      + '<div class="section-title">Devices</div>'
-      + '<div id="devices-section" class="home-device-list">' + skelItem() + skelItem() + '</div>';
+      + '<div class="recent-session"><span class="skel skel-w40"></span></div>'
+      + '<div class="recent-session"><span class="skel skel-w80"></span></div>'
+      + '<div class="recent-session"><span class="skel skel-w60"></span></div>'
+      + '<div class="recent-session"><span class="skel skel-w40"></span></div></div></div>';
     if (document.body) document.body.classList.add('ready');
     markFirstWebFrameReady();
   }
