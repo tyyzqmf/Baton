@@ -1126,16 +1126,6 @@ function toggleActiveSessions() {
   sessionStorage.setItem('apeek_activeCollapsed', show ? '0' : '1');
 }
 
-function toggleRecentAgents() {
-  var grid = document.getElementById('recent-agents-grid');
-  var title = grid && grid.previousElementSibling;
-  if (!grid) return;
-  var show = grid.style.display === 'none';
-  grid.style.display = show ? '' : 'none';
-  if (title) title.classList.toggle('expanded', show);
-  localStorage.setItem('apeek_raCollapsed', show ? '0' : '1');
-}
-
 // ---- Active session card click ----
 function openActiveSession(el) {
   var d = el.dataset;
@@ -1198,7 +1188,7 @@ async function loadDevices() {
 
   var preload = wasHome ? window.__preload : null;
   window.__preload = null;
-  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions');
+  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions', window.__homeActiveParams?.());
   var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
   return window.__loadHome(activePromise, devicesPromise, {
     resetScroll: true,
@@ -2107,7 +2097,7 @@ Object.assign(window, {
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
   exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
-  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions, toggleRecentAgents,
+  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions,
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,

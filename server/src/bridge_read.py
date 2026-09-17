@@ -22,6 +22,10 @@ _connections_table = None
 LIST_INDEX_NAME = "listPk-listSk-index"
 THREAD_ROOT_INDEX_NAME = "threadRootPk-threadRootSk-index"
 NEEDS_INPUT_ACTIVE_WINDOW = timedelta(days=7)
+RECENT_SESSION_LIMIT = 100
+RECENT_PROJECT_LIMIT = 5
+RECENT_PROJECT_EXPANDED_LIMIT = 15
+RECENT_PROJECT_SESSION_LIMIT = 5
 SESSION_LIST_ATTRIBUTE_NAMES = {
     "#sid": "sessionId",
     "#preview": "preview",
@@ -293,10 +297,44 @@ async def get_config():
     return {"wsUrl": ws_url}
 
 
+def _recent_projects(active_sessions, completed_sessions):
+    """Group the latest 100 eligible sessions without querying project history."""
+    unique = {}
+    # On equal timestamps, prefer the active copy if an index update made a
+    # session appear in both query results.
+    for session in active_sessions + completed_sessions:
+        identity = (session["deviceName"], session["projectHash"], session["sessionId"])
+        if not all(identity):
+            continue
+        previous = unique.get(identity)
+        if previous is None or session["lastActive"] > previous["lastActive"]:
+            unique[identity] = session
+    recent = sorted(
+        unique.values(),
+        key=lambda s: (s["lastActive"], s["deviceName"], s["projectHash"], s["sessionId"]),
+        reverse=True,
+    )[:RECENT_SESSION_LIMIT]
+
+    projects = {}
+    for session in recent:
+        key = (session["deviceName"], session["projectHash"])
+        if key not in projects:
+            projects[key] = {
+                "deviceName": session["deviceName"],
+                "projectHash": session["projectHash"],
+                "projectName": session["projectName"],
+                "lastActive": session["lastActive"],
+                "sessions": [],
+            }
+        if len(projects[key]["sessions"]) < RECENT_PROJECT_SESSION_LIMIT:
+            projects[key]["sessions"].append(session)
+    return list(projects.values())
+
+
 @read_router.get("/active-sessions")
-async def get_active_sessions(request: Request):
-    """Return active sessions + the 20 most recently completed sessions (any type).
-    Two GSI queries: running/needs_input (between) + done# (begins_with, limit 20 desc)."""
+async def get_active_sessions(request: Request, allProjects: bool = False):
+    """Return active sessions, 20 completed sessions, and recent project groups.
+    Reuse the active query and one page of up to 100 completed candidates."""
     sessions_table, _ = _tables()
     account_id = _account_id(request)
 
@@ -310,7 +348,7 @@ async def get_active_sessions(request: Request):
             ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES)),
         loop.run_in_executor(None, lambda: sessions_table.query(IndexName="accountId-activeStatus-index",
             KeyConditionExpression=Key("accountId").eq(account_id) & Key("activeStatus").begins_with("done#"),
-            ScanIndexForward=False, Limit=100,
+            ScanIndexForward=False, Limit=RECENT_SESSION_LIMIT,
             ProjectionExpression=ACTIVE_HOME_PROJECTION,
             ExpressionAttributeNames=ACTIVE_HOME_ATTRIBUTE_NAMES).get("Items", [])),
         loop.run_in_executor(None, lambda: _online_bridge_devices(account_id)),
@@ -350,7 +388,18 @@ async def get_active_sessions(request: Request):
         if not item.get("parentSessionId")
     ][:20]
 
-    return {"sessions": sessions, "recentSessions": recent_sessions}
+    completed_sessions = [
+        _to_session(item, True)
+        for item in done_items
+        if not item.get("parentSessionId")
+    ]
+    projects = _recent_projects(sessions, completed_sessions)
+    return {
+        "sessions": sessions,
+        "recentSessions": recent_sessions,
+        "recentProjects": projects[:RECENT_PROJECT_EXPANDED_LIMIT if allProjects else RECENT_PROJECT_LIMIT],
+        "hasMoreProjects": not allProjects and len(projects) > RECENT_PROJECT_LIMIT,
+    }
 
 
 def _live_active_counts(sessions_table, account_id):

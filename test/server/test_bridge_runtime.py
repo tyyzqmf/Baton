@@ -337,7 +337,7 @@ def test_active_sessions_projects_only_home_card_fields(monkeypatch):
 
     result = asyncio.run(bridge_read.get_active_sessions(FakeRequest()))
 
-    assert result == {
+    assert {key: result[key] for key in ("sessions", "recentSessions")} == {
         "sessions": [{
             "sessionId": "codex:active",
             "preview": "Active",
@@ -360,6 +360,16 @@ def test_active_sessions_projects_only_home_card_fields(monkeypatch):
             "agentCount": 0,
         }],
     }
+    assert result["recentProjects"] == [{
+        "deviceName": "Mac",
+        "projectHash": "-workspace",
+        "projectName": "project",
+        "lastActive": active["lastActive"],
+        "sessions": [
+            result["sessions"][0],
+            {**result["recentSessions"][0], "status": "completed"},
+        ],
+    }]
     assert len(table.query_calls) == 2
     assert all(
         call["ProjectionExpression"] == bridge_read.ACTIVE_HOME_PROJECTION
