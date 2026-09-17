@@ -95,6 +95,61 @@ const CLIENT_TURN_ACK_LIMIT = 5000;
 let _claudeHookServer = null;
 let _projectFilesModule = null;
 let _gitStatusModule = null;
+let _terminalRemote = null;
+let _terminalRemoteLoading = null;
+let _sharedTerminals = null;
+let _sharedTerminalsLoading = null;
+
+export function hasTerminalSessions() { return (_sharedTerminals?.activeCount || 0) > 0; }
+
+async function handleSharedTerminalMessage(message) {
+  if (!_sharedTerminalsLoading) {
+    _sharedTerminalsLoading = import('./terminal-shared.mjs').then(({ createSharedTerminals }) => {
+      _sharedTerminals = createSharedTerminals({ endpoint: _config.wsUrl, key: _config.apiKey,
+        device: _config.deviceName, sendControl: wsSend,
+        socketFactory: url => new WebSocket(url, { handshakeTimeout: 15000, maxPayload: 28 * 1024, perMessageDeflate: false }),
+      });
+      return _sharedTerminals;
+    }).catch(error => { _sharedTerminalsLoading = null; throw error; });
+  }
+  const connection = _ws;
+  try {
+    const manager = await _sharedTerminalsLoading;
+    if (_ws === connection) manager.handle(message);
+  } catch {
+    wsSend({ action: 'terminal_direct', v: 1, op: 'close', terminalId: message.terminalId,
+      reason: '终端组件未就绪，请更新或重新安装 Bridge' });
+  }
+}
+
+async function handleTerminalPocMessage(message) {
+  const connection = _ws;
+  if (_config?.terminalPoc?.enabled !== true) {
+    if (connection?.readyState === WebSocket.OPEN) connection.send(JSON.stringify({
+      action: 'terminal_poc', v: 1, type: 'error', eventSeq: 0,
+      terminalId: message.terminalId, replyConnectionId: message.replyConnectionId,
+      device: _config.deviceName, message: 'Terminal POC is disabled on this Bridge',
+    }));
+    return;
+  }
+  if (!_terminalRemoteLoading) {
+    _terminalRemoteLoading = import('./terminal-remote.mjs').then(({ createTerminalRemote }) => {
+      _terminalRemote = createTerminalRemote({
+        cwd: _config.terminalPoc.cwd || process.cwd(), device: _config.deviceName,
+        send(payload) {
+          const encoded = JSON.stringify(payload);
+          if (_ws?.readyState !== WebSocket.OPEN || Buffer.byteLength(encoded) > 28 * 1024
+            || _ws.bufferedAmount > 1024 * 1024) return false;
+          _ws.send(encoded, error => { if (error) _terminalRemote?.closeAll(); });
+          return true;
+        },
+      });
+      return _terminalRemote;
+    }).catch(error => { _terminalRemoteLoading = null; throw error; });
+  }
+  const manager = await _terminalRemoteLoading;
+  if (_ws === connection && connection.readyState === WebSocket.OPEN) manager.handle(message);
+}
 
 async function projectFilesModule() {
   if (!_projectFilesModule) {
@@ -115,6 +170,8 @@ async function gitStatusModule() {
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 
 export async function shutdownInteractions() {
+  _terminalRemote?.dispose();
+  _sharedTerminals?.dispose();
   _pool.shutdownAll();
   await _claudeHookServer?.close();
   _claudeHookServer = null;
@@ -552,6 +609,8 @@ export function createTurnMessagesEvent(sessionId, turnId, messages) {
 
 function connect() {
   if (!_config) return;
+  _terminalRemote?.closeAll();
+  _sharedTerminals?.detachAll();
 
   // Derive WS URL from REST URL: https://xxx.execute-api.xxx.amazonaws.com/v1
   // → wss://xxx-ws.execute-api.xxx.amazonaws.com/v1
@@ -573,7 +632,8 @@ function connect() {
 
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge`
     + `&device=${encodeURIComponent(_config.deviceName)}`
-    + `&version=${encodeURIComponent(BRIDGE_VERSION)}`;
+    + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
+    + (process.platform === 'darwin' || process.platform === 'linux' ? '&terminal=2' : '');
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried
@@ -640,6 +700,8 @@ function connect() {
 }
 
 function scheduleReconnect() {
+  _terminalRemote?.closeAll();
+  _sharedTerminals?.detachAll();
   if (_reconnectTimer) return;
   _consecutiveFailures += 1;
   const delay = _consecutiveFailures >= SLOW_RECONNECT_THRESHOLD
@@ -655,6 +717,12 @@ function scheduleReconnect() {
 
 async function handleMessage(msg) {
   switch (msg.action) {
+    case 'terminal_direct':
+      await handleSharedTerminalMessage(msg);
+      break;
+    case 'terminal_poc':
+      await handleTerminalPocMessage(msg);
+      break;
     case 'sync_session':
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;

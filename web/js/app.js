@@ -446,11 +446,15 @@ function updateBreadcrumb() {
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
+    var terminalButton = !state.appState.session
+      ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
+        + ' aria-label="Project terminal" title="Terminal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 5 5-5 5M13 17h6"/></svg></button>'
+      : '';
     var gitButton = state.appState.session && state.appState.session !== '__new__'
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
-    topRight.innerHTML = gitButton + runtimeMark + filesButton
+    topRight.innerHTML = gitButton + runtimeMark + filesButton + terminalButton
       + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
   } else if (state.appState.device && !state.appState.project) {
     topRight.innerHTML = '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
@@ -478,6 +482,16 @@ function updateBreadcrumb() {
   requestAnimationFrame(function () {
     updateBreadcrumbTruncation(el.querySelector('.breadcrumb-nav'));
   });
+}
+
+async function openProjectTerminalPage() {
+  const device = state.appState.device;
+  const project = state.appState.project;
+  if (!device || !project || state.appState.session) return;
+  const module = await import('./terminal.js');
+  if (state.appState.device === device && state.appState.project?.hash === project.hash && !state.appState.session) {
+    module.openProjectTerminal({ device, projectHash: project.hash, projectName: project.name });
+  }
 }
 
 function updateBreadcrumbTruncation(nav) {
@@ -787,6 +801,7 @@ function saveNav() {
 }
 
 function navigateUp() {
+  if (window.closeProjectTerminal?.()) return true;
   if (state.selectMode) { exitSelectMode(); return true; }
 
   var active = document.activeElement;
@@ -1160,6 +1175,7 @@ function rememberDevices(data) {
 }
 
 async function loadDevices() {
+  window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
   resetSessionThreads();
@@ -1201,6 +1217,7 @@ async function loadDevices() {
 
 function refreshForegroundView() {
   if (document.visibilityState !== 'visible') return Promise.resolve(false);
+  if (document.getElementById('projectTerminalPage')) return Promise.resolve(false);
   if (_foregroundRefresh) return _foregroundRefresh;
   _foregroundRefresh = Promise.resolve().then(function () {
     if (state.gitStatusOpen) {
@@ -1268,6 +1285,7 @@ function renderProjects(device, data) {
 }
 
 async function loadProjects(device) {
+  window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
   resetSessionThreads();
@@ -1362,6 +1380,7 @@ function renderSessions(device, projectHash, data) {
 }
 
 async function loadSessions(device, projectHash, projectName) {
+  window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
   resetSessionThreads();
@@ -1580,6 +1599,7 @@ function toggleNewSessionRuntime() {
 }
 
 async function startNewSession(projectHash) {
+  window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
   resetSessionThreads();
@@ -1659,6 +1679,7 @@ async function startNewSession(projectHash) {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, options) {
+  window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
   options = options || {};
@@ -2100,6 +2121,7 @@ Object.assign(window, {
   startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions,
   refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
+  openProjectTerminalPage,
   scrollToBottom, positionScrollBtn, loadOlderAndPrepend,
   maybeLoadOlderAndPrepend,
 });

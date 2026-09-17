@@ -10,6 +10,8 @@ import hashlib
 import boto3
 from project.files_ws import handle_project_files
 from project.git_ws import handle_git_status
+from terminal_ws import handle_terminal_poc
+from terminal_direct_ws import handle_terminal_direct, terminal_direct_disconnect
 
 _ddb = None
 _connections_table = None
@@ -185,7 +187,7 @@ def handler(event, context):
     if route == "$connect":
         return _handle_connect(event, connection_id)
     elif route == "$disconnect":
-        return _handle_disconnect(connection_id)
+        return _handle_disconnect(connection_id, endpoint)
     elif route == "$default":
         return _handle_message(event, connection_id, endpoint)
 
@@ -203,6 +205,12 @@ def _handle_connect(event, connection_id):
     if not api_key:
         return {"statusCode": 401}
 
+    context = event.get("requestContext", {})
+    connected_endpoint = f"https://{context.get('domainName', '')}/{context.get('stage', '')}"
+    data_endpoint = os.environ.get("TERMINAL_DIRECT_ENDPOINT")
+    if (role == "terminal_data") != (bool(data_endpoint) and connected_endpoint == data_endpoint):
+        return {"statusCode": 403}
+
     account_id = _account_id(api_key)
     ttl = int(time.time()) + 86400  # 24h
 
@@ -217,13 +225,32 @@ def _handle_connect(event, connection_id):
         item["deviceName"] = device
     if role == "bridge" and version:
         item["bridgeVersion"] = version
+    if role == "bridge" and qs.get("terminal") == "2":
+        item["terminalProtocol"] = 2
+    if role == "terminal_data":
+        item["terminalDataEndpoint"] = connected_endpoint
     _connections_table.put_item(Item=item)
 
     return {"statusCode": 200}
 
 
-def _handle_disconnect(connection_id):
+def _disconnect_terminal_data(endpoint, connection_id):
+    try:
+        _apigw_client(endpoint).delete_connection(ConnectionId=connection_id)
+    except _apigw_client(endpoint).exceptions.GoneException:
+        pass
+
+
+def _handle_disconnect(connection_id, endpoint=None):
     """Remove connection + any subscriptions."""
+    try:
+        if endpoint:
+            connection = _connections_table.get_item(Key={"connectionId": connection_id}, ConsistentRead=True).get("Item")
+            terminal_direct_disconnect(connection, endpoint, table=_connections_table,
+                query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
+    except Exception:
+        pass
+
     try:
         _connections_table.delete_item(Key={"connectionId": connection_id})
     except Exception:
@@ -261,6 +288,8 @@ def _handle_message(event, connection_id, endpoint):
 
     action = body.get("action", "")
 
+    terminal_identity_started = time.perf_counter() if action == "terminal_poc" and body.get("profile") is True else None
+
     # Get connection info — if missing (e.g. DDB cleared), force reconnect.
     # Client's onclose handler will auto-reconnect → $connect rewrites the record.
     conn = _connections_table.get_item(Key={"connectionId": connection_id}).get("Item")
@@ -273,11 +302,24 @@ def _handle_message(event, connection_id, endpoint):
 
     role = conn.get("role", "app")
     account_id = conn.get("accountId", "")
+    if action == "terminal_direct":
+        return handle_terminal_direct(body, conn, connection_id, endpoint, table=_connections_table,
+            query=_query_connections, post=_post_to_connection, disconnect=_disconnect_terminal_data)
+    if role == "terminal_data":
+        return {"statusCode": 403}
     if role == "bridge" and _requires_turn_sequence(body) \
             and not _has_valid_turn_sequence(body):
         return {"statusCode": 400}
 
-    if action == "subscribe":
+    if action == "terminal_poc":
+        return handle_terminal_poc(
+            body, conn, connection_id, endpoint,
+            identity_ms=(time.perf_counter() - terminal_identity_started) * 1000 if terminal_identity_started is not None else 0,
+            query_connections=_query_connections,
+            post_to_connection=_post_to_connection,
+            connections_table=_connections_table,
+        )
+    elif action == "subscribe":
         return _handle_subscribe(body, connection_id, account_id, endpoint)
     elif action == "reveal_permission":
         if role == "app":
