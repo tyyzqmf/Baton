@@ -27,6 +27,62 @@ function shellFixture(root) {
   };
 }
 
+test('direct Claude launch loads the credential script with a bare service environment', {
+  skip: process.platform === 'win32',
+}, (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "baton-runtime-env ' "));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const binary = path.join(root, 'claude.mjs');
+  fs.mkdirSync(path.join(root, '.claude'));
+  fs.writeFileSync(path.join(root, '.claude/env.sh'), [
+    'printf "env startup noise\\n"',
+    'ANTHROPIC_BASE_URL=https://example.invalid/proxy',
+    'ANTHROPIC_AUTH_TOKEN="fixture token with spaces"',
+    'ANTHROPIC_API_KEY=fixture-key',
+    'PATH=/usr/bin:/bin',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(binary, `#!/usr/bin/env node
+import fs from 'node:fs';
+console.log(JSON.stringify({
+  credentials: [process.env.ANTHROPIC_BASE_URL, process.env.ANTHROPIC_AUTH_TOKEN, process.env.ANTHROPIC_API_KEY],
+  input: fs.readFileSync(0, 'utf8'),
+  args: process.argv.slice(2),
+  path: process.env.PATH,
+}));
+`, { mode: 0o700 });
+  const env = { HOME: root, PATH: '/usr/bin:/bin' };
+  const launcher = resolveClaudeBinForCapability({
+    home: root,
+    bridgeHome: path.join(root, '.baton-bridge'),
+    env,
+    findExecutableFn: () => binary,
+  });
+  const args = ['-p', '--resume', 'session with spaces', '$literal;argument'];
+  const result = JSON.parse(execFileSync(launcher, args, {
+    env,
+    encoding: 'utf8',
+    input: 'bridge message\n',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }));
+
+  assert.deepEqual(result.credentials, ['https://example.invalid/proxy', 'fixture token with spaces', 'fixture-key']);
+  assert.equal(result.input, 'bridge message\n');
+  assert.deepEqual(result.args, args);
+  assert.ok(result.path.split(':').includes(path.join(root, '.local/bin')));
+  assert.doesNotMatch(fs.readFileSync(launcher, 'utf8'), /fixture token|fixture-key/);
+});
+
+test('Claude without an environment file keeps direct login-based resolution', (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-runtime-no-env-'));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.equal(resolveClaudeBinForCapability({
+    home: root,
+    bridgeHome: path.join(root, '.baton-bridge'),
+    findExecutableFn: () => '/known/claude',
+  }), '/known/claude');
+});
+
 test('direct executable resolution wins without probing the user shell', () => {
   let probed = false;
   const resolved = resolveRuntimeLauncher('claude', ['/known/claude'], {

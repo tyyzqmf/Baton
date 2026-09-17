@@ -55,7 +55,7 @@ export function resolveClaudeBinForCapability(options = {}) {
   return resolveRuntimeLauncher(
     'claude',
     claudeCandidates(home),
-    { allowShellFallback: true, ...options },
+    { allowShellFallback: true, envFile: path.join(home, '.claude/env.sh'), ...options },
   );
 }
 
