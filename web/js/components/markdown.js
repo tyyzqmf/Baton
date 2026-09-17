@@ -118,6 +118,37 @@
     },
   });
 
+  function visualizationToken(src) {
+    var match = /^visualize([^\r\n]*?)/.exec(src);
+    if (!match) return;
+    try {
+      var value = JSON.parse(match[1]);
+      if (!value || typeof value.path !== 'string' || !value.path.trim()
+        || !/\.html?$/i.test(value.path) || /[\x00-\x1f]/.test(value.path)) return;
+      return { type: 'codexVisualization', raw: match[0], text: value.path };
+    } catch (error) {}
+  }
+
+  window.visualizationHtml = function (filePath) {
+    var safePath = escHtml(filePath).replace(/"/g, '&quot;');
+    return '<span class="codex-visualization" data-visualization-path="' + safePath + '">'
+      + '<span class="visualization-status" role="status">Loading preview…</span>'
+      + '</span>';
+  };
+
+  marked.use({ extensions: ['block', 'inline'].map(function (level) {
+    return {
+      name: 'codexVisualization',
+      level: level,
+      start: function (src) {
+        var index = src.indexOf(level === 'block' ? '\nvisualize' : 'visualize');
+        return index < 0 ? undefined : index + (level === 'block' ? 1 : 0);
+      },
+      tokenizer: visualizationToken,
+      renderer: function (token) { return window.visualizationHtml(token.text); },
+    };
+  }) });
+
   // LaTeX math via katex.js. Tokenized (not post-DOM) so $$…$$ content keeps its & and \\ —
   // marked would otherwise escape & → &amp; and (breaks:true) split the block with <br>.
   var mathBlock = {
@@ -208,9 +239,25 @@
   // Streaming reconciler: text segments rebuild each call, but each mermaid segment is a persistent .mermaid-block reused across calls (SVG layer never torn down). No fence → plain innerHTML.
   window.renderStreamMd = function (host, text) {
     var segs = splitMermaid(text || '');
-    var hasMermaid = false;
-    for (var i = 0; i < segs.length; i++) if (segs[i].type === 'mermaid') { hasMermaid = true; break; }
-    if (!hasMermaid) { host.innerHTML = window.renderMd(text); return; }
+    if ((text || '').includes('visualize')) {
+      segs = segs.flatMap(function (segment) {
+        if (segment.type !== 'text') return [segment];
+        var result = [];
+        marked.lexer(segment.text).forEach(function (token) {
+          if (token.type === 'codexVisualization') {
+            result.push({ type: 'visualization', text: token.text });
+          } else if (result.length && result[result.length - 1].type === 'text') {
+            result[result.length - 1].text += token.raw;
+          } else {
+            result.push({ type: 'text', text: token.raw });
+          }
+        });
+        return result;
+      });
+    }
+    var hasPersistentBlocks = false;
+    for (var i = 0; i < segs.length; i++) if (segs[i].type !== 'text') { hasPersistentBlocks = true; break; }
+    if (!hasPersistentBlocks) { host.innerHTML = window.renderMd(text); return; }
 
     var children = host.childNodes;
     for (var s = 0; s < segs.length; s++) {
@@ -224,6 +271,13 @@
           if (node) host.replaceChild(w, node); else host.appendChild(w);
         } else if (node.dataset.h !== html) { // reuse in place, rewrite only on change
           node.innerHTML = html; node.dataset.h = html;
+        }
+      } else if (seg.type === 'visualization') {
+        if (!node || node.nodeType !== 1 || node.dataset.visualizationPath !== seg.text) {
+          var template = document.createElement('template');
+          template.innerHTML = window.visualizationHtml(seg.text);
+          var preview = template.content.firstChild;
+          if (node) host.replaceChild(preview, node); else host.appendChild(preview);
         }
       } else {
         if (!node || node.nodeType !== 1 || !node.classList || !node.classList.contains('mermaid-block')) { // insert a fresh block

@@ -11,6 +11,27 @@ import {
   requestProjectFiles,
 } from '../../web/js/project/rpc.js';
 
+test('preview file reads use the existing protocol and assemble out-of-order text frames', async () => {
+  let payload;
+  globalThis.window = { wsSendReliable(value) { payload = value; } };
+  try {
+    const pending = requestProjectFiles('read', {
+      projectHash: 'project', path: '/preview.html',
+    });
+    assert.equal(payload.operation, 'read');
+    assert.equal(payload.projectHash, 'project');
+    for (const sequence of [1, 0]) {
+      handleProjectFilesMessage({
+        action: 'project_files', operation: 'read', requestId: payload.requestId,
+        sequence, content: sequence ? '</p>' : '<p>Preview', complete: sequence === 1, ok: true,
+      });
+    }
+    assert.equal((await pending).content, '<p>Preview</p>');
+  } finally {
+    delete globalThis.window;
+  }
+});
+
 test('project file paths stay relative and navigate one directory at a time', () => {
   assert.equal(normalizeProjectPath('/web//js/'), 'web/js');
   assert.equal(joinProjectPath('web/js', 'components'), 'web/js/components');

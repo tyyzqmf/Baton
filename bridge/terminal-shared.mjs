@@ -222,7 +222,7 @@ export function createSharedTerminals(options) {
       }
     }
     if (sessions.size - Number(!!replacement) >= TOTAL_LIMIT) throw new Error('设备最多保留 20 个终端，请先关闭不用的终端');
-    let number = replacement?.number || 1;
+    let number = 1;
     while (existing.some(session => session.number === number)) number++;
     const session = { id: randomUUID(), cwd, number, peers: new Set(), work: Promise.resolve() };
     sessions.set(session.id, session);
