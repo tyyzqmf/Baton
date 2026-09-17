@@ -1110,16 +1110,16 @@ html.native-mobile .slash-description {
 .recent-project-list { display: grid; gap: 8px; padding: 0 12px 8px; }
 .recent-project-list[hidden], .recent-project-sessions[hidden], .home-device-list[hidden] { display: none; }
 .recent-project { min-width: 0; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; }
-.recent-project-header { display: flex; align-items: stretch; background: #21262d; }
+.recent-project-header { display: flex; align-items: stretch; height: 44px; background: #21262d; }
 .recent-project-toggle {
-  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 46px; padding: 10px 14px;
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; height: 44px; padding: 0 14px;
   border: 0; background: transparent; color: #e6edf3; font: inherit; text-align: left; cursor: pointer;
 }
 .home-section-toggle .collapse-arrow { flex-shrink: 0; }
 .home-section-toggle[aria-expanded="true"] .collapse-arrow { transform: rotate(90deg); }
 .recent-project-link {
   display: flex; align-items: center; justify-content: center; gap: 4px; flex-shrink: 0;
-  min-height: 46px; padding: 10px 14px; border-left: 1px solid #30363d; color: #8b949e; text-decoration: none;
+  height: 44px; padding: 0 14px; color: #8b949e; text-decoration: none;
 }
 .recent-project-icon { color: #8b949e; flex-shrink: 0; }
 .recent-folder-open, .recent-project-toggle[aria-expanded="true"] .recent-folder-closed { display: none; }
@@ -1130,7 +1130,7 @@ html.native-mobile .slash-description {
 .recent-project-more { font-size: 11px; white-space: nowrap; }
 .recent-session {
   display: grid; grid-template-columns: minmax(0, 1fr) auto 64px; align-items: center; gap: 12px;
-  min-height: 46px; padding: 10px 14px; border-top: 1px solid #21262d;
+  height: 44px; padding: 0 14px; border-top: 1px solid #21262d;
   color: #c9d1d9; text-decoration: none; -webkit-user-drag: none;
 }
 .recent-session-title { min-width: 0; font-size: 13px; line-height: 1.5; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
