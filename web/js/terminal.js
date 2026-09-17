@@ -1,11 +1,9 @@
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import '@xterm/xterm/css/xterm.css';
 import '../css/terminal.css';
-import { RemoteTerminalSocket } from './terminal-remote-transport.js';
 import { backButtonHtml } from './components/back-button.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
 import { registerEdgeBackLayer } from './edge-back.js';
+import { clearTerminalView } from './terminal-view-state.js';
+import { attachTerminalTouchScroll } from './terminal-touch-scroll.js';
 
 let view = null;
 const encoder = new TextEncoder();
@@ -16,35 +14,54 @@ function decode(data) {
   return Uint8Array.from(atob(data), character => character.charCodeAt(0));
 }
 
-export function closeProjectTerminal() {
-  if (!view) return false;
-  const previous = view;
-  view = null;
-  edgeBack.deactivate();
+function disposeTerminalRuntime(previous) {
+  previous.generation++;
   clearTimeout(previous.reconnect);
   clearTimeout(previous.ackTimer);
   clearTimeout(previous.syncTimer);
   clearTimeout(previous.operationTimer);
   previous.socket?.close();
+  previous.observer?.disconnect();
+  for (const dispose of previous.listeners.splice(0)) dispose();
+  previous.terminal?.dispose();
+  previous.socket = null;
+  previous.terminal = null;
+  previous.reconnect = null;
+  previous.reconnectNow = null;
+}
+
+function suspendProjectTerminal() {
+  closeProjectTerminal({ preserveView: true });
+}
+
+export function closeProjectTerminal({ preserveView = false } = {}) {
+  if (!view) return false;
+  const previous = view;
+  view = null;
+  if (!preserveView) clearTerminalView();
+  edgeBack.deactivate();
+  window.removeEventListener('pagehide', suspendProjectTerminal);
+  disposeTerminalRuntime(previous);
   setBreadcrumbItemsLoading([previous.projectLabel], false);
-  previous.observer.disconnect();
-  for (const dispose of previous.listeners) dispose();
-  previous.terminal.dispose();
   previous.page.remove();
+  window.syncMobileViewport?.();
   previous.returnFocus?.isConnected && previous.returnFocus.focus({ preventScroll: true });
   return true;
 }
 
 export function openProjectTerminal({ device, projectHash, projectName }) {
-  if (view?.device === device && view.projectHash === projectHash) return view.terminal.focus();
+  if (view?.device === device && view.projectHash === projectHash) {
+    view.terminal?.focus();
+    return view.loading;
+  }
   closeProjectTerminal();
   const page = document.createElement('section');
   page.id = 'projectTerminalPage';
   page.className = 'project-terminal-page';
   page.setAttribute('aria-label', 'Project terminal');
-  page.innerHTML = '<header class="path-breadcrumb project-terminal-header">' + backButtonHtml({ label: 'Back to project' })
+  page.innerHTML = '<header class="path-breadcrumb project-terminal-header">' + backButtonHtml({ label: 'Back' })
     + '<div class="project-terminal-heading"><span class="path-breadcrumb-item project-terminal-project"></span></div>'
-    + '<button class="project-terminal-action project-terminal-retry" type="button" hidden>Reconnect</button>'
+    + '<button class="project-terminal-action project-terminal-retry" type="button" hidden>Retry</button>'
     + '<button class="project-terminal-action project-terminal-selector" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="terminalMenu" disabled><span class="project-terminal-selection">Terminals</span><span aria-hidden="true">▾</span></button></header>'
     + '<div class="project-terminal-status" role="status" hidden></div>'
     + '<main class="project-terminal-screen"></main>'
@@ -58,20 +75,14 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     + '<button class="modal-btn confirm danger" type="button">Close terminal</button></div></div></div>';
   const returnFocus = document.activeElement;
   document.body.appendChild(page);
+  window.syncMobileViewport?.();
   const projectLabel = page.querySelector('.project-terminal-project');
   projectLabel.textContent = projectName || 'Terminal';
   projectLabel.title = projectName || 'Terminal';
-  const terminal = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 1000, allowProposedApi: true,
-    fontFamily: 'Menlo, Monaco, Consolas, monospace', disableStdin: true,
-    theme: { background: '#0d1117', foreground: '#e6edf3', cursor: '#e6edf3' } });
-  const fit = new FitAddon();
-  terminal.loadAddon(fit);
-  const screen = page.querySelector('.project-terminal-screen');
-  terminal.open(screen);
   const selectionKey = `terminal-selection:${JSON.stringify([localStorage.getItem('_as'), device, projectHash])}`;
   let selection;
   try { selection = sessionStorage.getItem(selectionKey); } catch {}
-  const current = view = { page, terminal, fit, device, projectHash, returnFocus, listeners: [],
+  const current = view = { page, device, projectHash, selectionKey, returnFocus, listeners: [],
     ready: false, exited: false, generation: 0, queuedBytes: 0, ackBytes: 0, lastAck: 0,
     sessions: [], limit: 5, sessionId: selection, busy: null,
     projectLabel, status: page.querySelector('.project-terminal-status'),
@@ -79,10 +90,131 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     menu: page.querySelector('.project-terminal-menu'), list: page.querySelector('.project-terminal-list'),
     add: page.querySelector('.project-terminal-add'),
     modal: page.querySelector('.project-terminal-confirm'), writes: Promise.resolve() };
+  page.querySelector('.back-button').addEventListener('click', closeProjectTerminal);
+  current.retry.addEventListener('click', () => {
+    if (current.reconnectNow) current.reconnectNow();
+    else current.loading = loadTerminalRuntime(current);
+  });
+  window.addEventListener('pagehide', suspendProjectTerminal);
+  edgeBack.activate();
+  current.loading = loadTerminalRuntime(current);
+  return current.loading;
+}
+
+async function loadTerminalRuntime(current) {
+  current.retry.hidden = true;
+  current.status.hidden = true;
+  current.status.dataset.state = 'loading';
+  current.status.textContent = '';
+  current.page.setAttribute('aria-busy', 'true');
+  setBreadcrumbItemsLoading([current.projectLabel], true);
+  try {
+    const runtime = await import('./terminal-runtime.js');
+    if (view !== current) return;
+    initializeProjectTerminal(current, runtime);
+  } catch (error) {
+    if (view !== current) return;
+    disposeTerminalRuntime(current);
+    current.page.querySelector('.project-terminal-screen').replaceChildren();
+    current.selector.disabled = true;
+    current.add.disabled = true;
+    current.menu.hidden = true;
+    current.modal.style.display = 'none';
+    setBreadcrumbItemsLoading([current.projectLabel], false);
+    current.status.hidden = false;
+    current.status.dataset.state = 'error';
+    current.status.textContent = 'Unable to load terminal. Check your connection and retry.';
+    current.retry.hidden = false;
+    console.error('Terminal initialization failed', error);
+  } finally {
+    current.page.removeAttribute('aria-busy');
+  }
+}
+
+function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminalSocket }) {
+  const { page, device, projectHash, selectionKey } = current;
+  const terminal = current.terminal = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 1000, allowProposedApi: true,
+    fontFamily: 'Menlo, Monaco, Consolas, monospace', disableStdin: true,
+    overviewRuler: { width: 6 },
+    theme: { background: '#0d1117', foreground: '#e6edf3', cursor: '#e6edf3',
+      scrollbarSliderBackground: '#3a4049', scrollbarSliderHoverBackground: '#4a5059',
+      scrollbarSliderActiveBackground: '#4a5059', overviewRulerBorder: '#00000000' } });
+  const fit = new FitAddon();
+  terminal.loadAddon(fit);
+  const screen = page.querySelector('.project-terminal-screen');
+  terminal.open(screen);
+  current.listeners.push(attachTerminalTouchScroll(terminal, screen));
   const listen = (target, name, callback, options) => {
     target.addEventListener(name, callback, options);
     current.listeners.push(() => target.removeEventListener(name, callback, options));
   };
+
+  let keyboardTap = null;
+  let dismissKeyboardClick = false;
+  const clearKeyboardTap = () => { keyboardTap = null; dismissKeyboardClick = false; };
+  const consumeKeyboardTap = event => { event.preventDefault(); event.stopImmediatePropagation(); };
+  listen(page, 'pointerdown', event => {
+    clearKeyboardTap();
+    if (event.pointerType !== 'touch' || event.isPrimary === false || document.activeElement !== terminal.textarea
+      || event.target.closest?.('button, a, input, textarea, select, [contenteditable], .scrollbar')) return;
+    keyboardTap = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  }, true);
+  listen(page, 'pointermove', event => {
+    if (keyboardTap?.id === event.pointerId
+      && Math.hypot(event.clientX - keyboardTap.x, event.clientY - keyboardTap.y) > 8) keyboardTap = null;
+  }, true);
+  listen(page, 'pointerup', event => {
+    const tap = keyboardTap;
+    keyboardTap = null;
+    if (!tap || tap.id !== event.pointerId || document.activeElement !== terminal.textarea
+      || Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 8) return;
+    dismissKeyboardClick = true;
+    terminal.blur();
+    consumeKeyboardTap(event);
+  }, true);
+  for (const name of ['mousedown', 'mouseup', 'click']) {
+    listen(page, name, event => {
+      if (!dismissKeyboardClick && !keyboardTap) return;
+      consumeKeyboardTap(event);
+      if (name === 'click') clearKeyboardTap();
+    }, true);
+  }
+  listen(page, 'pointercancel', clearKeyboardTap, true);
+  listen(page, 'contextmenu', clearKeyboardTap, true);
+
+  let resizeAnchor = null;
+  let resizeFrame = 0;
+  const clearResizeAnchor = () => {
+    window.cancelAnimationFrame(resizeFrame);
+    resizeAnchor?.dispose();
+    resizeAnchor = null;
+  };
+  current.listeners.push(clearResizeAnchor);
+  function resizeTerminal(cols, rows, followBottom = false) {
+    if (followBottom) clearResizeAnchor();
+    const buffer = terminal.buffer.active;
+    const following = followBottom || (!resizeAnchor && buffer.viewportY === buffer.baseY);
+    if (!following && !resizeAnchor) resizeAnchor = terminal.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY);
+    terminal.resize(cols, rows);
+    const bounds = screen.querySelector('.xterm-screen')?.getBoundingClientRect();
+    if (bounds) {
+      terminal.textarea.style.top = `${terminal.buffer.active.cursorY * bounds.height / terminal.rows}px`;
+      terminal.textarea.style.left = `${Math.min(terminal.cols - 1, terminal.buffer.active.cursorX) * bounds.width / terminal.cols}px`;
+    }
+    if (resizeAnchor || following) {
+      const resizedViewport = terminal.buffer.active.viewportY;
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => {
+        if (!resizeAnchor?.isDisposed && terminal.buffer.active.viewportY === resizedViewport) {
+          const target = resizeAnchor?.line ?? (following ? terminal.buffer.active.baseY : resizedViewport);
+          terminal.scrollLines(-terminal.buffer.active.length);
+          terminal.scrollToLine(target);
+        }
+        clearResizeAnchor();
+      });
+    }
+    return following;
+  }
 
   function status(text, state = 'connected') {
     setBreadcrumbItemsLoading([current.projectLabel], state === 'connecting' || state === 'syncing');
@@ -160,6 +292,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     status(text, text ? 'warning' : 'connected');
     if (current.focusAfterSync && current.sessionId && !current.exited && matchMedia('(pointer: fine)').matches) terminal.focus();
     current.focusAfterSync = false;
+    if (!document.hidden) useLocalSize();
   }
 
   function menu(open) {
@@ -201,19 +334,20 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     return true;
   }
 
-  function useLocalSize() {
+  function useLocalSize({ followBottom = false } = {}) {
     if (!current.ready || current.exited || !current.sessionId || current.busy || !current.menu.hidden) return;
     const size = proposedSize();
     if ((terminal.cols !== size.cols || terminal.rows !== size.rows)
       && (current.requestedSize?.cols !== size.cols || current.requestedSize?.rows !== size.rows)) {
-      current.requestedSize = size;
+      current.requestedSize = { ...size, followBottom: followBottom || !!current.requestedSize?.followBottom };
       send({ type: 'resize', ...size });
-    }
+    } else if (followBottom && current.requestedSize) current.requestedSize.followBottom = true;
   }
 
   function input(bytes) {
     if (!current.ready || current.exited || !current.sessionId || current.busy || view !== current) return;
     if (bytes.length > 64 * 1024) return status('Paste exceeds 64 KiB; nothing sent', 'error');
+    clearResizeAnchor();
     useLocalSize();
     for (let offset = 0; offset < bytes.length; offset += 4096) {
       const data = btoa(String.fromCharCode(...bytes.subarray(offset, offset + 4096)));
@@ -249,8 +383,8 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
       current.reconnectCount = (current.reconnectCount || 0) + 1;
       current.reconnect = setTimeout(() => { current.reconnect = null; connect(); }, Math.min(15000, current.reconnectCount * 3000));
     }
-    current.retry.hidden = !!current.reconnect;
-    status(message, current.reconnect ? 'connecting' : 'error');
+    current.retry.hidden = false;
+    status(message, 'error');
   }
 
   async function receive(message, generation) {
@@ -288,6 +422,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
       current.snapshotChunks = message.snapshotChunks;
       current.historyTruncated = message.historyTruncated;
       terminal.options.disableStdin = true;
+      clearResizeAnchor();
       terminal.reset();
       terminal.resize(message.cols, message.rows);
       current.page.dataset.sessionId = message.sessionId;
@@ -325,8 +460,15 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
       if (current.ackBytes >= 16384) acknowledge();
       else if (!current.ackTimer) current.ackTimer = setTimeout(acknowledge, 100);
     } else if (message.type === 'resized') {
-      current.requestedSize = null;
-      if (message.epoch === current.epoch) terminal.resize(message.cols, message.rows);
+      if (message.epoch !== current.epoch) return;
+      const localResize = current.requestedSize?.cols === message.cols && current.requestedSize?.rows === message.rows;
+      const followBottom = localResize && current.requestedSize.followBottom;
+      if (localResize) current.requestedSize = null;
+      const following = resizeTerminal(message.cols, message.rows, followBottom);
+      if (localResize && following && document.hasFocus() && document.activeElement === terminal.textarea) {
+        terminal.scrollToBottom();
+        screen.scrollTop = 0;
+      }
     } else if (message.type === 'exit') {
       current.exited = true;
       terminal.options.disableStdin = true;
@@ -386,8 +528,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     current.selector.focus({ preventScroll: true });
   }
 
-  listen(page.querySelector('.back-button'), 'click', closeProjectTerminal);
-  listen(current.retry, 'click', () => { current.reconnectCount = 0; connect(); });
+  current.reconnectNow = () => { current.reconnectCount = 0; connect(); };
   listen(current.selector, 'click', () => menu(current.menu.hidden));
   listen(current.add, 'click', () => operate('create_session'));
   listen(current.menu, 'click', event => { if (event.target === current.menu) menu(false); });
@@ -447,26 +588,38 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
   terminal.parser.registerDcsHandler({ intermediates: '$', final: 'q' }, () => true);
   for (const code of [10, 11, 12]) terminal.parser.registerOscHandler(code, data => data === '?');
 
+  const touchViewport = matchMedia('(pointer: coarse)').matches || document.documentElement.classList.contains('native-mobile');
+  let viewportBaseHeight = window.innerHeight;
+  let keyboardOpen = false;
   function viewport() {
     const visible = window.visualViewport;
+    viewportBaseHeight = Math.max(viewportBaseHeight, window.innerHeight, visible?.height || 0);
+    const keyboardNowOpen = touchViewport && visible && visible.height < viewportBaseHeight * 0.75;
+    const keyboardClosed = keyboardOpen && !keyboardNowOpen;
+    keyboardOpen = keyboardNowOpen;
     page.style.height = visible ? `${visible.height}px` : '';
     page.style.top = visible ? `${visible.offsetTop}px` : '';
     current.menu.style.setProperty('--terminal-menu-top', `${page.querySelector('header').getBoundingClientRect().height + 4}px`);
-    if (document.hasFocus() && page.contains(document.activeElement)) useLocalSize();
+    if (keyboardClosed) {
+      clearResizeAnchor();
+      terminal.scrollToBottom();
+      screen.scrollTop = 0;
+    }
+    if (!document.hidden) useLocalSize({ followBottom: keyboardClosed });
   }
   current.observer = new ResizeObserver(() => {
-    if (document.hasFocus() && page.contains(document.activeElement)) useLocalSize();
+    if (!document.hidden) useLocalSize();
   });
   current.observer.observe(screen);
-  listen(screen, 'pointerdown', useLocalSize);
+  listen(screen, 'pointerdown', event => { if (event.pointerType !== 'touch') useLocalSize(); });
+  listen(terminal.textarea, 'focus', viewport);
   listen(window, 'focus', useLocalSize);
-  listen(window, 'pagehide', closeProjectTerminal);
+  listen(document, 'visibilitychange', () => { if (!document.hidden) useLocalSize(); });
   if (window.visualViewport) {
     listen(window.visualViewport, 'resize', viewport);
     listen(window.visualViewport, 'scroll', viewport);
   }
   viewport();
-  edgeBack.activate();
   connect();
   terminal.focus();
 }

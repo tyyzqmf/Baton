@@ -24,6 +24,8 @@ test('preview frames inherit the application theme instead of selecting the brow
     const rules = [...dom.window.document.styleSheets[0].cssRules];
     const frame = rules.find(rule => rule.selectorText === '.visualization-frame');
     assert.equal(frame.style.getPropertyValue('color-scheme'), 'inherit');
+    const surface = rules.find(rule => rule.selectorText === '.visualization-surface');
+    assert.equal(surface.style.getPropertyValue('color-scheme'), 'inherit');
   } finally {
     dom.window.close();
   }
@@ -51,7 +53,25 @@ test('fullscreen affordance supports mouse hover, keyboard focus and touch witho
   }
 });
 
-function setup(t, request = async () => ({ content: '<style>body{color:red}</style><button>Preview</button>' })) {
+test('fullscreen uses native safe-area values and reserves space for the close control', () => {
+  const css = fs.readFileSync(new URL('../../web/css/visualization.css', import.meta.url), 'utf8');
+  const dom = new JSDOM('<style>' + css + '</style>');
+  try {
+    const rules = [...dom.window.document.styleSheets[0].cssRules];
+    const surface = rules.find(rule => rule.selectorText === '.visualization-surface.is-fullscreen');
+    for (const [variable, side] of [['sat', 'top'], ['sar', 'right'], ['sab', 'bottom'], ['sal', 'left']]) {
+      assert.ok(surface.style.padding.includes(`var(--${variable}, env(safe-area-inset-${side}, 0px))`));
+    }
+    assert.match(surface.style.padding, /^calc\(var\(--sat, env\(safe-area-inset-top, 0px\)\) \+ 48px\)/);
+    const close = rules.find(rule => rule.selectorText === '.visualization-surface.is-fullscreen .visualization-close');
+    assert.equal(close.style.top, 'calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px)');
+    assert.equal(close.style.right, 'calc(var(--sar, env(safe-area-inset-right, 0px)) + 8px)');
+  } finally {
+    dom.window.close();
+  }
+});
+
+function setup(t, request = async () => ({ content: '<style>body{color:red}</style><button>Preview</button>' }), configure = () => {}) {
   const dom = new JSDOM('<!doctype html><body><div class="assistant-text" id="content"></div></body>', {
     runScripts: 'outside-only', url: 'https://baton.test', pretendToBeVisual: true,
   });
@@ -65,6 +85,7 @@ function setup(t, request = async () => ({ content: '<style>body{color:red}</sty
   };
   window.requestProjectFiles = request;
   window.loadVisualizationIcons = async () => iconRuntime;
+  configure(window);
   window.eval(markdown);
   window.eval(viewer);
   t.after(() => window.close());
@@ -113,15 +134,19 @@ test('streaming preserves preview identity and coexists with Mermaid and trailin
   assert.match(host.textContent, /More details/);
 });
 
-test('preview reads with a string project hash, has no header and validates resize messages', async t => {
+test('preview validates reads and resizing, follows bottom and preserves manual scroll', async t => {
   const calls = [];
   const window = setup(t, async (operation, fields) => {
     calls.push({ operation, fields });
     return { content: '<style>body{color:red}</style><button>Preview</button>' };
   });
   const host = window.document.getElementById('content');
+  let scrollHeight = 1000;
+  Object.defineProperty(host, 'scrollHeight', { get: () => scrollHeight });
+  window.state.stickBottom = true;
   host.innerHTML = window.renderMd(marker);
   await settle();
+  assert.equal(host.scrollTop, 1000);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].operation, 'read');
   assert.equal(calls[0].fields.projectHash, 'project');
@@ -135,19 +160,44 @@ test('preview reads with a string project hash, has no header and validates resi
   assert.match(frame.srcdoc, /connect-src 'none'/);
   assert.equal(host.querySelector('style'), null);
   const channel = JSON.parse(frame.srcdoc.match(/channel:("[^"]+")/)[1]);
+  scrollHeight = 1500;
   window.dispatchEvent(new window.MessageEvent('message', {
     source: window, data: { type: 'baton-visualization-size', channel, height: 850 },
   }));
   assert.equal(frame.style.height, '');
+  assert.equal(host.scrollTop, 1000);
+  window.dispatchEvent(new window.MessageEvent('message', {
+    source: frame.contentWindow, data: { type: 'baton-visualization-size', channel, height: 600 },
+  }));
+  assert.equal(frame.style.height, '602px');
+  assert.equal(host.scrollTop, 1500);
+  window.state.stickBottom = false;
+  host.scrollTop = 640;
+  scrollHeight = 1800;
   window.dispatchEvent(new window.MessageEvent('message', {
     source: frame.contentWindow, data: { type: 'baton-visualization-size', channel, height: 99999 },
   }));
   assert.equal(frame.style.height, '900px');
+  assert.equal(host.scrollTop, 640);
+  const block = frame.closest('.codex-visualization');
+  block.style.minHeight = '24px';
+  block.getBoundingClientRect = () => ({ height: 900 });
+  host.scrollTop = 640;
+  window.state.stickBottom = true;
   host.querySelector('.visualization-expand').click();
   assert.ok(host.querySelector('.is-fullscreen'));
+  assert.equal(block.style.minHeight, '900px');
+  window.dispatchEvent(new window.MessageEvent('message', {
+    source: frame.contentWindow, data: { type: 'baton-visualization-size', channel, height: 180 },
+  }));
+  assert.equal(frame.style.height, '900px');
+  assert.equal(host.scrollTop, 640);
   assert.equal(host.querySelector('iframe'), frame);
+  host.scrollTop = 0;
   host.querySelector('.visualization-close').click();
   assert.equal(host.querySelector('.is-fullscreen'), null);
+  assert.equal(block.style.minHeight, '24px');
+  assert.equal(host.scrollTop, 640);
   assert.equal(host.querySelector('iframe'), frame);
   assert.equal(calls.length, 1);
 });
@@ -223,7 +273,7 @@ test('fixed and unknown palettes keep native colors without injected background 
   }
 });
 
-test('adaptive CSS functions opt fragments into dual schemes without repainting content', t => {
+test('adaptive CSS functions follow the host scheme without repainting content', t => {
   const window = setup(t);
   for (const source of [
     '<style>.card{color:light-dark(black,white);background:light-dark(white,black)}</style>',
@@ -232,9 +282,12 @@ test('adaptive CSS functions opt fragments into dual schemes without repainting 
   ]) {
     const parsed = new window.DOMParser().parseFromString(window.createVisualizationDocument(source, 'adaptive'), 'text/html');
     const defaults = parsed.querySelector('style').textContent;
-    assert.match(defaults, /color-scheme:light dark;/);
+    assert.match(defaults, /color-scheme:dark;/);
     assert.doesNotMatch(defaults, /--color-|background|\bcolor:/);
   }
+  window.document.documentElement.style.colorScheme = 'light';
+  const light = window.createVisualizationDocument('<div style="color:light-dark(black,white)">Theme</div>', 'light');
+  assert.match(light, /color-scheme:light;/);
 });
 
 test('native theme media queries and explicit metadata remain authoritative', t => {
@@ -271,7 +324,7 @@ test('host theme variables only fill unresolved references without authored fall
     + 'html{--color-text-secondary:#123456}.caption{color:var(--color-text-secondary)}</style>';
   const parsed = new window.DOMParser().parseFromString(window.createVisualizationDocument(source, 'tokens'), 'text/html');
   const defaults = parsed.querySelector('style').textContent;
-  assert.match(defaults, /color-scheme:light dark;/);
+  assert.match(defaults, /color-scheme:dark;/);
   assert.match(defaults, /--color-text-primary:light-dark/);
   assert.match(defaults, /--color-background-primary:light-dark/);
   assert.match(defaults, /--font-mono:ui-monospace,monospace;/);
@@ -463,6 +516,106 @@ test('oversized and binary content never runs in a preview', async t => {
   assert.equal(host.querySelector('iframe'), null);
 });
 
+test('fullscreen keeps native edge-back reachable and retains desktop modal behavior', async t => {
+  for (const nativeMobile of [true, false]) {
+    let layer;
+    const window = setup(t, undefined, window => {
+      window.__BATON_NATIVE_MOBILE__ = nativeMobile;
+      window.registerEdgeBackLayer = options => {
+        layer = { ...options, active: false,
+          activate() { this.active = true; },
+          deactivate() { this.active = false; },
+        };
+        return layer;
+      };
+    });
+    const host = window.document.getElementById('content');
+    host.innerHTML = window.renderMd(marker);
+    await settle();
+    const block = host.querySelector('.codex-visualization');
+    const surface = block.querySelector('.visualization-surface');
+    const frame = block.querySelector('iframe');
+    const requests = [];
+    frame.contentWindow.postMessage = message => requests.push(message);
+    let modalCalls = 0;
+    surface.showModal = () => { modalCalls++; surface.open = true; };
+    surface.close = () => { surface.open = false; };
+    window.openVisualizationFullscreen(block);
+    assert.equal(modalCalls, nativeMobile ? 0 : 1);
+    const snapshot = block.querySelector('.visualization-snapshot');
+    assert.equal(!!snapshot, nativeMobile);
+    if (nativeMobile) {
+      assert.equal(snapshot.getAttribute('sandbox'), '');
+      assert.equal(snapshot.getAttribute('aria-hidden'), 'true');
+      assert.equal(snapshot.tabIndex, -1);
+      assert.equal(snapshot.inert, true);
+      const request = requests[0];
+      const html = '<p>Current preview state</p><script>window.ran=true</script>';
+      for (const source of [window, frame.contentWindow]) {
+        window.dispatchEvent(new window.MessageEvent('message', {
+          source, data: { ...request, type: 'baton-visualization-snapshot', html },
+        }));
+        assert.equal(snapshot.srcdoc.includes('Current preview state'), source === frame.contentWindow);
+      }
+      assert.doesNotMatch(snapshot.srcdoc, /<script/);
+      assert.match(snapshot.srcdoc, /connect-src 'none'/);
+      window.dispatchEvent(new window.MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { ...request, requestId: 'stale', type: 'baton-visualization-snapshot', html: '<p>Stale</p>' },
+      }));
+      assert.equal(snapshot.srcdoc.includes('Current preview state'), true);
+    }
+    assert.equal(layer.active, true);
+    assert.deepEqual(Array.from(layer.foregroundSelectors), ['.visualization-surface.is-fullscreen']);
+    assert.equal(layer.navigateBack(), true);
+    assert.equal(layer.active, false);
+    assert.equal(surface.classList.contains('is-fullscreen'), false);
+    assert.equal(surface.open, true);
+    assert.equal(block.querySelector('.visualization-snapshot'), null);
+    assert.equal(block.querySelector('iframe'), frame);
+    assert.equal(window.state.appState.session, 'codex:root');
+  }
+});
+
+test('snapshot bridge captures rendered controls, styles and canvas without replaying scripts', async t => {
+  const window = setup(t);
+  const html = window.createVisualizationDocument('<style>p{color:red}</style><p>Initial</p>'
+    + '<input value="initial"><input type="checkbox"><textarea>initial</textarea>'
+    + '<select><option>First</option><option>Second</option></select><canvas width="40" height="20"></canvas>', 'snapshot-test');
+  const preview = new JSDOM(html, {
+    runScripts: 'dangerously', pretendToBeVisual: true,
+    beforeParse(window) {
+      window.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,canvas';
+    },
+  });
+  t.after(() => preview.window.close());
+  await new Promise(resolve => preview.window.addEventListener('load', resolve, { once: true }));
+  const document = preview.window.document;
+  document.querySelector('p').textContent = 'Updated';
+  document.querySelector('input').value = 'edited';
+  document.querySelector('[type="checkbox"]').checked = true;
+  document.querySelector('textarea').value = 'changed';
+  document.querySelector('select').selectedIndex = 1;
+  document.querySelector('style').sheet.insertRule('.dynamic{color:blue}');
+  const response = new Promise(resolve => preview.window.addEventListener('message', event => {
+    if (event.data.type === 'baton-visualization-snapshot') resolve(event.data);
+  }));
+  preview.window.dispatchEvent(new preview.window.MessageEvent('message', {
+    source: preview.window, data: { type: 'baton-visualization-snapshot-request', channel: 'snapshot-test', requestId: 'current' },
+  }));
+  const data = await response;
+  const captured = new preview.window.DOMParser().parseFromString(data.html, 'text/html');
+  assert.equal(data.requestId, 'current');
+  assert.equal(captured.querySelector('p').textContent, 'Updated');
+  assert.equal(captured.querySelector('input').value, 'edited');
+  assert.equal(captured.querySelector('[type="checkbox"]').checked, true);
+  assert.equal(captured.querySelector('textarea').value, 'changed');
+  assert.equal(captured.querySelector('select').selectedIndex, 1);
+  assert.equal(captured.querySelector('img').src, 'data:image/png;base64,canvas');
+  assert.match(captured.querySelector('style').textContent, /\.dynamic/);
+  assert.equal(captured.querySelector('script'), null);
+});
+
 test('fullscreen closes on Escape, verified iframe messages and removal', async t => {
   const window = setup(t);
   const host = window.document.getElementById('content');
@@ -485,6 +638,8 @@ test('fullscreen closes on Escape, verified iframe messages and removal', async 
   assert.equal(block.querySelector('.is-fullscreen'), null);
   window.openVisualizationFullscreen(block);
   block.remove();
+  host.scrollTop = 125;
   await settle();
+  assert.equal(host.scrollTop, 125);
   assert.equal(window.closeVisualizationFullscreen(), false);
 });

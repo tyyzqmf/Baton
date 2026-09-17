@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { createServer } from 'vite';
+import { createTestServer } from './helpers/vite.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
@@ -131,7 +131,7 @@ test('foreground visibility reuses current navigation loaders or resumes the ope
     return values;
   };
 
-  const vite = await createServer({
+  const vite = await createTestServer({
     root: path.join(ROOT, 'web'),
     logLevel: 'silent',
     appType: 'custom',

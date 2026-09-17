@@ -27,19 +27,22 @@
 }
 .project-terminal-header button:disabled { opacity: .45; cursor: default; }
 .project-terminal-retry[hidden], .project-terminal-status[hidden] { display: none; }
-html.native-mobile .project-terminal-action { height: 44px; }
 
 .project-terminal-screen {
   position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
-  padding: 8px max(8px, env(safe-area-inset-right, 0px)) max(4px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
-  overflow: auto;
+  margin: 8px max(8px, env(safe-area-inset-right, 0px)) max(4px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+  overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior: contain;
+  touch-action: pan-x pinch-zoom;
 }
 .project-terminal-screen .xterm { height: 100%; }
-.project-terminal-screen .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
+.project-terminal-screen .xterm .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
+.project-terminal-screen .xterm-scrollable-element > .scrollbar > .slider { border-radius: 3px; }
+html.native-mobile .project-terminal-screen { margin-right: 0; }
 .project-terminal-confirm { z-index: 1000; }
 .project-terminal-selector { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .project-terminal-selector > :last-child { color: #8b949e; font-size: 11px; }
@@ -78,6 +81,7 @@ html.native-mobile .project-terminal-action { height: 44px; }
   .project-terminal-menu .project-terminal-close:not(:disabled):hover { color: #ff7b72; background: #f851491a; }
 }
 @media (pointer: coarse) {
+  .project-terminal-screen { margin-right: 0; }
   .project-terminal-selector { position: relative; }
   .project-terminal-selector::before { content: ''; position: absolute; inset: -8px 0; }
 }

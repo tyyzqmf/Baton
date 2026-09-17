@@ -119,6 +119,40 @@ test('cached projects remain usable when refreshing the home data fails', async 
   } finally { h.win.close(); }
 });
 
+test('returning from a session restores the home frame and position before refreshing', async () => {
+  const h = harness();
+  try {
+    await waitFor(() => h.doc.querySelector('.recent-project-toggle'));
+    await h.win.__homeLoadPromise;
+    const content = h.doc.getElementById('content');
+    h.doc.querySelector('.recent-project-toggle').click();
+    const snapshot = {
+      topBarHtml: h.doc.querySelector('.top-bar').innerHTML,
+      breadcrumbHtml: '', breadcrumbDisplay: 'none',
+      contentHtml: content.innerHTML, scrollTop: 640,
+    };
+    content.innerHTML = '<div>Session detail</div>';
+    content.scrollTop = 0;
+    let resolveFresh;
+    const pending = new Promise(resolve => { resolveFresh = resolve; });
+    const loading = h.win.__loadHome(pending, Promise.resolve(devices), {
+      restoreSnapshot: snapshot, resetScroll: false,
+    });
+    assert.equal(content.scrollTop, 640);
+    assert.equal(h.doc.querySelector('.recent-project-toggle').getAttribute('aria-expanded'), 'false');
+    const fresh = { ...active, recentProjects: active.recentProjects.map(project => ({ ...project, projectName: 'Updated project' })) };
+    resolveFresh(fresh);
+    await loading;
+    assert.equal(content.scrollTop, 640);
+    assert.equal(h.doc.querySelector('.recent-project-name').textContent, 'Updated project');
+    assert.equal(h.doc.querySelector('.recent-project-toggle').getAttribute('aria-expanded'), 'false');
+    h.doc.querySelector('.recent-project-toggle').click();
+    assert.equal(h.doc.querySelector('.recent-project-toggle').getAttribute('aria-expanded'), 'true');
+    await h.win.__loadHome(Promise.resolve(fresh), Promise.resolve(devices), { resetScroll: true });
+    assert.equal(content.scrollTop, 0);
+  } finally { h.win.close(); }
+});
+
 test('an empty project snapshot has a quiet empty state without hiding devices', async () => {
   const h = harness({
     fetchData: async url => ({
@@ -146,7 +180,7 @@ test('recent projects account for the active list spacing only when active sessi
     const content = h.doc.getElementById('content');
     assert.equal(content.firstElementChild.id, 'recent-projects-section');
     assert.equal(h.win.getComputedStyle(h.doc.querySelector('.recent-projects-toggle')).paddingTop, '16px');
-    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.devices-toggle')).minHeight, '44px');
+    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.devices-toggle')).minHeight, '0px');
 
     const edgePreview = content.cloneNode(true);
     edgePreview.removeAttribute('id');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { createServer } from 'vite';
+import { createTestServer } from './helpers/vite.mjs';
 import { LIST_PAGE_SIZE } from '../../web/js/list-pagination.js';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
@@ -184,7 +184,7 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     skeletonMessages: globalThis.skeletonMessages,
   });
 
-  const vite = await createServer({
+  const vite = await createTestServer({
     root: path.join(ROOT, 'web'),
     logLevel: 'silent',
     appType: 'custom',

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { createServer } from 'vite';
+import { createTestServer } from './helpers/vite.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const CSS = fs.readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8');
@@ -52,7 +52,7 @@ test('New Session switches available runtimes and remembers the last per-device 
     __homeLoadPromise: new Promise(function () {}),
   });
 
-  const vite = await createServer({
+  const vite = await createTestServer({
     root: path.join(ROOT, 'web'),
     logLevel: 'silent',
     appType: 'custom',
@@ -90,8 +90,8 @@ test('New Session switches available runtimes and remembers the last per-device 
     assert.ok(document.querySelector('.runtime-switch'));
     assert.equal(document.querySelector('.runtime-switch img').src.endsWith('/assets/claude-code.svg'), true);
     assert.equal(getComputedStyle(document.querySelector('.runtime-switch')).width, '28px');
-    assert.equal(getComputedStyle(document.querySelector('.runtime-switch')).marginLeft, '-4px');
-    assert.equal(getComputedStyle(document.querySelector('.runtime-switch')).marginRight, '-4px');
+    assert.equal(getComputedStyle(document.querySelector('.runtime-switch')).marginLeft, '0px');
+    assert.equal(getComputedStyle(document.querySelector('.runtime-switch')).marginRight, '0px');
     assert.equal(document.getElementById('newAgentToggle').hidden, false);
 
     window.toggleNewSessionRuntime();

@@ -21,7 +21,9 @@ import {
   preferredNewSessionRuntime,
 } from './new-session-runtime.js';
 import { setBreadcrumbItemsLoading } from './components/breadcrumb.js';
-import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG } from './components/icons.js';
+import { openProjectTerminal } from './terminal.js';
+import { saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
@@ -346,16 +348,21 @@ function rememberSessionThreads(rootSessionId, threads) {
 }
 
 function sessionRuntimeControl() {
-  var mark = runtimeIcon(
+  var runtime = sessionRuntime(
     state.rootSessionId || state.appState.session,
     state.appState.runtime,
   );
-  if (state.sessionThreads.length <= 1) return mark;
-  return '<button class="agent-thread-trigger" type="button"'
-    + ' onclick="openAgentThreadsModal()" aria-label="Show agent threads"'
-    + ' title="Agent threads">' + mark
-    + '<span class="agent-thread-dot ' + agentThreadStatus(state.sessionThreads)
-    + '" aria-hidden="true"></span></button>';
+  var label = runtimeLabel(runtime);
+  var text = runtime === 'codex' ? 'Codex' : 'Claude';
+  if (state.sessionThreads.length <= 1) {
+    return '<span class="badge session-runtime-label" title="' + label + '">' + text + '</span>';
+  }
+  return '<button class="badge session-runtime-label agent-thread-trigger" type="button"'
+    + ' onclick="event.stopPropagation();openAgentThreadsModal()" aria-label="' + label + ': show agent threads"'
+    + ' aria-haspopup="dialog" aria-controls="agentThreadsModal"'
+    + ' title="' + label + ' · Agent threads">' + text
+    + '<i class="agent-thread-dot ' + agentThreadStatus(state.sessionThreads)
+    + '" aria-hidden="true"></i></button>';
 }
 
 function runtimeLabel(runtime) {
@@ -441,14 +448,14 @@ function updateBreadcrumb() {
   } else if (state.appState.project) {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
-      : (state.appState.session ? sessionRuntimeControl() : '');
+      : '';
     var filesButton = !state.appState.session
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
-    var terminalButton = !state.appState.session
+    var terminalButton = state.appState.session !== '__new__'
       ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
-        + ' aria-label="Project terminal" title="Terminal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 5 5-5 5M13 17h6"/></svg></button>'
+        + ' aria-label="Project terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>'
       : '';
     var gitButton = state.appState.session && state.appState.session !== '__new__'
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
@@ -462,6 +469,7 @@ function updateBreadcrumb() {
     topRight.innerHTML = _gearHtml;
   }
   var titleHtml = '';
+  var titleMeta = '';
   if (state.appState.session) {
     parts.pop();
     var titleText = esc(state.rootSessionPreview
@@ -471,11 +479,14 @@ function updateBreadcrumb() {
         '',
         state.appState.runtime,
       ) + '...');
-    var agentMark = state.appState.isAgent ? ' <span class="badge agent">Agent</span>' : '';
-    titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + agentMark + '</span>';
+    var agentMark = state.appState.isAgent ? '<span class="badge agent">Agent</span>' : '';
+    titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
+    if (state.appState.session !== '__new__') {
+      titleMeta = '<div class="session-title-meta">' + sessionRuntimeControl() + agentMark + '</div>';
+    }
   }
   el.innerHTML = '<div class="breadcrumb-nav" onclick="toggleBreadcrumbExpand(this)">'
-    + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml
+    + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml + titleMeta
     + '</div>';
   el.classList.toggle('session-detail', !!state.appState.session);
   el.style.display = parts.length > 0 ? 'flex' : 'none';
@@ -484,14 +495,15 @@ function updateBreadcrumb() {
   });
 }
 
-async function openProjectTerminalPage() {
+function openProjectTerminalPage() {
   const device = state.appState.device;
   const project = state.appState.project;
-  if (!device || !project || state.appState.session) return;
-  const module = await import('./terminal.js');
-  if (state.appState.device === device && state.appState.project?.hash === project.hash && !state.appState.session) {
-    module.openProjectTerminal({ device, projectHash: project.hash, projectName: project.name });
-  }
+  const session = state.appState.session;
+  if (!device || !project || session === '__new__') return;
+  const opening = openProjectTerminal({ device, projectHash: project.hash, projectName: project.name });
+  saveNav();
+  saveTerminalView(state.appState);
+  return opening;
 }
 
 function updateBreadcrumbTruncation(nav) {
@@ -505,6 +517,12 @@ function toggleBreadcrumbExpand(nav) {
   nav.classList.toggle('expanded');
   requestAnimationFrame(function () { updateBreadcrumbTruncation(nav); });
 }
+
+window.addEventListener('resize', function () {
+  requestAnimationFrame(function () {
+    updateBreadcrumbTruncation(document.querySelector('#breadcrumb .breadcrumb-nav'));
+  });
+});
 
 async function refreshSessionThreads() {
   if (!state.rootSessionId || !state.appState.project || !state.appState.device) {
@@ -1181,7 +1199,7 @@ async function loadDevices() {
   resetSessionThreads();
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
-  prepareNavigation({ device: null, project: null, session: null });
+  var homePreview = prepareNavigation({ device: null, project: null, session: null });
   var myNav = ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: null, project: null, session: null, sessionPreview: '' };
@@ -1207,7 +1225,9 @@ async function loadDevices() {
   var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions', window.__homeActiveParams?.());
   var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
   return window.__loadHome(activePromise, devicesPromise, {
-    resetScroll: true,
+    resetScroll: !homePreview,
+    restoreSnapshot: homePreview,
+    isCurrent: function () { return _navVersion === myNav; },
     onFresh: function (_activeData, devData) {
       rememberDevices(devData);
       showStats(devData.devices.length + ' device(s)');
@@ -2094,6 +2114,7 @@ async function loadOlderAndPrepend() {
   } else {
     loadDevices();
   }
+  if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
 })();
 
 // In Tauri (WKWebView/WebView2) target=_blank can't open a tab, so external links

@@ -1,7 +1,7 @@
 .project-files-entry {
   position: relative;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -9,17 +9,18 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #6e7681;
+  color: var(--action-icon-color);
   cursor: pointer;
-  flex: 0 0 20px;
+  flex: 0 0 28px;
   overflow: visible;
+  transition: color 0.15s, background 0.15s;
 }
 .project-files-entry svg {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   stroke-width: 1.5;
   transform: translate(-50%, -50%);
 }
@@ -29,7 +30,8 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .project-files-entry:hover {
-    color: #e6edf3;
+    color: var(--action-icon-hover-color);
+    background: #21262d;
   }
 }
 html.native-mobile #top-right .project-files-entry {
@@ -43,14 +45,12 @@ html.native-mobile .edge-back-top-right .project-files-entry {
   flex-basis: 44px;
 }
 html.native-mobile #top-right .project-files-entry svg {
-  width: 26px;
-  height: 26px;
-  transform: translate(calc(-50% + 3px), -50%);
+  width: 24px;
+  height: 24px;
 }
 html.native-mobile .edge-back-top-right .project-files-entry svg {
-  width: 26px;
-  height: 26px;
-  transform: translate(calc(-50% + 3px), -50%);
+  width: 24px;
+  height: 24px;
 }
 
 .project-files-page {

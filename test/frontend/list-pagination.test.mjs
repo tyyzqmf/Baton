@@ -146,4 +146,11 @@ test('home cards and list-style controls use background feedback while pressed',
   assert.match(css, /\.active-card:active\s*\{\s*background:\s*#21262d;\s*\}/);
   assert.doesNotMatch(css, /\.active-card:active\s*\{[^}]*(?:transform|box-shadow):/s);
   assert.match(css, /\.agent-thread-row:active\s*\{[^}]*border-color:\s*#484f58;[^}]*background:\s*#21262d;/s);
+  assert.match(css, /\.device-card:active\s*\{\s*background:\s*#21262d;\s*\}/);
+  assert.doesNotMatch(css, /\.home-section-toggle:active/);
+  assert.equal(css.match(/\.recent-session:active\s*\{\s*background:\s*(#[\da-f]+);/)[1], css.match(/\.recent-session:hover\s*\{\s*background:\s*(#[\da-f]+);/)[1]);
+  assert.match(css, /\.recent-project-toggle:active,\s*\.recent-project-link:active,\s*\.recent-projects-show-more:not\(:disabled\):active\s*\{\s*background:\s*#30363d;\s*\}/);
+  assert.equal(css.match(/\.breadcrumb-nav a:active\s*\{([^}]+)\}/)[1].trim(), css.match(/\.breadcrumb-nav a:hover\s*\{([^}]+)\}/)[1].trim());
+  const breadcrumbCss = fs.readFileSync(path.join(ROOT, 'web/css/breadcrumb.css'), 'utf8');
+  assert.equal(breadcrumbCss.match(/\.path-breadcrumb-item:active\s*\{[^}]*background:\s*(#[\da-f]+);/)[1], breadcrumbCss.match(/\.path-breadcrumb-item:hover\s*\{[^}]*background:\s*(#[\da-f]+);/)[1]);
 });

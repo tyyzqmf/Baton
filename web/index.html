@@ -42,11 +42,11 @@
   @keyframes apk-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
   a.top-gear.syncing,#top-right.syncing .top-gear{animation:apk-spin 1.8s linear infinite;transition:none}
   #top-right.syncing .new-session-btn svg{border-color:transparent}
-  #top-right.syncing .new-session-btn::after{content:"";position:absolute;left:3px;top:3px;box-sizing:border-box;width:22px;height:22px;border:1px solid currentColor;border-top-color:transparent;border-radius:50%;animation:apk-spin .7s linear infinite;pointer-events:none}
+  #top-right.syncing .new-session-btn::after{content:"";position:absolute;left:3px;top:3px;box-sizing:border-box;width:22px;height:22px;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:apk-spin .7s linear infinite;pointer-events:none}
   .runtime-mark{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;vertical-align:middle}
   .runtime-icon{display:block;width:16px;height:16px;object-fit:contain}
   .runtime-mark-codex{position:relative}.runtime-mark-codex .runtime-icon{visibility:hidden}.runtime-mark-codex::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:#6e7681;transform:translate(-50%,-50%);-webkit-mask:var(--runtime-codex-image,url("assets/codex.svg")) center/contain no-repeat;mask:var(--runtime-codex-image,url("assets/codex.svg")) center/contain no-repeat;transition:background .15s}
-  @media(hover:hover) and (pointer:fine){#top-right>.runtime-mark-codex:hover::before,.runtime-switch:hover .runtime-mark-codex::before,.agent-thread-trigger:hover .runtime-mark-codex::before{background:#e6edf3}}
+  @media(hover:hover) and (pointer:fine){#top-right>.runtime-mark-codex:hover::before,.runtime-switch:hover .runtime-mark-codex::before{background:#e6edf3}}
   html.native-mobile .top-bar{min-height:calc(var(--sat,env(safe-area-inset-top,0px)) + 44px);padding:var(--sat,env(safe-area-inset-top,0px)) 8px 0 12px;border-bottom:0;box-shadow:inset 0 -1px #30363d}
   html.native-mobile .top-left{min-height:44px;gap:6px;font-size:17px;line-height:21px}
   html.native-mobile .top-logo{width:20px;height:21px;line-height:21px;flex:0 0 20px;margin-right:0}
@@ -58,7 +58,7 @@
   html.native-mobile .new-session-btn svg{width:26px;height:26px;padding:4px;border-width:1.5px}
   html.native-mobile #top-right .runtime-mark,html.native-mobile #top-right .runtime-icon{width:24px;height:24px}
   html.native-mobile #top-right .runtime-mark{flex-basis:24px}
-  #top-right .runtime-mark-codex::before{width:20px;height:20px}
+  #top-right .runtime-mark-codex::before{width:22px;height:22px}
   html.native-mobile #top-right .runtime-mark-codex::before{width:24px;height:24px;transform:translate(-50%,-50%)}
   html.native-mobile #top-right>.runtime-mark{width:44px;height:44px;flex-basis:44px}
   html.native-mobile #top-right.syncing .new-session-btn::after{left:9px;top:9px;width:26px;height:26px;border-width:1.5px}
@@ -344,14 +344,15 @@
     });
   }
 
-  function restoreReturningHomePreview() {
-    if (!window.__returningHome) return false;
-    if (window.__homePreviewRestored) return true;
-
-    var snapshot = null;
-    try {
-      snapshot = JSON.parse(sessionStorage.getItem('baton-page-preview') || 'null');
-    } catch (e) {}
+  function restoreReturningHomePreview(snapshot) {
+    var returningFromSettings = !snapshot;
+    if (returningFromSettings) {
+      if (!window.__returningHome) return false;
+      if (window.__homePreviewRestored) return true;
+      try {
+        snapshot = JSON.parse(sessionStorage.getItem('baton-page-preview') || 'null');
+      } catch (e) {}
+    }
     if (!snapshot || typeof snapshot.contentHtml !== 'string') return false;
 
     var topBar = document.querySelector('body > .top-bar');
@@ -370,11 +371,11 @@
     content.replaceChildren(preview.content);
     fitRecentTimeColumn();
     content.scrollTop = snapshot.scrollTop || 0;
-    sessionStorage.removeItem('baton-page-preview');
+    if (returningFromSettings) sessionStorage.removeItem('baton-page-preview');
     bindHomeNavigation(content);
     document.body.classList.add('ready');
     window.__inlineRendered = true;
-    window.__homePreviewRestored = true;
+    if (returningFromSettings) window.__homePreviewRestored = true;
     markFirstWebFrameReady();
     return true;
   }
@@ -382,9 +383,9 @@
 
   function recentProjectHtml(project, index) {
     var folderIcon = '<svg class="recent-project-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-      + '<path class="recent-folder-closed" d="M3 10V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V10ZM3 10h18"/>'
-      + '<g class="recent-folder-open"><path d="M3 18V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v1"/>'
-      + '<path d="M3 18 6 11.4Q6.6 10 8 10h11q2 0 2 2l-2 6.5Q18.5 20 17 20H5q-2 0-2-2Z"/></g></svg>';
+      + '<g class="recent-folder-closed"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></g>'
+      + '<g class="recent-folder-open"><path d="M3 18V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1"/>'
+      + '<path d="M3 18 6 10.5Q6.6 9 8 9h11q2 0 2 2l-2 7.5Q18.5 20 17 20H5q-2 0-2-2Z"/></g></svg>';
     var arrowIcon = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>';
     var deviceLabel = (window.__deviceDisplayNames || {})[project.deviceName] || project.deviceName;
     var projectHref = '#/' + encodeURIComponent(project.deviceName) + '/' + encodeURIComponent(project.projectHash);
@@ -610,8 +611,10 @@
       document.body.classList.add('browse-view');
       setSync(true);
       if (options.keepContent) return;
-      var restoredPreview = usePagePreview
-        && (window.__homePreviewRestored || restoreReturningHomePreview());
+      var restoredPreview = options.restoreSnapshot
+        ? restoreReturningHomePreview(options.restoreSnapshot)
+        : usePagePreview && (window.__homePreviewRestored || restoreReturningHomePreview());
+      if (restoredPreview) setSync(true);
       if (!restoredPreview) {
         if (stageNativeSkeleton) {
           renderSkeleton(!!options.resetScroll);

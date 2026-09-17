@@ -1,8 +1,14 @@
 export const FOLDER_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none"'
-  + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round"'
+  + ' stroke="currentColor" stroke-width="1.5" stroke-linecap="round"'
   + ' stroke-linejoin="round" aria-hidden="true">'
-  + '<path d="M4 5h6.5l2 2H20v12H4z"/>'
-  + '<path d="M4 8.5h16"/></svg>';
+  + '<path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/>'
+  + '<path d="M3 9h18"/></svg>';
+
+export const TERMINAL_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none"'
+  + ' stroke="currentColor" stroke-width="1.5" stroke-linecap="round"'
+  + ' stroke-linejoin="round" aria-hidden="true">'
+  + '<rect x="2" y="3" width="20" height="18" rx="3"/>'
+  + '<path d="m6.5 8.5 3.5 3.5-3.5 3.5M13.5 15.5h4"/></svg>';
 
 export const FILE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none"'
   + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round"'

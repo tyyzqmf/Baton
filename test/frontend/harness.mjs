@@ -42,6 +42,9 @@ export async function makeHarness(options = {}) {
         handlers.push(listener);
         listeners.set(type, handlers);
       },
+      removeEventListener(type, listener) {
+        listeners.set(type, (listeners.get(type) || []).filter(handler => handler !== listener));
+      },
       dispatch(type) {
         for (const listener of listeners.get(type) || []) listener();
       },
