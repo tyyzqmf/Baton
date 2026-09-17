@@ -2,6 +2,7 @@
 import { state } from '../state.js';
 import { registerEdgeBackLayer } from '../edge-back.js';
 import { loadingSpinner } from '../components/loading.js';
+import { currentProjectHash } from './project-hash.js';
 import { requestProjectFiles } from './rpc.js';
 import { renderSourceView } from './source-view.js';
 
@@ -21,10 +22,8 @@ var _edgeBack = registerEdgeBackLayer({
 });
 
 function requestFileAsync(absPath) {
-  var project = state.appState.project;
-  var projectHash = state.wsProjectHash || (project && project.hash) || '';
   return requestProjectFiles('read', {
-    projectHash: projectHash,
+    projectHash: currentProjectHash(),
     path: absPath,
   }).catch(function () { return null; });
 }
@@ -172,11 +171,9 @@ function closeFileViewer(options) {
 
 async function sendFileRequest(absPath, line, snippet, retriesLeft) {
   var token = ++_fileRequestToken;
-  var project = state.appState.project;
-  var projectHash = state.wsProjectHash || (project && project.hash) || '';
   try {
     var message = await requestProjectFiles('read', {
-      projectHash: projectHash,
+      projectHash: currentProjectHash(),
       path: absPath,
     }, {
       timeout: FILE_REQ_TIMEOUT,
