@@ -17,7 +17,7 @@ function codexHome(t) {
   return home;
 }
 
-test('writer adapter only marks standalone Codex TUI processes as terminable', (t) => {
+test('writer adapter marks standalone Codex TUI and app-server processes as terminable', (t) => {
   const home = codexHome(t);
   const tui = describeCodexWriter('thread-1', {
     codexHomes: [home],
@@ -45,14 +45,74 @@ test('writer adapter only marks standalone Codex TUI processes as terminable', (
       tty: '??',
       command: '/usr/local/bin/codex app-server --stdio',
     }),
-    threadStatus: () => {
-      throw new Error('unsafe clients should not trigger a rollout scan');
-    },
+    threadStatus: () => 'completed',
   });
-  assert.equal(daemon.pid, 456);
-  assert.equal(daemon.canTerminate, false);
-  assert.equal(daemon.label, 'another Codex client');
-  assert.equal(daemon.status, null);
+  assert.deepEqual(daemon, {
+    pid: 456,
+    tty: '??',
+    label: 'Codex app-server',
+    canTerminate: true,
+    status: 'completed',
+  });
+});
+
+test('writer adapter still rejects unrelated processes and other Codex servers', (context) => {
+  const home = codexHome(context);
+  for (const command of [
+    '/usr/local/bin/other app-server --stdio',
+    '/usr/local/bin/codex mcp-server',
+    '/usr/local/bin/codex exec-server',
+    '/usr/local/bin/codex remote-control',
+  ]) {
+    const writer = describeCodexWriter('thread-1', {
+      codexHomes: [home],
+      lockHolderPid: () => 456,
+      processInfo: () => ({ tty: 'ttys001', command }),
+      threadStatus: () => {
+        throw new Error('unsafe clients should not trigger a rollout scan');
+      },
+    });
+    assert.equal(writer.canTerminate, false, command);
+    assert.equal(writer.status, null, command);
+  }
+});
+
+test('desktop app-server takeover preserves PID and idle-state checks', async (context) => {
+  const home = codexHome(context);
+  const events = [];
+  let holdsLock = true;
+  let status = 'completed';
+  const options = {
+    codexHomes: [home],
+    pidHoldsLock: (_lockPath, pid) => pid === 456 && holdsLock,
+    processInfo: () => ({
+      tty: '??',
+      command: '/Applications/ChatGPT.app/Contents/Resources/codex -c features.code_mode_host=true app-server --analytics-default-enabled',
+    }),
+    threadStatus: () => status,
+    kill: (pid, signal) => events.push({ pid, signal }),
+    restoreTerminal: () => {},
+  };
+
+  await terminateCodexWriter('thread-1', 456, { ...options, requireIdle: true });
+  assert.deepEqual(events, [{ pid: 456, signal: 'SIGTERM' }]);
+
+  status = 'running';
+  await assert.rejects(
+    terminateCodexWriter('thread-1', 456, { ...options, requireIdle: true }),
+    (error) => error.code === 'CODEX_ACTIVE_WRITER',
+  );
+  assert.equal(events.length, 1);
+
+  await terminateCodexWriter('thread-1', 456, options);
+  assert.equal(events.length, 2);
+
+  holdsLock = false;
+  await assert.rejects(
+    terminateCodexWriter('thread-1', 456, options),
+    (error) => error.code === 'CODEX_WRITER_CHANGED',
+  );
+  assert.equal(events.length, 2);
 });
 
 test('writer termination revalidates the expected PID and idle state before SIGTERM', async (t) => {
