@@ -8,6 +8,10 @@
       "Type": "String",
       "Description": "S3 bucket name for images (lowercase)"
     },
+    "WsCodeS3Key": {
+      "Type": "String",
+      "Description": "S3 key of the immutable WebSocket Lambda package"
+    },
     "AppVersion": {
       "Type": "String",
       "Description": "App version (semantic-githash), drives bridge auto-update",
@@ -396,6 +400,85 @@
         "IntegrationUri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsHandler.Arn}/invocations" }
       }
     },
+    "TerminalDirectApi": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Properties": { "Name": { "Fn::Sub": "${AWS::StackName}-terminal-data" }, "ProtocolType": "WEBSOCKET", "RouteSelectionExpression": "$request.body.action" }
+    },
+    "TerminalDirectControlIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsHandler.Arn}/invocations" }
+      }
+    },
+    "TerminalDirectConnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "$connect", "Target": { "Fn::Sub": "integrations/${TerminalDirectControlIntegration}" } }
+    },
+    "TerminalDirectDisconnectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "$disconnect", "Target": { "Fn::Sub": "integrations/${TerminalDirectControlIntegration}" } }
+    },
+    "TerminalDirectDefaultRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "$default", "Target": { "Fn::Sub": "integrations/${TerminalDirectControlIntegration}" } }
+    },
+    "TerminalDirectStage": {
+      "Type": "AWS::ApiGatewayV2::Stage",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "StageName": "v1", "AutoDeploy": true }
+    },
+    "TerminalDirectPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": { "FunctionName": { "Ref": "WsHandler" }, "Action": "lambda:InvokeFunction", "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/*" } }
+    },
+    "TerminalDirectRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": { "Fn::Sub": "${AWS::StackName}-terminal-direct-role" },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "AWS": { "Fn::GetAtt": ["WsLambdaRole", "Arn"] } }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [{
+          "PolicyName": "TerminalCallbackOnly",
+          "PolicyDocument": { "Version": "2012-10-17", "Statement": [{
+            "Effect": "Allow", "Action": "execute-api:ManageConnections",
+            "Resource": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/v1/POST/@connections/*" }
+          }] }
+        }]
+      }
+    },
+    "TerminalDirectIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationType": "HTTP", "IntegrationMethod": "POST",
+        "IntegrationUri": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1/@connections/{connectionId}" },
+        "RequestParameters": {
+          "integration.request.path.connectionId": "route.request.body.target",
+          "integration.request.header.Authorization": "route.request.body.authorization",
+          "integration.request.header.X-Amz-Date": "route.request.body.date",
+          "integration.request.header.X-Amz-Security-Token": "route.request.body.token"
+        },
+        "RequestTemplates": { "application/json": "$input.path('$.body')" },
+        "TemplateSelectionExpression": "application/json", "PassthroughBehavior": "NEVER", "TimeoutInMillis": 5000
+      }
+    },
+    "TerminalDirectIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationId": { "Ref": "TerminalDirectIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "application/json",
+        "ResponseTemplates": { "application/json": "{}" }
+      }
+    },
+    "TerminalDirectRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["TerminalDirectIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "terminal_direct_data",
+        "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
+      }
+    },
     "WsStage": {
       "Type": "AWS::ApiGatewayV2::Stage",
       "Properties": {
@@ -412,14 +495,17 @@
         "Runtime": "python3.12",
         "Handler": "bridge_ws.handler",
         "Code": {
-          "ZipFile": "# placeholder — replaced by deploy"
+          "S3Bucket": { "Ref": "ImagesBucketName" },
+          "S3Key": { "Ref": "WsCodeS3Key" }
         },
         "Environment": {
           "Variables": {
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
             "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
-            "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
+            "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+            "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
+            "TERMINAL_DIRECT_ENDPOINT": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
           }
         },
         "MemorySize": 128,
@@ -470,6 +556,18 @@
             ]
           }
         }]
+      }
+    },
+    "TerminalDirectAssumePolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "TerminalDirectAssumeSession",
+        "Roles": [{ "Ref": "WsLambdaRole" }],
+        "PolicyDocument": { "Version": "2012-10-17", "Statement": [{
+          "Effect": "Allow", "Action": "sts:AssumeRole", "Resource": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] }
+        }, {
+          "Effect": "Allow", "Action": "execute-api:ManageConnections", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/*" }
+        }] }
       }
     },
     "ConnectionsTable": {

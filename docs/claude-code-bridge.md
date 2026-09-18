@@ -105,6 +105,16 @@ Content block processing:
 - Linux: systemd user service (`~/.config/systemd/user/`)
 - Windows: Task Scheduler runs `bridge-launcher.mjs`
 
+### Claude credentials in background services
+
+On macOS/Linux, directly resolved Claude executables load `~/.claude/env.sh`
+when present, exporting its settings and adding Node's directory and `~/.local/bin`
+to the child process PATH. This optional file must be trusted Bash code; Bridge
+does not copy its credentials. Without it, existing authentication is unchanged.
+Automatic updates restart Bridge, so no manual restart or unit changes are needed
+for this fix. Later credential edits apply to new Claude processes; restart Bridge
+to refresh already-running processes immediately.
+
 ## DynamoDB
 
 ```

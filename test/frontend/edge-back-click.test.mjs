@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { createServer } from 'vite';
+import { createTestServer } from './helpers/vite.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
@@ -33,7 +33,7 @@ test('edge swipe suppresses only its own click', async () => {
   });
   window.__BATON_NATIVE_MOBILE__ = true;
 
-  const vite = await createServer({
+  const vite = await createTestServer({
     root: path.join(ROOT, 'web'),
     logLevel: 'silent',
     appType: 'custom',
@@ -95,6 +95,24 @@ test('edge swipe suppresses only its own click', async () => {
     guard.click();
     assert.equal(backClicks, 1);
     assert.equal(projectClicks, 2);
+
+    window.document.body.insertAdjacentHTML('afterbegin', '<div class="top-bar">Home</div><div id="breadcrumb"></div><div id="content"></div>');
+    const content = window.document.getElementById('content');
+    const homeState = { device: null, project: null, session: null };
+    const sessionState = { device: 'D', project: { hash: 'P', name: 'Project' }, session: 'codex:session' };
+    for (const useBackStack of [true, false]) {
+      edgeBack.markCurrentRoute(homeState);
+      content.innerHTML = '<div>Saved home position</div>';
+      content.scrollTop = 640;
+      edgeBack.prepareNavigation(sessionState);
+      edgeBack.markCurrentRoute(sessionState);
+      content.innerHTML = '<div>Session detail</div>';
+      content.scrollTop = 0;
+      if (useBackStack) assert.equal(edgeBack.takePreviousNavigation().device, null);
+      const snapshot = edgeBack.prepareNavigation(homeState);
+      assert.equal(snapshot.scrollTop, 640);
+      assert.equal(snapshot.contentHtml, '<div>Saved home position</div>');
+    }
   } finally {
     await vite.close();
     dom.window.close();

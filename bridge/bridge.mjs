@@ -15,7 +15,7 @@ import { loadConfig, fetchServerConfig } from './config.mjs';
 import { initHttp } from './http.mjs';
 import { syncSessions, checkStopped, reconcile } from './sync.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
-import { initWs, shutdownInteractions, wsSendWhenConnected } from './ws.mjs';
+import { initWs, shutdownInteractions, wsSendWhenConnected, hasTerminalSessions } from './ws.mjs';
 import { loadSynced, saveSynced } from './extract.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
@@ -100,11 +100,13 @@ setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 // Compare the immutable package version; config.json is user state.
 async function checkUpdate() {
   try {
+    if (hasTerminalSessions()) return;
     const res = await fetch(`${CONFIG.server}/api/version`, { headers: { 'x-api-key': CONFIG.apiKey } });
     if (!res.ok) return;
     const info = await res.json();
     const version = info.bridgeVersion || info.version;
     if (!version || version === 'dev' || version === BRIDGE_VERSION) return;
+    if (hasTerminalSessions()) return;
     console.log(`[update] ${BRIDGE_VERSION} → ${version}, updating...`);
     const serverBase = CONFIG.server.replace(/\/$/, '');
     const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
@@ -125,6 +127,7 @@ async function checkUpdate() {
         fs.writeFileSync(tgz, Buffer.from(await packageRes.arrayBuffer()));
         extractTar(tgz, stage);
         execFileSync(process.execPath, ['--check', path.join(stage, 'bridge.mjs')], { stdio: 'ignore' });
+        if (hasTerminalSessions()) return;
         installProductionDependencies(stage);
 
         const stagedVersion = fs.readFileSync(path.join(stage, 'version.mjs'), 'utf-8');
@@ -132,6 +135,7 @@ async function checkUpdate() {
           throw new Error('downloaded Bridge version does not match server');
         }
 
+        if (hasTerminalSessions()) return;
         installStagedBridge(stage, BRIDGE_HOME);
       } finally {
         cleanupUpdateWorkspace(workspace);

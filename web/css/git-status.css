@@ -52,6 +52,6 @@
 .git-diff-render .d2h-code-line{width:auto;padding:0 .5em}
 .git-diff-warning{padding:16px;color:#8b949e;font-size:13px}
 html.native-mobile #top-right .git-status-entry{width:44px;height:44px;flex-basis:44px}
-html.native-mobile #top-right .project-files-entry.git-status-entry svg.git-branch-icon{width:22px;height:22px;transform:translate(calc(-50% + 2px),-50%)}
+html.native-mobile #top-right .project-files-entry.git-status-entry svg.git-branch-icon,html.native-mobile .edge-back-top-right .project-files-entry.git-status-entry svg.git-branch-icon{width:22px;height:22px;transform:translate(calc(-50% + 2px),-50%)}
 html.native-mobile .git-section-actions,html.native-mobile .git-row-actions{margin-right:4px}
 @media(orientation:landscape){html.native-mobile .git-status-content{padding-left:var(--sal,env(safe-area-inset-left,0px));padding-right:var(--sar,env(safe-area-inset-right,0px))}}

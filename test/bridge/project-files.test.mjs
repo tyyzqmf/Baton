@@ -85,6 +85,24 @@ test('project file listing rejects paths outside the project', async () => {
   }
 });
 
+test('project-relative HTML preview reads reject symlinks outside the project', async () => {
+  const { root } = fixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-preview-outside-'));
+  try {
+    const external = path.join(outside, 'private.html');
+    fs.writeFileSync(external, '<p>outside project</p>');
+    fs.mkdirSync(path.join(root, 'output'));
+    fs.symlinkSync(external, path.join(root, 'output', 'preview.html'));
+    const [response] = await request(root, { operation: 'read', path: 'output/preview.html' });
+    assert.equal(response.ok, false);
+    assert.match(response.error, /outside the project/);
+    assert.equal(response.content, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test('text files up to 300 KB use one ordered WebSocket chunk stream', async () => {
   const { root, contents } = fixture();
   try {

@@ -116,7 +116,7 @@ if (window.visualViewport && _isMobile) {
       });
     }
     var chromeHeight = 0;
-    if (_isIOS && kbUp) {
+    if (_isIOS && kbUp && !document.getElementById('projectTerminalPage')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
       if (topBar) chromeHeight += topBar.offsetHeight;
@@ -2976,6 +2976,7 @@ function promoteEchoedBubble(pending, msg) {
 // All shared state lives in state.js, not on window.
 Object.assign(window, {
   updateTitleFromMessages,
+  syncMobileViewport,
   connectWs, subscribeSession, wsSend, wsSendReliable, setWsStatus, disconnectWs, ensureWsAndSend,
   resumeSessionForeground,
   startWs, bufferAndFetch, loadOlderMessages, recoverMissing,

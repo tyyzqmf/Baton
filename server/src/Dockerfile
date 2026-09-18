@@ -4,6 +4,7 @@ WORKDIR /build
 COPY package.json package-lock.json vite.config.js ./
 RUN npm ci --no-audit --no-fund
 COPY web/ web/
+COPY bridge/terminal-direct-protocol.mjs bridge/terminal-direct-protocol.mjs
 RUN npm run build
 
 # Stage 2: Python Lambda runtime
@@ -17,9 +18,11 @@ COPY bridge_sync.py .
 COPY bridge_read.py .
 COPY bridge_ws.py .
 COPY session_archive.py .
+COPY terminal_ws.py terminal_direct_ws.py ./
 COPY project/ project/
 COPY --from=web-builder /build/dist web/
 RUN pip install --no-cache-dir -r requirements.txt
+RUN chmod -R a+rX /app
 
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { createServer } from 'vite';
+import { createTestServer } from './helpers/vite.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
@@ -95,7 +95,7 @@ test('a small user drag pauses bottom-follow until the user returns to the botto
     }
   }
 
-  const vite = await createServer({
+  const vite = await createTestServer({
     root: path.join(ROOT, 'web'),
     logLevel: 'silent',
     appType: 'custom',

@@ -101,7 +101,8 @@ test('Sessions table declares the root-thread lookup index', () => {
 test('the Server image includes imported local Python modules', () => {
   const dockerfile = read('server/src/Dockerfile');
   const source = path.join(ROOT, 'server/src');
-  const copied = new Set([...dockerfile.matchAll(/^COPY ([\w_]+\.py) \.$/gm)].map((match) => match[1]));
+  const copied = new Set([...dockerfile.matchAll(/^COPY (.+) \.\/?$/gm)]
+    .flatMap(([, sources]) => sources.split(/\s+/).filter((filename) => /^[\w_]+\.py$/.test(filename))));
   for (const filename of copied) {
     const code = fs.readFileSync(path.join(source, filename), 'utf8');
     for (const [, module] of code.matchAll(/^from ([\w_]+) import /gm)) {

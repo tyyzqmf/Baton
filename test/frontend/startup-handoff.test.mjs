@@ -152,16 +152,12 @@ test('list skeletons mirror the final row structure', () => {
 });
 
 test('LaunchScreen uses the mobile content geometry', () => {
-  assert.equal(launchScreen.match(/constant="98" id="c[1-4]h"/g)?.length, 4);
-  assert.equal(launchScreen.match(/constant="17" id="c[1-4]ib1t"/g)?.length, 4);
-  assert.equal(launchScreen.match(/constant="14" id="c[1-4]ib3t"/g)?.length, 4);
-  assert.match(launchScreen, /id="cardsStack">[\s\S]*?height="416"/);
-  assert.equal(launchScreen.match(/constant="70" id="i[12]h"/g)?.length, 2);
-  assert.equal(launchScreen.match(/id="i[12]b4"/g)?.length, 2);
-  assert.match(launchScreen, /constant="20" id="td-t"/);
-  assert.match(launchScreen, /constant="10" id="is-t"/);
+  assert.equal(launchScreen.match(/constant="99" id="c[12]h"/g)?.length, 2);
+  assert.equal(launchScreen.match(/constant="16\.5" id="c[12]ib1t"/g)?.length, 2);
+  assert.equal(launchScreen.match(/constant="14\.5" id="c[12]ib3t"/g)?.length, 2);
+  assert.match(launchScreen, /id="cardsStack">[\s\S]*?height="206"/);
   assert.match(styleSource, /html\.native-mobile \.card-header \{ min-height: 21px; \}/);
-  assert.match(styleSource, /html\.native-mobile \.card-bottom \{ min-height: 17px; \}/);
+  assert.match(styleSource, /html\.native-mobile \.card-bottom \{ min-height: 18px; \}/);
   assert.match(styleSource, /html\.native-mobile \.session-item \.item-top \{ min-height: 21px; \}/);
   assert.match(styleSource, /html\.native-mobile \.project-item \.item-top \{ min-height: 19px; \}/);
   assert.match(styleSource, /html\.native-mobile \.device-item \.item-top \{ min-height: 18px; \}/);
@@ -198,6 +194,22 @@ test('browse lists reserve scrollbar width before and after CSS loads', () => {
     styleSource,
     /body\.browse-view #content \{ scrollbar-gutter: stable; \}/,
   );
+});
+
+test('active session skeleton and loaded heading share the original natural height', () => {
+  assert.match(indexHtml, /content\.innerHTML = '<div class="section-title active-section-heading">Active Sessions<\/div>'/);
+  const headingStyle = styleSource.match(/\.active-section-heading \{([^}]+)\}/)?.[1];
+  assert.ok(headingStyle);
+  assert.match(headingStyle, /display: flex/);
+  assert.doesNotMatch(headingStyle, /(?:min-|max-)?height\s*:/);
+});
+
+test('home devices reserve bottom safe-area spacing beyond their card padding', () => {
+  assert.match(
+    styleSource,
+    /\.home-device-list \{[^}]*padding: 0 12px calc\(8px \+ var\(--sab, env\(safe-area-inset-bottom, 0px\)\)\);/,
+  );
+  assert.match(indexHtml, /id="devices-section" class="home-device-list"/);
 });
 
 test('mobile agent sheet stays flush to the viewport without edge borders', () => {

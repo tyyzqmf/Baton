@@ -5,7 +5,7 @@ var renderedState = window.__inlineRendered
   ? { device: null, project: null, session: null, sessionPreview: '' }
   : null;
 var navigationStack = [];
-var restoringNavigation = false;
+var restoringNavigation = null;
 var PAGE_PREVIEW_KEY = 'baton-page-preview';
 var edgeBackLayers = [];
 var edgeGuardRefreshers = [];
@@ -182,8 +182,9 @@ function rebuildAncestorStack(targetState) {
 
 export function prepareNavigation(targetState) {
   if (restoringNavigation) {
-    restoringNavigation = false;
-    return;
+    var restoredSnapshot = restoringNavigation.snapshot;
+    restoringNavigation = null;
+    return restoredSnapshot;
   }
   if (!renderedState) return;
 
@@ -210,8 +211,12 @@ export function prepareNavigation(targetState) {
       break;
     }
   }
-  if (targetIndex >= 0) navigationStack.length = targetIndex;
-  else rebuildAncestorStack(targetState);
+  if (targetIndex >= 0) {
+    var targetSnapshot = navigationStack[targetIndex].snapshot;
+    navigationStack.length = targetIndex;
+    return targetSnapshot;
+  }
+  rebuildAncestorStack(targetState);
 }
 
 export function markCurrentRoute(appState) {
@@ -220,8 +225,8 @@ export function markCurrentRoute(appState) {
 
 export function takePreviousNavigation() {
   if (!navigationStack.length) return null;
-  restoringNavigation = true;
-  return cloneNavState(navigationStack.pop().state);
+  restoringNavigation = navigationStack.pop();
+  return cloneNavState(restoringNavigation.state);
 }
 
 export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {

@@ -54,6 +54,11 @@
     color: #e6edf3;
   }
 }
+.path-breadcrumb-item:active {
+  background: #21262d;
+  border-color: #6e7681;
+  color: #e6edf3;
+}
 
 @property --path-breadcrumb-loading-angle {
   syntax: "<angle>";

@@ -187,7 +187,9 @@ export function describeCodexWriter(threadId, options = {}) {
     };
   }
   if (!info) info = (options.processInfo || processInfo)(pid) || {};
-  const canTerminate = safeStandaloneTui(info);
+  const appServer = /(?:^|[\\/])codex(?:[.\s-]|$)/i.test(info.command || '')
+    && /\bapp-server\b/i.test(info.command || '');
+  const canTerminate = safeStandaloneTui(info) || appServer;
   const status = canTerminate
     ? (options.threadStatus || threadStatus)(threadId, options)
     : null;
@@ -195,7 +197,7 @@ export function describeCodexWriter(threadId, options = {}) {
     pid,
     tty: info.tty || '',
     label: canTerminate
-      ? `Codex terminal${info.tty ? ` (${info.tty})` : ''}`
+      ? (appServer ? 'Codex app-server' : `Codex terminal${info.tty ? ` (${info.tty})` : ''}`)
       : 'another Codex client',
     canTerminate,
     status,
