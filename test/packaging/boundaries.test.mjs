@@ -98,6 +98,21 @@ test('Sessions table declares the root-thread lookup index', () => {
   assert.equal(index.Projection.ProjectionType, 'ALL');
 });
 
+test('the Server image includes imported local Python modules', () => {
+  const dockerfile = read('server/src/Dockerfile');
+  const source = path.join(ROOT, 'server/src');
+  const copied = new Set([...dockerfile.matchAll(/^COPY ([\w_]+\.py) \.$/gm)].map((match) => match[1]));
+  for (const filename of copied) {
+    const code = fs.readFileSync(path.join(source, filename), 'utf8');
+    for (const [, module] of code.matchAll(/^from ([\w_]+) import /gm)) {
+      const dependency = `${module}.py`;
+      if (fs.existsSync(path.join(source, dependency))) {
+        assert.ok(copied.has(dependency), `${filename} imports ${dependency}, but the image does not copy it`);
+      }
+    }
+  }
+});
+
 test('web and Tauri builds consume web sources and dist only', () => {
   const vite = read('vite.config.js');
   assert.match(vite, /root:\s*['"]web['"]/);
