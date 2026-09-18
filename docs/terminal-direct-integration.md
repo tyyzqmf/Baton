@@ -1,7 +1,57 @@
 # Header 签名直转与项目共享终端
 
-更新：2026-09-17。单项目多终端已实现；正式发布使用 `server/install.sh --region ap-northeast-1 --stack Baton`。
+更新：2026-09-18。单项目多终端已实现；正式发布使用 `server/install.sh --region ap-northeast-1 --stack Baton`。
 多终端仍复用已有 Header 签名直转，不需要新增云端 API 或常驻 EC2 / Fargate 中继。
+
+## 启动与快速返回优化（待配套发布）
+
+- 页面返回保留一个已同步终端实例与连接，最多 60 秒；隐藏页面仍处理输出和 ACK，但不接收输入、抢焦点或改变共享尺寸。
+  同账号、服务器、项目且连接仍有效时直接恢复原实例。过期、应用进入后台、离线、切换账号或连接出错时释放，重新进入走完整恢复。
+  正在连接、同步或执行管理操作时不缓存；释放连接仍不结束 Bridge 中的 Shell。
+- 配置按服务器与 API Key 在内存中缓存，共享并发请求。若已有同账号应用控制 WS 则借用，不另建控制连接；
+  终端关闭仅释放自己的 attachment，不关闭主应用 WS。收到服务端关闭确认前不再次借用同一控制连接。
+- Bridge 通过 `terminalStartup=1` 声明支持启动参数。App 首次 `terminal_direct/open` 携带选中 sessionId 与尺寸，
+  服务端验证并随 offer 下发；Bridge 在数据通道授权后直接 attach 和发送屏幕，App 不再发送第二次数据 open。
+  任一旧服务端或旧 Bridge 不支持此能力时，保留原来的数据 open 流程，不提前创建 Shell。
+- 服务端先完成四条连接记录的归属校验，再并行申请 App / Bridge 的两份 STS 凭据；全部成功且状态仍有效才激活。
+  API Key、join token、数据 API 隔离、STS 权限范围、HMAC 与会话序号均不变；数据仍通过 HTTP integration 直转。
+- 快照按最多四个未确认块发送；最后一块排入发送队列后，立即发送有序的 synced 和缓存增量。
+  前端仍等待所有快照块实际写入 xterm 后才处理 synced。render_ack 继续释放在途字节并推进大快照窗口，
+  不再额外阻塞小快照的输入解锁；超限与断线保护保留。
+
+前端、Bridge 与服务端改动需配套发布才能获得完整的冷启动收益；仅更新前端即可验证快速返回、配置缓存与控制连接复用。
+正式 Bridge 重启会结束已有 PTY，发布前应确认终端中的工作已保存。
+
+### 本次验证（2026-09-18）
+
+- 本地新版前端连接未更新的线上服务与正式 Bridge，确认旧协议回退可用。最终五轮快速返回均无配置请求、
+  无新 WS；点击到输入状态恢复为 1.1–5.1ms，首个 requestAnimationFrame 回调为 41–79ms。
+  客户端为 Chrome 移动视口，动画帧回调不是绘制完成或 iOS 键盘动画测量。
+- 主应用控制连接复用的两轮旧协议启动为 3611ms、2971ms；关闭 terminal 后主连接仍可用于下一次打开。
+  这不是新服务端 / Bridge 完整部署后的冷启动成绩。完整冷启动仍待配套发布后复测。
+- 隔离验证使用真实 PTY 和当前 DirectDataChannel，确认新协议无第二次数据 open，旧协议正常回退；
+  小快照无需等待渲染 ACK 才下发 synced，大快照仍受四块窗口约束，退出仅断开 attachment、不结束 Shell。
+- 缓存验证覆盖隐藏期间输出与 ACK、隐藏输入拒绝、60 秒过期、断线、后台、离线、页面退出与账号变化。
+  服务端验证覆盖先检查四条连接归属再并行 STS、拒绝跨账号连接、启动参数校验与能力协商。
+- 账号 / 服务器边界复核通过：变化或退出登录会关闭主连接与终端缓存、清空内存和本地存储中的 WS 地址；
+  迟到的旧配置不会恢复连接，控制连接地址、API Key 或角色不匹配时不借用。同身份设置不破坏已有连接。
+- 提交前全量测试 806 项通过，生产构建通过；仅有既有警告，未新增仓库测试文件。
+- iOS 模拟器存在并行页面操作，键盘回归结果不作为最终验收；原点击聚焦逻辑未改，缓存不额外切换 textarea 只读状态。
+
+### 两个终端切换复测（2026-09-18）
+
+- Chrome 移动视口通过现有线上数据通道连接同一个正式 Bridge，交替测试旧版线上页面与本地新版页面，
+  各切换九次。旧版平均 944ms、中位数 942ms；新版平均 949ms、中位数 920ms，均未新建 WebSocket。
+  此处测量选择终端到输入控件解锁，不包含软键盘动画；本轮未复现持续的前端切换性能回退。
+- 新版平均分布：点击到发出选择请求 2ms、请求到快照到达 491ms、快照处理到 ACK 4ms、
+  ACK 到 synced 448ms、最后解锁 5ms。首轮非交替采样还出现过 6410ms / 8841ms 长尾，
+  主要落在请求响应与确认等待阶段，未进一步定位到网络或远端处理的具体环节。
+- 正式 Bridge 当时仍运行 `snapshot.acked === snapshot.chunks` 的旧结束条件；本地源码已改为全部块
+  排入发送队列即发送有序 synced。60 秒页面缓存只优化退出再进入，不缓存每个未选中终端的实时屏幕。
+- 隔离真实 PTY 验证对比两种结束条件，模拟 App 与 Bridge 间每方向 200ms 数据延迟，各切换六次：
+  旧条件 809–820ms，新条件 407–413ms；Bridge 处理约 0.6–6.1ms。两种条件均正确恢复各自屏幕，
+  保持原来的两个 Shell，切换不新建连接。这是受控延迟验证，不是新版 Bridge 的线上实测。
+- 本轮未更新或重启正式 Bridge；实际切换收益仍需保存终端工作、更新 Bridge 后复测。
 
 ## 项目共享终端（当前实现）
 
@@ -17,7 +67,7 @@
 - 名称为 Terminal 1～5，使用最小空闲编号；关闭后复用名字但绝不复用 `sessionId` 或 `epoch`。
 - 初次进入没有终端时原子地创建一个；已有终端时优先恢复页面 sessionStorage 中的选择，否则选择第一个。
   首次进入或 Bridge 重启后重连没有终端时也会创建默认终端，列表同步后显示 1/5。
-- 返回、关闭页面、网络断线只 detach，不结束 Shell；后加入页面先恢复屏幕，再接收实时输出。
+- 返回页面短期保留有效连接；关闭页面、缓存过期或网络断线只 detach，不结束 Shell；后加入页面先恢复屏幕，再接收实时输出。
 - 移除页面 Reset，右侧使用当前终端名称的下拉按钮；浮层顶部显示数量和新建按钮，每行支持选择和关闭。
   关闭复用确认弹窗，会终止选中终端并让其所有查看者切到剩余的第一个；其他终端和查看者不受影响。
   只剩一个时，关闭改为重新启动：先成功启动替代 Shell，再停止旧进程，重新从 1 分配最小空闲编号并更换 ID / epoch，
@@ -34,9 +84,9 @@
 ### 连接、认证与事件
 
 1. 主 Bridge 控制 WS 通过 `terminal=2` 声明能力，服务端保存 `terminalProtocol=2`。
-2. 每个页面用自己的 app 控制连接发送 `terminal_direct/open`，包含 device、projectHash、随机 terminalId。
+2. 每个页面借用可用 app 控制连接或创建专用连接发送 `terminal_direct/open`，包含 device、projectHash、随机 terminalId。
 3. Lambda 校验同账号、设备唯一且在线、主 Bridge 能力。Bridge 控制连接保存多个 attachment ID；
-   每个页面仍独占自己的 app 控制及两条数据端连接。每个 attachment 都有独立 join token、STS 和 HMAC key。
+   每个 attachment 独占自己的两条数据端连接，一个 app 控制连接同时最多绑定一个 attachment。每个 attachment 都有独立 join token、STS 和 HMAC key。
 4. 数据业务 action 为 `terminal_shared, v1`，外层仍是 `terminal_direct_frame`，继续 Header 签名 HTTP integration。
    `terminalId` 是页面 attachment ID；Bridge 下发的 `sessionId` 才是共享 PTY 标识。
 5. 输入事件：open、input、resize、heartbeat、render_ack、detach、create_session、select_session、close_session；

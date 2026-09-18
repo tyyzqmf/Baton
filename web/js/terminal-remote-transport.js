@@ -1,4 +1,25 @@
 import { DirectAppSocket } from '../../bridge/terminal-direct-protocol.mjs';
+import { state } from './state.js';
+
+let configuration = null;
+
+function terminalConfiguration(server, key) {
+  if (state.SERVER === server && state.KEY === key && state.ws?.readyState === WebSocket.OPEN && state.WS_URL) {
+    return Promise.resolve({ wsUrl: state.WS_URL });
+  }
+  if (configuration?.server === server && configuration.key === key) return configuration.promise;
+  const current = configuration = { server, key };
+  current.promise = fetch(`${server}/api/bridge/config`, {
+    headers: { 'x-api-key': key }, signal: AbortSignal.timeout(15000),
+  }).then(response => {
+    if (!response.ok) throw new Error(`读取远程配置失败：HTTP ${response.status}`);
+    return response.json();
+  }).catch(error => {
+    if (configuration === current) configuration = null;
+    throw error;
+  });
+  return current.promise;
+}
 
 export class RemoteTerminalSocket extends EventTarget {
   readyState = WebSocket.CONNECTING;
@@ -11,12 +32,13 @@ export class RemoteTerminalSocket extends EventTarget {
   unacked = new Map();
   terminalId = crypto.randomUUID();
 
-  constructor(device, { profile = false, direct = false, projectHash = null } = {}) {
+  constructor(device, { profile = false, direct = false, projectHash = null, initialOpen } = {}) {
     super();
     this.device = device;
     this.profile = profile;
     this.direct = direct;
     this.projectHash = projectHash;
+    this.initialOpen = initialOpen;
     Promise.resolve().then(() => this.connect()).catch(() => this.fail('远程连接初始化失败：请确认已登录主页面及网络正常'));
   }
 
@@ -24,21 +46,24 @@ export class RemoteTerminalSocket extends EventTarget {
     return (this.socket?.bufferedAmount || 0) + [...this.unacked.values()].reduce((sum, size) => sum + size, 0);
   }
 
+  get initialOpenAccepted() {
+    return this.socket?.initialOpenAccepted === true;
+  }
+
   async connect() {
     const key = atob(localStorage.getItem('_ak') || '');
     if (!key || !this.device) return this.fail('请先在主页面登录，并选择在线设备');
     const server = (localStorage.getItem('_as') || location.origin).replace(/\/$/, '');
-    const config = await fetch(`${server}/api/bridge/config`, {
-      headers: { 'x-api-key': key }, signal: AbortSignal.timeout(15000),
-    });
-    if (!config.ok) return this.fail(`读取远程配置失败：HTTP ${config.status}`);
-    const { wsUrl } = await config.json();
+    const { wsUrl } = await terminalConfiguration(server, key);
+    if (key !== atob(localStorage.getItem('_ak') || '')
+      || server !== (localStorage.getItem('_as') || location.origin).replace(/\/$/, '')) return this.close();
     if (!wsUrl?.startsWith('wss://')) return this.fail('服务器没有返回有效的 WSS 地址');
     const endpoint = new URL(wsUrl);
     endpoint.search = new URLSearchParams({ apiKey: key, role: 'app' });
     if (this.readyState !== WebSocket.CONNECTING) return;
     this.socket = this.direct
-      ? new DirectAppSocket({ endpoint: wsUrl, key, terminalId: this.terminalId, device: this.device, projectHash: this.projectHash })
+      ? new DirectAppSocket({ endpoint: wsUrl, key, terminalId: this.terminalId, device: this.device, projectHash: this.projectHash,
+        initialOpen: this.initialOpen, controlSocket: state.SERVER === server && state.KEY === key ? state.ws : null })
       : new WebSocket(endpoint);
     this.socket.addEventListener('open', () => {
       this.readyState = WebSocket.OPEN;
@@ -132,6 +157,7 @@ export class RemoteTerminalSocket extends EventTarget {
 
   fail(message) {
     if (this.readyState >= WebSocket.CLOSING) return;
+    configuration = null;
     this.dispatchEvent(new MessageEvent('error', { data: message }));
     this.close();
   }

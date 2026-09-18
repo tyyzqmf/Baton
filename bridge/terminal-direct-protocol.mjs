@@ -248,20 +248,28 @@ export class DirectDataChannel extends EventTarget {
   }
 }
 
+const borrowedControls = new WeakSet();
+
 export class DirectAppSocket extends EventTarget {
   readyState = 0;
 
-  constructor({ endpoint, key, terminalId, device, projectHash, socketFactory = url => new WebSocket(url) }) {
+  constructor({ endpoint, key, terminalId, device, projectHash, initialOpen, controlSocket, socketFactory = url => new WebSocket(url) }) {
     super();
-    this.options = { endpoint, key, terminalId, device, projectHash, socketFactory };
+    this.options = { endpoint, key, terminalId, device, projectHash, initialOpen, socketFactory };
     const url = new URL(endpoint);
     url.search = new URLSearchParams({ apiKey: key, role: 'app' });
-    this.control = socketFactory(url);
+    this.borrowed = controlSocket?.readyState === 1 && controlSocket.url === url.href && !borrowedControls.has(controlSocket);
+    this.control = this.borrowed ? controlSocket : socketFactory(url);
+    if (this.borrowed) borrowedControls.add(this.control);
     this.timeout = setTimeout(() => this.fail('等待 Header 直转测试 Bridge 超时'), 30000);
-    this.control.addEventListener('open', () => this.controlSend('open'));
-    this.control.addEventListener('message', event => this.receive(event.data));
-    this.control.addEventListener('error', () => this.fail('终端授权连接失败'));
-    this.control.addEventListener('close', () => this.close());
+    this.controlListeners = {
+      open: () => this.controlSend('open'),
+      message: event => this.receive(event.data),
+      error: () => this.fail('终端授权连接失败'),
+      close: () => { this.close(); this.detachControl(); },
+    };
+    for (const [type, listener] of Object.entries(this.controlListeners)) this.control.addEventListener(type, listener);
+    if (this.borrowed) queueMicrotask(() => this.controlSend('open'));
   }
 
   get bufferedAmount() {
@@ -272,19 +280,26 @@ export class DirectAppSocket extends EventTarget {
     if (op !== 'close' && this.readyState > 1) return;
     if (this.control.readyState === 1) this.control.send(JSON.stringify({ action: 'terminal_direct', v: 1,
       op, terminalId: this.options.terminalId, device: this.options.device,
+      ...(op === 'open' && this.options.initialOpen ? { initialOpen: this.options.initialOpen } : {}),
       ...(this.options.projectHash ? { projectHash: this.options.projectHash } : {}) }));
   }
 
   receive(data) {
-    if (this.readyState > 1) return;
     try {
       const message = JSON.parse(typeof data === 'string' ? data : decoder.decode(data));
       if (message.action !== 'terminal_direct' || message.terminalId !== this.options.terminalId) return;
-      if (message.type === 'error' || message.type === 'closed') return this.fail(message.message || '终端会话已结束');
+      if (message.type === 'closed') {
+        this.fail(message.message || '终端会话已结束');
+        this.detachControl();
+        return;
+      }
+      if (this.readyState > 1) return;
+      if (message.type === 'error') return this.fail(message.message || '终端会话已结束');
       if (message.v !== 1 || message.device !== this.options.device || message.side !== 'app') throw new Error('Invalid control frame');
       if (this.options.projectHash && message.projectHash !== this.options.projectHash) throw new Error('Project mismatch');
       if (message.type === 'offer') {
         if (this.channel) throw new Error('Duplicate terminal offer');
+        this.initialOpenAccepted = !!message.initialOpen && !!this.options.initialOpen;
         this.channel = new DirectDataChannel({ ...this.options, offer: message });
         this.channel.addEventListener('open', () => {
           clearTimeout(this.timeout);
@@ -316,6 +331,12 @@ export class DirectAppSocket extends EventTarget {
     this.close();
   }
 
+  detachControl(reusable = true) {
+    clearTimeout(this.releaseTimeout);
+    for (const [type, listener] of Object.entries(this.controlListeners)) this.control.removeEventListener(type, listener);
+    if (this.borrowed && reusable) borrowedControls.delete(this.control);
+  }
+
   close() {
     if (this.readyState > 1) return;
     this.readyState = 2;
@@ -323,7 +344,12 @@ export class DirectAppSocket extends EventTarget {
     clearTimeout(this.renewal);
     this.controlSend('close');
     this.channel?.close();
-    this.control.close(1000, 'Terminal control closed');
+    if (this.borrowed && this.control.readyState === 1) {
+      this.releaseTimeout = setTimeout(() => this.detachControl(false), 5000);
+    } else {
+      this.detachControl();
+      if (!this.borrowed) this.control.close(1000, 'Terminal control closed');
+    }
     this.readyState = 3;
     emit(this, 'close', { code: 1000, reason: 'Terminal closed' });
   }

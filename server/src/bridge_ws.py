@@ -227,6 +227,8 @@ def _handle_connect(event, connection_id):
         item["bridgeVersion"] = version
     if role == "bridge" and qs.get("terminal") == "2":
         item["terminalProtocol"] = 2
+        if qs.get("terminalStartup") == "1":
+            item["terminalStartup"] = 1
     if role == "terminal_data":
         item["terminalDataEndpoint"] = connected_endpoint
     _connections_table.put_item(Item=item)

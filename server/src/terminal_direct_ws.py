@@ -6,6 +6,7 @@ import re
 import secrets
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 from botocore.exceptions import ClientError
@@ -143,6 +144,15 @@ class DirectSessions:
                 or (shared and bridge.get("terminalProtocol") != 2)
                 or (not shared and bridge.get("bridgeVersion") != "xterm-direct-1")):
             raise ValueError("请更新该设备的 Bridge 后使用终端")
+        initial = body.get("initialOpen")
+        if initial is not None:
+            if (not shared or not isinstance(initial, dict)
+                    or type(initial.get("cols")) is not int or not 2 <= initial["cols"] <= 500
+                    or type(initial.get("rows")) is not int or not 1 <= initial["rows"] <= 200
+                    or (initial.get("sessionId") is not None and (not isinstance(initial["sessionId"], str)
+                        or not UUID.fullmatch(initial["sessionId"])))):
+                raise ValueError("Invalid initial terminal request")
+            initial = {"cols": initial["cols"], "rows": initial["rows"], "sessionId": initial.get("sessionId")}
         self.available_control(connection_id)
         terminal_id = body["terminalId"]
         tokens = {side: secrets.token_hex(32) for side in ["app", "bridge"]}
@@ -154,6 +164,8 @@ class DirectSessions:
             "expiresAt": now + 45, "ttl": now + 1800, "endpoint": self.endpoint, "frameKey": secrets.token_hex(32)}
         if shared:
             session["projectHash"] = project
+        if initial is not None and bridge.get("terminalStartup") == 1:
+            session["initialOpen"] = initial
         self.table.put_item(Item=session, ConditionExpression="attribute_not_exists(connectionId)")
         try:
             if shared:
@@ -163,7 +175,8 @@ class DirectSessions:
             self.claim(connection_id, terminal_id)
             for side in ["bridge", "app"]:
                 if self.notify(session[side + "Control"], session, "offer", side=side, joinToken=tokens[side],
-                        dataEndpoint=self.data_endpoint) is False:
+                        dataEndpoint=self.data_endpoint,
+                        **({"initialOpen": session["initialOpen"]} if "initialOpen" in session else {})) is False:
                     raise ValueError("Control connection disconnected")
         except Exception:
             self.close(terminal_id)
@@ -211,8 +224,7 @@ class DirectSessions:
             raise
 
     def issue(self, session, expected_state):
-        results = {}
-        for side, peer in [("app", "bridge"), ("bridge", "app")]:
+        for side in ["app", "bridge"]:
             for field, role in [(side + "Control", side), (side + "Data", "terminal_data")]:
                 record = self.get(session[field])
                 attached = (session["terminalId"] in record.get("terminalDirectIds", set())
@@ -222,11 +234,15 @@ class DirectSessions:
                         or not attached
                         or (role == "terminal_data" and record.get("terminalDataEndpoint") != self.data_endpoint)):
                     raise PermissionError("Session connection changed")
+
+        def credentials(side):
             response = self.sts.assume_role(RoleArn=self.role_arn, RoleSessionName="terminal-" + side + "-" + session["terminalId"],
                 DurationSeconds=900, Policy=json.dumps(callback_policy(self.data_endpoint, self.role_arn, self.region)))
             values = response["Credentials"]
-            results[side] = {"accessKeyId": values["AccessKeyId"], "secretAccessKey": values["SecretAccessKey"],
+            return {"accessKeyId": values["AccessKeyId"], "secretAccessKey": values["SecretAccessKey"],
                 "sessionToken": values["SessionToken"], "expiresAt": int(values["Expiration"].timestamp())}
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = dict(zip(["app", "bridge"], executor.map(credentials, ["app", "bridge"])))
         expires = min(result["expiresAt"] for result in results.values())
         self.table.update_item(Key={"connectionId": session["connectionId"]},
             UpdateExpression="SET #state = :active, expiresAt = :expires, issuedAt = :now, #ttl = :ttl",

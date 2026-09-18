@@ -173,7 +173,7 @@ export function createSharedTerminals(options) {
         data: chunk.toString('base64') }, chunk.length);
       if (peer.closed) return;
     }
-    if (snapshot.acked !== snapshot.chunks) return;
+    if (snapshot.sent !== snapshot.chunks) return;
     peer.snapshot = null;
     rawSend(peer, { type: 'synced', epoch: snapshot.epoch, snapshotId: snapshot.id });
     const buffered = peer.buffered;
@@ -398,6 +398,9 @@ export function createSharedTerminals(options) {
           work: Promise.resolve(),
           pending: new Map(), pendingBytes: 0, inflight: new Map(), inflightBytes: 0, buffered: [], bufferedBytes: 0, lastSeen: Date.now() };
         peers.set(peer.id, peer);
+        channel.addEventListener('open', () => {
+          if (message.initialOpen) receive(peer, JSON.stringify({ ...message.initialOpen, type: 'open', clientSeq: 0 }));
+        });
         channel.addEventListener('message', event => receive(peer, event.data));
         channel.addEventListener('error', () => drop(peer));
         channel.addEventListener('close', () => drop(peer));

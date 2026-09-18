@@ -6,8 +6,9 @@ import { clearTerminalView } from './terminal-view-state.js';
 import { attachTerminalTouchScroll } from './terminal-touch-scroll.js';
 
 let view = null;
+let retained = null;
 const encoder = new TextEncoder();
-const edgeBack = registerEdgeBackLayer({ navigateBack: closeProjectTerminal,
+const edgeBack = registerEdgeBackLayer({ navigateBack: () => closeProjectTerminal({ keepAlive: true }),
   foregroundSelectors: ['#projectTerminalPage'], guardZIndex: 902, foregroundZIndex: 900 });
 
 function isTouchViewport() {
@@ -54,14 +55,50 @@ function suspendProjectTerminal() {
   closeProjectTerminal({ preserveView: true });
 }
 
-export function closeProjectTerminal({ preserveView = false } = {}) {
+function credentials() {
+  return JSON.stringify([localStorage.getItem('_as'), localStorage.getItem('_ak')]);
+}
+
+function ownsRuntime(current) {
+  return view === current || retained === current;
+}
+
+function releaseRetained() {
+  if (!retained) return;
+  const previous = retained;
+  retained = null;
+  clearTimeout(previous.keepAliveTimer);
+  document.removeEventListener('visibilitychange', releaseHiddenTerminal);
+  window.removeEventListener('offline', releaseRetained);
+  window.removeEventListener('pagehide', suspendProjectTerminal);
+  disposeTerminalRuntime(previous);
+}
+
+function releaseHiddenTerminal() {
+  if (document.hidden) releaseRetained();
+}
+
+export function closeProjectTerminal({ preserveView = false, keepAlive = false } = {}) {
+  releaseRetained();
   if (!view) return false;
   const previous = view;
   view = null;
   if (!preserveView) clearTerminalView();
   edgeBack.deactivate();
   window.removeEventListener('pagehide', suspendProjectTerminal);
-  disposeTerminalRuntime(previous);
+  previous.terminal?.blur();
+  if (keepAlive && !document.hidden && previous.ready && !previous.busy && !previous.failure
+    && previous.socket?.readyState === WebSocket.OPEN) {
+    retained = previous;
+    previous.menu.hidden = true;
+    previous.selector.setAttribute('aria-expanded', 'false');
+    previous.modal.style.display = 'none';
+    previous.focusAfterSync = false;
+    previous.keepAliveTimer = setTimeout(releaseRetained, 60000);
+    document.addEventListener('visibilitychange', releaseHiddenTerminal);
+    window.addEventListener('offline', releaseRetained);
+    window.addEventListener('pagehide', suspendProjectTerminal);
+  } else disposeTerminalRuntime(previous);
   setBreadcrumbItemsLoading([previous.projectLabel], false);
   previous.page.remove();
   window.syncMobileViewport?.();
@@ -70,9 +107,24 @@ export function closeProjectTerminal({ preserveView = false } = {}) {
 }
 
 export function openProjectTerminal({ device, projectHash, projectName }) {
-  if (view?.device === device && view.projectHash === projectHash) {
+  if (view?.device === device && view.projectHash === projectHash && view.credentials === credentials()) {
     if (view.terminal && !isTouchViewport()) view.terminal.focus();
     return view.loading;
+  }
+  if (retained?.device === device && retained.projectHash === projectHash && retained.credentials === credentials()
+    && retained.ready && !retained.busy && retained.socket?.readyState === WebSocket.OPEN
+    && Date.now() - retained.socket.lastAckAt < 30000) {
+    const current = view = retained;
+    retained = null;
+    clearTimeout(current.keepAliveTimer);
+    document.removeEventListener('visibilitychange', releaseHiddenTerminal);
+    window.removeEventListener('offline', releaseRetained);
+    current.returnFocus = document.activeElement;
+    document.body.appendChild(current.page);
+    window.syncMobileViewport?.();
+    current.resume();
+    edgeBack.activate();
+    return current.writes;
   }
   closeProjectTerminal();
   const page = document.createElement('section');
@@ -102,7 +154,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
   const selectionKey = `terminal-selection:${JSON.stringify([localStorage.getItem('_as'), device, projectHash])}`;
   let selection;
   try { selection = sessionStorage.getItem(selectionKey); } catch {}
-  const current = view = { page, device, projectHash, selectionKey, returnFocus, listeners: [],
+  const current = view = { page, device, projectHash, selectionKey, returnFocus, credentials: credentials(), listeners: [],
     ready: false, exited: false, generation: 0, queuedBytes: 0, ackBytes: 0, lastAck: 0,
     sessions: [], limit: 5, sessionId: selection, busy: null,
     projectLabel, status: page.querySelector('.project-terminal-status'),
@@ -111,7 +163,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     add: page.querySelector('.project-terminal-add'),
     modal: page.querySelector('.project-terminal-confirm'), writes: Promise.resolve() };
   syncTerminalViewport(current);
-  page.querySelector('.back-button').addEventListener('click', closeProjectTerminal);
+  page.querySelector('.back-button').addEventListener('click', () => closeProjectTerminal({ keepAlive: true }));
   current.retry.addEventListener('click', () => {
     if (current.reconnectNow) current.reconnectNow();
     else current.loading = loadTerminalRuntime(current);
@@ -324,7 +376,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     const text = current.exited ? 'Shell exited · Close this terminal or create a new one'
       : current.historyTruncated ? 'Recent history omitted' : '';
     status(text, text ? 'warning' : 'connected');
-    if (current.focusAfterSync && current.sessionId && !current.exited && matchMedia('(pointer: fine)').matches) terminal.focus();
+    if (view === current && current.focusAfterSync && current.sessionId && !current.exited && matchMedia('(pointer: fine)').matches) terminal.focus();
     current.focusAfterSync = false;
     if (!document.hidden) useLocalSize();
   }
@@ -363,12 +415,13 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   }
 
   function send(message) {
-    if (view !== current || current.socket?.readyState !== WebSocket.OPEN) return false;
+    if (!ownsRuntime(current) || current.socket?.readyState !== WebSocket.OPEN) return false;
     current.socket.send(JSON.stringify({ sessionId: current.sessionId, ...message, epoch: current.epoch }));
     return true;
   }
 
   function useLocalSize({ followBottom = false } = {}) {
+    if (view !== current) return;
     if (!current.ready || current.exited || !current.sessionId || current.busy || !current.menu.hidden) return;
     const size = proposedSize();
     if ((terminal.cols !== size.cols || terminal.rows !== size.rows)
@@ -403,6 +456,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   }
 
   function fail(message, reconnect = false) {
+    if (retained === current) { releaseRetained(); return; }
     if (view !== current) return;
     current.ready = false;
     terminal.options.disableStdin = true;
@@ -422,7 +476,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   }
 
   async function receive(message, generation) {
-    if (view !== current || generation !== current.generation) return;
+    if (!ownsRuntime(current) || generation !== current.generation) return;
     if (message.type === 'sessions') {
       if (!Array.isArray(message.sessions) || message.sessions.length > 5 || message.limit !== 5
         || message.sessions.some(session => typeof session.id !== 'string' || typeof session.name !== 'string')) throw new Error('Invalid terminal list');
@@ -472,7 +526,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       current.snapshotBytes += bytes.length;
       if (current.snapshotBytes > current.snapshotTotal || current.snapshotTotal > 4 * 1024 * 1024) throw new Error('Snapshot exceeds limit');
       await write(bytes);
-      if (view !== current || generation !== current.generation) return;
+      if (!ownsRuntime(current) || generation !== current.generation) return;
       current.snapshotIndex++;
       send({ type: 'render_ack', eventSeq: message.eventSeq, snapshotId: message.snapshotId, index: message.index });
     } else if (message.type === 'synced') {
@@ -488,7 +542,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       if (message.epoch !== current.epoch) throw new Error('Terminal generation mismatch');
       const bytes = decode(message.data);
       await write(bytes);
-      if (view !== current || generation !== current.generation) return;
+      if (!ownsRuntime(current) || generation !== current.generation) return;
       current.lastAck = message.eventSeq;
       current.ackBytes += bytes.length;
       if (current.ackBytes >= 16384) acknowledge();
@@ -531,12 +585,13 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     current.retry.hidden = true;
     current.socket?.close();
     status('Connecting…', 'connecting');
-    const socket = current.socket = new RemoteTerminalSocket(device, { direct: true, projectHash });
+    const initialOpen = { sessionId: current.sessionId, ...proposedSize() };
+    const socket = current.socket = new RemoteTerminalSocket(device, { direct: true, projectHash, initialOpen });
     socket.addEventListener('open', () => {
-      if (view === current && generation === current.generation) socket.send(JSON.stringify({ type: 'open', sessionId: current.sessionId, ...proposedSize() }));
+      if (view === current && generation === current.generation && !socket.initialOpenAccepted) socket.send(JSON.stringify({ type: 'open', ...initialOpen }));
     });
     socket.addEventListener('message', event => {
-      if (view !== current || generation !== current.generation) return;
+      if (!ownsRuntime(current) || generation !== current.generation) return;
       const message = JSON.parse(event.data);
       const size = message.data?.length || 0;
       current.queuedBytes += size;
@@ -546,13 +601,13 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       }).finally(() => { current.queuedBytes -= size; });
     });
     socket.addEventListener('error', event => {
-      if (view === current && generation === current.generation) {
+      if (ownsRuntime(current) && generation === current.generation) {
         const message = event.data || 'Terminal connection failed';
         fail(message, !/更新|目录|最多|无效|权限|unsupported/i.test(message));
       }
     });
     socket.addEventListener('close', () => {
-      if (view === current && generation === current.generation && !current.failure) fail('Disconnected · reconnecting; background shell is retained', true);
+      if (ownsRuntime(current) && generation === current.generation && !current.failure) fail('Disconnected · reconnecting; background shell is retained', true);
     });
   }
 
@@ -624,6 +679,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
 
   const touchViewport = isTouchViewport();
   function viewport() {
+    if (view !== current) return;
     const keyboardClosed = syncTerminalViewport(current);
     current.menu.style.setProperty('--terminal-menu-top', `${page.querySelector('header').getBoundingClientRect().height + 4}px`);
     if (keyboardClosed) {
@@ -645,9 +701,18 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     listen(window.visualViewport, 'resize', viewport);
     listen(window.visualViewport, 'scroll', viewport);
   }
+  current.resume = () => {
+    clearKeyboardTap();
+    clearResizeAnchor();
+    controls();
+    viewport();
+    terminal.refresh(0, terminal.rows - 1);
+    if (!touchViewport) terminal.focus();
+  };
   viewport();
   connect();
   if (!touchViewport) terminal.focus();
 }
 
-Object.assign(window, { closeProjectTerminal, deactivateProjectTerminal: closeProjectTerminal });
+Object.assign(window, { closeProjectTerminal: options => closeProjectTerminal({ keepAlive: true, ...options }),
+  deactivateProjectTerminal: closeProjectTerminal });

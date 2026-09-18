@@ -633,7 +633,7 @@ function connect() {
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge`
     + `&device=${encodeURIComponent(_config.deviceName)}`
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`
-    + (process.platform === 'darwin' || process.platform === 'linux' ? '&terminal=2' : '');
+    + (process.platform === 'darwin' || process.platform === 'linux' ? '&terminal=2&terminalStartup=1' : '');
   console.log(`[ws] connecting to ${wsUrl}...`);
 
   // Use the system resolver (default). A custom dns.resolve4 lookup was tried
