@@ -60,11 +60,20 @@ test('terminal history does not create a second vertical scroller or consume fit
   }
 });
 
-test('the mobile terminal scrollbar has no extra right margin', () => {
-  const dom = new JSDOM('<html class="native-mobile"><style>' + terminalCss + '</style><main class="project-terminal-screen"></main></html>');
+test('the mobile terminal keeps its right edge flush and bottom safe area reserved', () => {
+  const dom = new JSDOM('<html class="native-mobile"><style>' + terminalCss + '</style>'
+    + '<section class="project-terminal-page"><main class="project-terminal-screen"></main></section></html>');
   try {
     assert.equal(dom.window.getComputedStyle(dom.window.document.querySelector('main')).marginRight, '0px');
     assert.match(terminalCss, /@media \(pointer: coarse\)\s*\{\s*\.project-terminal-screen\s*\{\s*margin-right: 0;/);
+    const page = dom.window.document.querySelector('section');
+    for (const keyboardOpen of [false, true, false]) {
+      page.classList.toggle('keyboard-open', keyboardOpen);
+      const style = dom.window.getComputedStyle(page);
+      assert.equal(style.boxSizing, 'border-box');
+      assert.equal(style.paddingBottom, 'max(4px, var(--sab, env(safe-area-inset-bottom, 0px)))');
+      assert.equal(parseFloat(dom.window.getComputedStyle(page.querySelector('main')).marginBottom), 0);
+    }
   } finally {
     dom.window.close();
   }

@@ -70,6 +70,28 @@ test('shared terminals adopt the current device size after synchronization witho
   let terminalModule;
   try {
     terminalModule = await vite.ssrLoadModule('/js/terminal.js');
+    await context.test('terminal shell uses the visual viewport before the runtime loads', async () => {
+      localSize = { cols: 40, rows: 20 };
+      document.documentElement.classList.add('native-mobile');
+      window.visualViewport = Object.assign(new window.EventTarget(), { height: 500, offsetTop: 12 });
+      try {
+        const loading = terminalModule.openProjectTerminal({ device: 'Mac', projectHash: 'project', projectName: 'Project' });
+        const page = document.getElementById('projectTerminalPage');
+        const layout = () => [page.style.height, page.style.top, page.classList.contains('keyboard-open')];
+        assert.equal(page.querySelector('textarea'), null);
+        assert.deepEqual(layout(), ['500px', '12px', true]);
+        await loading;
+        assert.deepEqual(layout(), ['500px', '12px', true]);
+        window.visualViewport.height = window.innerHeight;
+        window.visualViewport.offsetTop = 0;
+        window.visualViewport.dispatchEvent(new window.Event('resize'));
+        assert.deepEqual(layout(), [`${window.innerHeight}px`, '0px', false]);
+      } finally {
+        terminalModule.closeProjectTerminal();
+        document.documentElement.classList.remove('native-mobile');
+        delete window.visualViewport;
+      }
+    });
     const open = async () => {
       await terminalModule.openProjectTerminal({ device: 'Mac', projectHash: 'project', projectName: 'Project' });
       terminal.blur();

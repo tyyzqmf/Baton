@@ -14,6 +14,22 @@ function isTouchViewport() {
   return matchMedia('(pointer: coarse)').matches || document.documentElement.classList.contains('native-mobile');
 }
 
+function syncTerminalViewport(current) {
+  const visible = window.visualViewport;
+  if (current.viewportBaseWidth !== window.innerWidth) {
+    current.viewportBaseWidth = window.innerWidth;
+    current.viewportBaseHeight = window.innerHeight;
+  }
+  current.viewportBaseHeight = Math.max(current.viewportBaseHeight, window.innerHeight, visible?.height || 0);
+  const keyboardNowOpen = !!(visible && isTouchViewport() && visible.height < current.viewportBaseHeight * 0.75);
+  const keyboardClosed = current.keyboardOpen && !keyboardNowOpen;
+  current.keyboardOpen = keyboardNowOpen;
+  current.page.classList.toggle('keyboard-open', keyboardNowOpen);
+  current.page.style.height = visible ? `${visible.height}px` : '';
+  current.page.style.top = visible ? `${visible.offsetTop}px` : '';
+  return keyboardClosed;
+}
+
 function decode(data) {
   return Uint8Array.from(atob(data), character => character.charCodeAt(0));
 }
@@ -94,6 +110,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
     menu: page.querySelector('.project-terminal-menu'), list: page.querySelector('.project-terminal-list'),
     add: page.querySelector('.project-terminal-add'),
     modal: page.querySelector('.project-terminal-confirm'), writes: Promise.resolve() };
+  syncTerminalViewport(current);
   page.querySelector('.back-button').addEventListener('click', closeProjectTerminal);
   current.retry.addEventListener('click', () => {
     if (current.reconnectNow) current.reconnectNow();
@@ -161,7 +178,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
     clearKeyboardTap();
     if (event.pointerType !== 'touch' || event.isPrimary === false
       || event.target.closest?.('button, a, input, textarea, select, [contenteditable], .scrollbar')) return;
-    const dismiss = document.activeElement === terminal.textarea && keyboardOpen;
+    const dismiss = document.activeElement === terminal.textarea && current.keyboardOpen;
     if (!dismiss && !screen.contains(event.target)) return;
     keyboardTap = { id: event.pointerId, x: event.clientX, y: event.clientY, dismiss };
   }, true);
@@ -606,22 +623,8 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
   for (const code of [10, 11, 12]) terminal.parser.registerOscHandler(code, data => data === '?');
 
   const touchViewport = isTouchViewport();
-  let viewportBaseHeight = window.innerHeight;
-  let viewportBaseWidth = window.innerWidth;
-  let keyboardOpen = false;
   function viewport() {
-    const visible = window.visualViewport;
-    if (viewportBaseWidth !== window.innerWidth) {
-      viewportBaseWidth = window.innerWidth;
-      viewportBaseHeight = window.innerHeight;
-    }
-    viewportBaseHeight = Math.max(viewportBaseHeight, window.innerHeight, visible?.height || 0);
-    const keyboardNowOpen = touchViewport && visible && visible.height < viewportBaseHeight * 0.75;
-    const keyboardClosed = keyboardOpen && !keyboardNowOpen;
-    keyboardOpen = keyboardNowOpen;
-    page.classList.toggle('keyboard-open', !!keyboardNowOpen);
-    page.style.height = visible ? `${visible.height}px` : '';
-    page.style.top = visible ? `${visible.offsetTop}px` : '';
+    const keyboardClosed = syncTerminalViewport(current);
     current.menu.style.setProperty('--terminal-menu-top', `${page.querySelector('header').getBoundingClientRect().height + 4}px`);
     if (keyboardClosed) {
       clearResizeAnchor();
