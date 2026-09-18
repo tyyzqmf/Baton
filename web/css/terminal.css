@@ -42,7 +42,8 @@
 .project-terminal-screen .xterm { height: 100%; }
 .project-terminal-screen .xterm .xterm-viewport { background-color: #0d1117; overscroll-behavior: contain; }
 .project-terminal-screen .xterm-scrollable-element > .scrollbar > .slider { border-radius: 3px; }
-html.native-mobile .project-terminal-screen { margin-right: 0; }
+html.native-mobile .project-terminal-screen { margin-right: 0; margin-bottom: max(4px, var(--sab, env(safe-area-inset-bottom, 0px))); }
+html.native-mobile .project-terminal-page.keyboard-open .project-terminal-screen { margin-bottom: 4px; }
 .project-terminal-confirm { z-index: 1000; }
 .project-terminal-selector { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .project-terminal-selector > :last-child { color: #8b949e; font-size: 11px; }
@@ -84,4 +85,13 @@ html.native-mobile .project-terminal-screen { margin-right: 0; }
   .project-terminal-screen { margin-right: 0; }
   .project-terminal-selector { position: relative; }
   .project-terminal-selector::before { content: ''; position: absolute; inset: -8px 0; }
+}
+@media (orientation: landscape) {
+  html.native-mobile .project-terminal-screen {
+    margin-left: max(8px, var(--sal, env(safe-area-inset-left, 0px)));
+    margin-right: var(--sar, env(safe-area-inset-right, 0px));
+  }
+  html.native-mobile .project-terminal-menu-panel {
+    right: max(8px, var(--sar, env(safe-area-inset-right, 0px)));
+  }
 }
