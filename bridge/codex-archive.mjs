@@ -7,6 +7,7 @@ import { publishCodexArchiveRecords, safeCodexArchivePath } from './codex-archiv
 import { probeCodexArchiveProtocol } from './codex-archive-protocol.mjs';
 import { inspectCodexArchiveWriter } from './codex-writer.mjs';
 import { readCodexArchiveTree } from './codex-archive-tree.mjs';
+import { observeCodexStatus } from './codex-status.mjs';
 
 export const CODEX_ARCHIVE_POLL_MS = 60_000;
 const SOURCE_KINDS = [
@@ -90,7 +91,7 @@ export class CodexArchive {
     this.version = Number(saved.version) || 0;
     for (const [home, records] of saved.homes || []) {
       if (!this.records.has(home)) continue;
-      this.records.set(home, new Map(records));
+      this.records.set(home, new Map(records.map(([id, record]) => [id, { ...record, statusReobserve: true }])));
       publishCodexArchiveRecords(home, this.records.get(home));
     }
     this.pending = new Map(saved.pending || []);
@@ -131,11 +132,15 @@ export class CodexArchive {
       client = this.clientFactory(home);
       this.clients.set(home, client);
       client.on('notification', ({ method, params }) => {
-        if (!['thread/archived', 'thread/unarchived', 'thread/started'].includes(method)) return;
+        if (!['thread/archived', 'thread/unarchived', 'thread/started', 'thread/status/changed'].includes(method)) return;
         this.generation++;
         if (params?.threadId && method !== 'thread/started') {
-          this.events.set(`${home}:${params.threadId}`, {
-            home, id: params.threadId, archiveState: method === 'thread/archived' ? 'archived' : 'unarchived',
+          const key = `${home}:${params.threadId}`;
+          this.events.set(key, {
+            ...this.events.get(key), home, id: params.threadId,
+            ...(method === 'thread/status/changed'
+              ? { status: params.status, managed: !!client.socketTransport?.writable, observedAt: Date.now() }
+              : { archiveState: method === 'thread/archived' ? 'archived' : 'unarchived' }),
           });
         }
         this.#scheduleRefresh();
@@ -147,11 +152,15 @@ export class CodexArchive {
   }
 
   #scheduleRefresh() {
-    if (this.stopped || this.refreshScheduled) return;
+    if (this.stopped) return;
+    if (this.refreshScheduled) { this.refreshAgain = true; return; }
     this.refreshScheduled = true;
     queueMicrotask(() => {
       this.refresh().catch((error) => console.warn(`[archive] synchronization: ${error.message}`))
-        .finally(() => { this.refreshScheduled = false; });
+        .finally(() => {
+          this.refreshScheduled = false;
+          if (this.refreshAgain) { this.refreshAgain = false; this.#scheduleRefresh(); }
+        });
     });
   }
 
@@ -160,9 +169,17 @@ export class CodexArchive {
     for (const [key, event] of this.events) {
       if (event.home !== home || !records.has(event.id)) continue;
       const previous = records.get(event.id);
-      const archiveVersion = Math.max(Date.now(), this.version + 1);
-      this.version = archiveVersion;
-      const record = { ...previous, archiveState: event.archiveState, archiveVersion };
+      const archiveVersion = event.archiveState
+        ? Math.max(Date.now(), this.version + 1) : previous.archiveVersion;
+      this.version = Math.max(this.version, archiveVersion);
+      const record = {
+        ...previous,
+        ...(event.archiveState ? { archiveState: event.archiveState, archiveVersion } : {}),
+        ...(event.status ? {
+          status: event.status,
+          ...observeCodexStatus(previous, event.status, event.managed, event.observedAt),
+        } : {}),
+      };
       records.set(event.id, record);
       this.pending.set(key, record);
       this.events.delete(key);
@@ -225,10 +242,13 @@ export class CodexArchive {
             parentThreadId: thread.parentThreadId || previous?.parentThreadId || '',
             preview: thread.name || thread.preview || previous?.preview || '',
             status: thread.status,
+            ...observeCodexStatus(previous, thread.status, !!client.socketTransport?.writable),
             lastActive: Number.isFinite(thread.updatedAt) ? new Date(thread.updatedAt * 1000).toISOString() : previous?.lastActive,
           };
           records.set(thread.id, record);
           if (changed || previous?.path !== record.path || previous?.preview !== record.preview
+            || previous?.statusVersion !== record.statusVersion
+            || previous?.lastActive !== record.lastActive
             || this.pending.has(`${home}:${thread.id}`) || this.rechecks.has(`${home}:${thread.id}`)) {
             this.pending.set(`${home}:${thread.id}`, record);
           }
@@ -275,7 +295,6 @@ export class CodexArchive {
     return this.#run(async () => {
       if (this.stopped) return;
       await this.#probe();
-      if (!this.supported) return;
       await this.#refresh();
       await this.#flush();
     });

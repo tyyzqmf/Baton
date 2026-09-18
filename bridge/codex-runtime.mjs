@@ -21,6 +21,7 @@ import { trackAgentSession } from './agent-counts.mjs';
 import { codexArchives } from './codex-archive.mjs';
 import { codexArchiveRecords } from './codex-archive-index.mjs';
 import { canInspectCodexArchiveWriters } from './codex-writer.mjs';
+import { codexSessionStatus, rememberCodexStatus } from './codex-status.mjs';
 
 function publicSession(session) {
   const { _filePath, _lineCount, ...item } = session;
@@ -110,6 +111,8 @@ export const codexRuntime = defineRuntimeAdapter({
     const filePath = findCodexSessionFile(nativeSessionId);
     let session;
     if (!filePath || !fs.existsSync(filePath)) {
+      const observed = codexSessionStatus(nativeSessionId);
+      if (!observed.status) return null;
       session = {
         id: nativeSessionId,
         nativeSessionId,
@@ -120,7 +123,7 @@ export const codexRuntime = defineRuntimeAdapter({
         size: 0,
         preview: active.preview || '',
         model: '',
-        status: 'completed',
+        ...observed,
       };
     } else {
       session = inspectCodexSession(nativeSessionId, {
@@ -157,6 +160,7 @@ export const codexRuntime = defineRuntimeAdapter({
     });
     if (!session) return;
     session.status = newStatus;
+    Object.assign(session, rememberCodexStatus(nativeSessionId, newStatus, filePath));
     session.agentDetail = newStatus === 'needs_input' ? detail || '' : '';
     const statusChanged = previousStatus !== newStatus;
     const agentCountUpdates = trackAgentSession(session);

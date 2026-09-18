@@ -336,7 +336,7 @@ test('protocol failures reject writes from stale cache until a successful rechec
   await archive.start();
   assert.equal(archive.supported, false);
   assert.ok(archive.timer, 'Unknown protocol must keep the polling fallback');
-  assert.equal(archive.lookup('root').archiveState, 'unarchived', 'Fixture has a stale cached ancestor');
+  assert.equal(archive.lookup('root').archiveState, 'archived', 'Read-only snapshots still calibrate state when mutation probing fails');
   await assert.rejects(archive.withWritable('child', () => assert.fail('must not resume')), { code: 'archive_state_unknown' });
   assert.equal((await archive.setArchived('child', true)).errorCode, 'archive_state_unknown');
   failing = false;

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { codexSessionStatus } from './codex-status.mjs';
 import { execSync } from 'child_process';
 import { CLAUDE_PROJECTS, CODEX_STATUS_STALE_MS } from './config.mjs';
 import { scanJsonlLines } from './jsonl.mjs';
@@ -211,6 +212,7 @@ export function scanCodexRollout(filePath, options = {}) {
   let onlyMetadata = null;
   let matchingMetadata = null;
   let activeTurnId = '';
+  let terminalAt = 0;
   const eventPreviews = [];
   const responsePreviews = [];
   let model = '';
@@ -251,6 +253,7 @@ export function scanCodexRollout(filePath, options = {}) {
       if ((payload.type === 'task_complete' || payload.type === 'turn_aborted')
         && payload.turn_id === activeTurnId) {
         activeTurnId = '';
+        terminalAt = Date.parse(entry.timestamp) || 0;
       }
     });
   } catch (error) {
@@ -338,8 +341,9 @@ export function scanCodexRollout(filePath, options = {}) {
         || '',
       ),
       cliVersion: String(meta.cli_version || ''),
-      status: isRunning ? 'running' : 'completed',
-      archiveState: codexArchiveRecord(nativeSessionId)?.archiveState || 'unknown',
+      ...codexSessionStatus(nativeSessionId, isRunning ? 'running' : 'completed', filePath, activeTurnId ? 0 : terminalAt),
+      archiveState: codexArchiveRecord(nativeSessionId, filePath)?.archiveState || 'unknown',
+      archiveVersion: codexArchiveRecord(nativeSessionId, filePath)?.archiveVersion || 0,
       ...(parentNativeSessionId ? {
         isAgent: visibleSubagent,
         threadKind: visibleSubagent ? 'subagent' : 'internal',

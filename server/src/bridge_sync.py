@@ -56,6 +56,7 @@ class SessionItem(BaseModel):
     clientSource: str = ""
     cliVersion: str = ""
     status: str = "completed"  # "running" | "needs_input" | "completed"
+    statusVersion: Optional[int] = Field(default=None, gt=0, le=9007199254740991)
     isAgent: bool = False
     agentName: str = ""
     agentRole: str = ""
@@ -69,6 +70,7 @@ class SessionItem(BaseModel):
     runningAgentCount: Optional[int] = None
     needsInputAgentCount: Optional[int] = None
     threadRootId: Optional[str] = None
+    agentSummaryVersion: Optional[int] = Field(default=None, gt=0, le=9007199254740991)
 
 
 class AgentCountUpdate(BaseModel):
@@ -77,6 +79,7 @@ class AgentCountUpdate(BaseModel):
     agentCount: int = 0
     runningAgentCount: Optional[int] = None
     needsInputAgentCount: Optional[int] = None
+    agentSummaryVersion: Optional[int] = Field(default=None, gt=0, le=9007199254740991)
 
 
 class RuntimeCapability(BaseModel):
@@ -310,7 +313,7 @@ def _update_session_metadata(table, item, incoming, existing):
         expression += " REMOVE " + ", ".join(f"#r{i}" for i in range(len(removed)))
     condition = Attr("sessionId").eq(existing["sessionId"]) if "sessionId" in existing else Attr("sessionId").not_exists()
     # Fence the inputs used to derive index keys, not independent archive observations.
-    for field in ("status", "parentSessionId", "agentCount", "runningAgentCount", "needsInputAgentCount", "threadRootId"):
+    for field in ("status", "statusVersion", "parentSessionId", "agentCount", "runningAgentCount", "needsInputAgentCount", "agentSummaryVersion", "threadRootId"):
         condition &= Attr(field).eq(existing[field]) if field in existing else Attr(field).not_exists()
     table.update_item(
         Key={key: item[key] for key in ("accountId", "sk")},
@@ -401,10 +404,21 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
         }
         for attempt in range(3):
             existing = sessions_table.get_item(Key=key, ConsistentRead=True).get("Item", {})
-            s = incoming.model_copy(update={
+            ignored_fields = set()
+            if runtime == "codex" and existing.get("statusVersion", 0) > 0 and (
+                (incoming.statusVersion or 0) <= existing["statusVersion"]
+            ):
+                ignored_fields.update(("status", "statusVersion", "agentDetail"))
+            if runtime == "codex" and existing.get("agentSummaryVersion", 0) > (incoming.agentSummaryVersion or 0):
+                ignored_fields.update(("agentCount", "runningAgentCount", "needsInputAgentCount", "agentSummaryVersion"))
+            update = SessionItem(**{
+                field: value for field, value in incoming.model_dump(exclude_unset=True).items()
+                if field not in ignored_fields
+            }) if ignored_fields else incoming
+            s = update.model_copy(update={
                 field: existing[field]
                 for field in SessionItem.model_fields
-                if field not in incoming.model_fields_set and field in existing
+                if field not in update.model_fields_set and field in existing
             })
             item = {
                 **key,
@@ -423,6 +437,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 "size": s.size,
                 "updatedAt": now,
             }
+            if runtime == "codex" and s.statusVersion:
+                item["statusVersion"] = s.statusVersion
             if s.modelProvider:
                 item["modelProvider"] = s.modelProvider
             if s.clientSource:
@@ -463,6 +479,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 item["agentCount"] = agent_count
                 item["runningAgentCount"] = running_agent_count
                 item["needsInputAgentCount"] = needs_input_agent_count
+                if s.agentSummaryVersion:
+                    item["agentSummaryVersion"] = s.agentSummaryVersion
                 effective_status = _effective_status(
                     s.status,
                     running_agent_count,
@@ -479,7 +497,7 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
                 )
                 item["threadRootSk"] = storage_id
             try:
-                _update_session_metadata(sessions_table, item, incoming, existing)
+                _update_session_metadata(sessions_table, item, update, existing)
             except sessions_table.meta.client.exceptions.ConditionalCheckFailedException:
                 if attempt == 2:
                     raise HTTPException(status_code=409, detail="Session metadata changed concurrently; retry sync")
@@ -505,6 +523,8 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
         root = sessions_table.get_item(Key=root_key, ConsistentRead=True).get("Item")
         if not root:
             continue
+        if int(root.get("agentSummaryVersion", 0)) > (update.agentSummaryVersion or 0):
+            continue
         old_effective_status = _effective_status_from_item(root)
         running_agent_count = (
             update.runningAgentCount
@@ -523,22 +543,31 @@ async def sync_sessions(req: SyncSessionsRequest, raw: Request):
             running_agent_count,
             needs_input_agent_count,
         )
-        sessions_table.update_item(
-            Key=root_key,
-            UpdateExpression=(
-                "SET agentCount = :count, runningAgentCount = :running, "
-                "needsInputAgentCount = :needs, activeStatus = :active, updatedAt = :now"
-            ),
-            ExpressionAttributeValues={
-                ":count": max(0, update.agentCount),
-                ":running": running_agent_count,
-                ":needs": needs_input_agent_count,
-                ":active": _active_status_value(
-                    new_effective_status, root.get("lastActive", "")
+        condition = Attr("sessionId").eq(root["sessionId"])
+        for field in ("status", "statusVersion", "agentSummaryVersion", "lastActive"):
+            condition &= Attr(field).eq(root[field]) if field in root else Attr(field).not_exists()
+        try:
+            sessions_table.update_item(
+                Key=root_key,
+                UpdateExpression=(
+                    "SET agentCount = :count, runningAgentCount = :running, "
+                    "needsInputAgentCount = :needs, activeStatus = :active, updatedAt = :now"
+                    + (", agentSummaryVersion = :version" if update.agentSummaryVersion else "")
                 ),
-                ":now": now,
-            },
-        )
+                ExpressionAttributeValues={
+                    ":count": max(0, update.agentCount),
+                    ":running": running_agent_count,
+                    ":needs": needs_input_agent_count,
+                    ":active": _active_status_value(
+                        new_effective_status, root.get("lastActive", "")
+                    ),
+                    ":now": now,
+                    **({":version": update.agentSummaryVersion} if update.agentSummaryVersion else {}),
+                },
+                ConditionExpression=condition,
+            )
+        except sessions_table.meta.client.exceptions.ConditionalCheckFailedException:
+            raise HTTPException(status_code=409, detail="Session summary changed concurrently; retry sync")
         if old_effective_status != new_effective_status and not is_archived(root):
             _apply_status_delta(key_hash, StatusDelta(
                 deviceName=req.deviceName,
@@ -654,14 +683,68 @@ def _query_all(sessions_table, **kw):
     return items
 
 
+def _reconcile_codex_threads(table, rows):
+    by_id = {(row.get("projectHash"), row.get("sessionId")): row for row in rows}
+    descendants = {}
+    for row in rows:
+        if row.get("threadKind") != "subagent" or not row.get("parentSessionId"):
+            continue
+        current, seen, archived = row, set(), is_archived(row)
+        while current.get("parentSessionId"):
+            key = (current.get("projectHash"), current["parentSessionId"])
+            if key in seen or key not in by_id:
+                current = None
+                break
+            seen.add(key)
+            current = by_id[key]
+            archived = archived or is_archived(current)
+        if current:
+            key = (current.get("projectHash"), current.get("sessionId"))
+            descendants.setdefault(key, []).append((row, archived))
+
+    for root in rows:
+        if root.get("runtime") != "codex" or root.get("parentSessionId"):
+            continue
+        children = descendants.get((root.get("projectHash"), root.get("sessionId")), [])
+        # A missing child is not proof of completion.
+        if len(children) < int(root.get("agentCount", 0) or 0):
+            continue
+        summary = {
+            "agentCount": len(children),
+            "runningAgentCount": sum(not archived and child.get("status") == "running" for child, archived in children),
+            "needsInputAgentCount": sum(not archived and child.get("status") == "needs_input" for child, archived in children),
+        }
+        summary["activeStatus"] = _active_status_value(_effective_status(
+            root.get("status", "completed"), summary["runningAgentCount"], summary["needsInputAgentCount"],
+        ), root.get("lastActive", ""))
+        if all(root.get(field) == value for field, value in summary.items()):
+            continue
+        condition = Attr("sessionId").eq(root["sessionId"])
+        for field in ("status", "statusVersion", "agentSummaryVersion", "lastActive", "activeStatus", "agentCount", "runningAgentCount", "needsInputAgentCount"):
+            condition &= Attr(field).eq(root[field]) if field in root else Attr(field).not_exists()
+        try:
+            table.update_item(
+                Key={key: root[key] for key in ("accountId", "sk")},
+                UpdateExpression="SET " + ", ".join(f"#s{i} = :s{i}" for i in range(len(summary))),
+                ExpressionAttributeNames={f"#s{i}": field for i, field in enumerate(summary)},
+                ExpressionAttributeValues={f":s{i}": value for i, value in enumerate(summary.values())},
+                ConditionExpression=condition,
+            )
+        except table.meta.client.exceptions.ConditionalCheckFailedException:
+            root.update(table.get_item(Key={key: root[key] for key in ("accountId", "sk")}, ConsistentRead=True).get("Item", {}))
+            continue
+        root.update(summary)
+
+
 def _reconcile_device(sessions_table, key_hash, device, os_, prune=True):
     """Recount DEV#/PROJ# aggregates from the device's SESS# rows.
     prune=True (boot/new-project): delete orphan PROJ# rows (stale worktree hashes gone
     from disk). prune=False (session delete): keep an emptied PROJ# so the project stays
     in the list (user can still open it / add sessions); it just shows 0 sessions."""
     now = datetime.utcnow().isoformat()
-    sess = _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
+    sess = _query_all(sessions_table, ConsistentRead=True, KeyConditionExpression=Key("accountId").eq(key_hash)
                       & Key("sk").begins_with(f"SESS#{device}#"))
+    _reconcile_codex_threads(sessions_table, sess)
     roots = [session for session in sess if not session.get("parentSessionId")]
     visible_count = sum(not is_archived(session) for session in roots)
     proj = {}  # projectHash -> {count, name, lastActive}

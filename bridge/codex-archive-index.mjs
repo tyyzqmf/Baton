@@ -11,9 +11,10 @@ export function codexArchiveRecords() {
   return [...homes.values()].flatMap((records) => [...records.values()]);
 }
 
-export function codexArchiveRecord(id) {
+export function codexArchiveRecord(id, filePath) {
   const matches = codexArchiveRecords().filter((record) => record.id === id);
-  return matches.length === 1 ? matches[0] : null;
+  const record = matches.length === 1 ? matches[0] : null;
+  return record && (!filePath || safeCodexArchivePath(record.home, filePath)) ? record : null;
 }
 
 export function safeCodexArchivePath(home, filePath) {

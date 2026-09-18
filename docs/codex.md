@@ -1,6 +1,6 @@
 # Codex 接入设计与实施状态
 
-> 最后更新：2026-09-16
+> 最后更新：2026-09-18
 > 当前状态：Phase 1、Phase 2 已完成；Phase 3 已完成 Session 创建与交互主链路
 > API 与 WS 完整契约见 [api.md](api.md)
 
@@ -8,6 +8,31 @@
 
 Baton 将 Codex 作为第二种本地 agent runtime 接入，并继续使用统一的
 Device → Project → Session 信息架构。
+
+### 原生运行状态校准
+
+`codex-status.mjs` 与归档服务共享每个 Home 的只读原生快照和连接，不另启会话。
+managed App Server 的 `active` 映射为 `running`，等待审批或用户输入映射为
+`needs_input`，`idle` 映射为 `completed`。独立 stdio reader 的 idle 不能证明外部
+客户端已停止；`notLoaded`、未知状态和读取失败也不直接等同于完成或归档。
+日志出现更新的明确终止事件时，可以校准已卸载 thread 的最后确认状态。
+
+启动、重连、`thread/status/changed` 和 60 秒完整分页快照使用同一状态缓存。
+周期发现不限于 Server 的 Active 列表，因此误标 completed 的原生活跃项也能重新出现。
+watcher、startup 和 checkStopped 都使用同一原生状态覆盖层，不再让进程 cwd、
+resume 参数或 15 分钟日志新鲜度覆盖已确认的原生状态。没有原生观察的旧 CLI
+保留原启发式兜底；查不到日志不再被单独视为完成证据。
+
+`statusVersion` 与 `agentSummaryVersion` 分别保护主状态和后代汇总，独立于归档版本。
+Server 保留较新的版本，拒绝旧观察及无版本写入覆盖已版本化状态，同时允许名称等独立
+元数据更新。归档同步会发布主子状态；reconcile 在子树记录完整时重算 Codex 根汇总，
+不再只复用可能残留的 activeStatus。缺少子记录时不擅自清零，归档祖先下的后代不贡献活跃数。
+
+仅重建 Web 不会启用以上 Bridge/Server 修复。先在隔离环境运行
+`test/codex/phase3/status*.test.mjs` 和 `test/server/test_codex_status_roundtrip.py`，
+再验证真实前端。跨语言回归覆盖“5 个原生活跃根 + 已归档根及 11 个后代”，
+以真实同步请求验证 Active、Recent、普通列表排除归档项，Archived 保留它且详情只读。
+测试使用合成日志、模拟原生读取及 Moto；不连接生产 DynamoDB，也不修改真实原生会话。
 
 ### 原生归档：实现与运维边界
 

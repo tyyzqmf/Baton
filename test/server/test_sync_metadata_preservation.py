@@ -61,6 +61,46 @@ def stored_session(table, session_id="codex:root"):
     }, ConsistentRead=True)["Item"]
 
 
+@pytest.mark.parametrize("older", [{"statusVersion": 10}, {}])
+def test_old_status_writes_cannot_hide_native_active_sessions(metadata_table, older):
+    sync_metadata(status="running", statusVersion=20)
+    sync_metadata(status="completed", preview="Renamed", **older)
+    result = asyncio.run(bridge_read.get_sessions(FakeRequest(), "Mac", "repo", 10, None))
+    assert result["sessions"][0]["status"] == "running"
+    assert result["sessions"][0]["preview"] == "Renamed"
+
+
+def test_newer_native_completion_clears_active_status(metadata_table):
+    sync_metadata(status="running", statusVersion=20)
+    sync_metadata(status="completed", statusVersion=21)
+    result = asyncio.run(bridge_read.get_sessions(FakeRequest(), "Mac", "repo", 10, None))
+    assert result["sessions"][0]["status"] == "completed"
+
+
+def test_reconcile_repairs_a_completed_tree_with_stale_running_summary(metadata_table):
+    sync_metadata(status="completed", agentCount=11, runningAgentCount=11)
+    for i in range(11):
+        sync_metadata(id=f"child-{i}", status="completed", parentSessionId="codex:root", threadKind="subagent")
+    before = asyncio.run(bridge_read.get_sessions(FakeRequest(), "Mac", "repo", 10, None))
+    assert before["sessions"][0]["status"] == "running"
+    asyncio.run(bridge_sync.reconcile(bridge_sync.ReconcileRequest(deviceName="Mac"), FakeRequest()))
+    after = asyncio.run(bridge_read.get_sessions(FakeRequest(), "Mac", "repo", 10, None))
+    assert after["sessions"][0]["status"] == "completed"
+
+
+def test_stale_summary_uploads_cannot_resurrect_finished_agents(metadata_table):
+    sync_metadata(status="completed", agentCount=1, runningAgentCount=0, agentSummaryVersion=30)
+    sync_metadata(runningAgentCount=1, agentSummaryVersion=20)
+    asyncio.run(bridge_sync.sync_sessions(bridge_sync.SyncSessionsRequest(
+        deviceName="Mac", sessions=[], agentCountUpdates=[{
+            "sessionId": "codex:root", "project": "repo",
+            "agentCount": 1, "runningAgentCount": 1, "agentSummaryVersion": 20,
+        }],
+    ), FakeRequest()))
+    result = asyncio.run(bridge_read.get_sessions(FakeRequest(), "Mac", "repo", 10, None))
+    assert result["sessions"][0]["status"] == "completed"
+
+
 @pytest.mark.parametrize("runtime", ["codex", "claude"])
 @pytest.mark.parametrize("status", ["running", "needs_input"])
 def test_omitted_status_preserves_source_and_list_status(metadata_table, runtime, status):

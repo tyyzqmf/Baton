@@ -176,6 +176,15 @@ change.
 
 Bridge uploads session metadata to DDB.
 
+Codex metadata may include positive safe-integer `statusVersion` and
+`agentSummaryVersion` observations. They are independent of `archiveVersion`:
+the former orders `status`/permission detail; the latter orders `agentCount`,
+`runningAgentCount`, and `needsInputAgentCount` (also accepted on `agentCountUpdates`).
+Older or unversioned updates cannot overwrite a newer versioned observation.
+Unrelated metadata still merges atomically. Concurrent summary writes return HTTP 409
+for retry rather than publishing an index derived from an outdated root status.
+Legacy Claude and unversioned records retain their existing behavior.
+
 **Request**
 ```json
 {
