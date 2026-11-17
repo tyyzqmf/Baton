@@ -309,7 +309,7 @@ impl Drop for Entry {
 
 thread_local! {
   static ENTRIES: RefCell<HashMap<String, Entry>> = RefCell::new(HashMap::new());
-  static BACKGROUND: Cell<u32> = const { Cell::new(0x0d1117) };
+  static BACKGROUND: Cell<u32> = const { Cell::new(0x181818) };
   // Hosts in a background tab: their previews are siblings of the tab webview, so hiding
   // the tab alone would leave them drawn over the selected tab.
   static HIDDEN_OWNERS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());

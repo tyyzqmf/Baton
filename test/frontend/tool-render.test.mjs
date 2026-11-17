@@ -760,7 +760,7 @@ test('Codex exploration calls share one visible group label and empty waits stay
   assert.doesNotMatch(html, /wait-04/);
   const css = readDarkStyles(new URL('../../web/css/style.css', import.meta.url));
   assert.doesNotMatch(css, /\.tool-desc\.shell-command/);
-  assert.match(css, /\.assistant-text code \{ background: #161b22; color: var\(--runtime-accent\);/);
+  assert.match(css, /\.assistant-text code \{ background: #212121; color: var\(--runtime-accent\);/);
   assert.match(css, /\.codex-explore-continuation \.tool-name \{ display: none; \}/);
   assert.match(css, /\.codex-explore-continuation::before \{ display: none; \}/);
   assert.match(css, /\.codex-explore-continuation::after \{ display: none !important; \}/);

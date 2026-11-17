@@ -21,7 +21,7 @@
         "minHeight": 400,
         "resizable": true,
         "dragDropEnabled": false,
-        "backgroundColor": "#161b22",
+        "backgroundColor": "#181818",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
       }

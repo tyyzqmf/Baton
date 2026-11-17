@@ -97,14 +97,14 @@ private class PreviewEntry: NSObject, WKNavigationDelegate, WKUIDelegate, UIGest
     let appearance = UserDefaults.standard.dictionary(forKey: "baton-appearance") ?? [:]
     let preference = appearance["preference"] as? String ?? appearance["mode"] as? String ?? "dark"
     let color = { (hex: String) -> UIColor in
-      let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0x0d1117
+      let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0x181818
       return UIColor(red: CGFloat((rgb >> 16) & 255) / 255,
         green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
     }
     // Following the system lets the trait pick the canvas, so it flips with the system appearance.
     let background = preference == "system"
-      ? UIColor { $0.userInterfaceStyle == .dark ? color("#0d1117") : color("#ffffff") }
-      : color(appearance["canvas"] as? String ?? "#0d1117")
+      ? UIColor { $0.userInterfaceStyle == .dark ? color("#181818") : color("#ffffff") }
+      : color(appearance["canvas"] as? String ?? "#181818")
     view.backgroundColor = background
     view.scrollView.backgroundColor = background
     view.scrollView.indicatorStyle = preference == "system" ? .default : preference == "light" ? .black : .white

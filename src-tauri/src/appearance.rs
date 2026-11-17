@@ -18,9 +18,9 @@ impl Default for Appearance {
     Self {
       mode: "dark".into(),
       preference: "dark".into(),
-      canvas: "#0d1117".into(),
-      surface: "#161b22".into(),
-      strip: "#010409".into(),
+      canvas: "#181818".into(),
+      surface: "#181818".into(),
+      strip: "#131313".into(),
     }
   }
 }
@@ -46,8 +46,8 @@ impl Appearance {
   // Window backgrounds need concrete colors before a page has loaded.
   #[cfg(desktop)]
   fn palette(&mut self, light: bool) {
-    let (mode, canvas, surface, strip) = if light { ("light", "#ffffff", "#f6f8fa", "#d8dee4") }
-      else { ("dark", "#0d1117", "#161b22", "#010409") };
+    let (mode, canvas, surface, strip) = if light { ("light", "#ffffff", "#ffffff", "#f3f3f3") }
+      else { ("dark", "#181818", "#181818", "#131313") };
     *self = Self { mode: mode.into(), preference: self.preference.clone(), canvas: canvas.into(),
       surface: surface.into(), strip: strip.into() };
   }
@@ -55,7 +55,7 @@ impl Appearance {
   #[cfg(desktop)]
   pub fn color(&self, strip: bool) -> tauri::webview::Color {
     let value = if strip { &self.strip } else { &self.surface };
-    let rgb = u32::from_str_radix(&value[1..], 16).unwrap_or(0x161b22);
+    let rgb = u32::from_str_radix(&value[1..], 16).unwrap_or(0x181818);
     tauri::webview::Color((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255)
   }
 }

@@ -51,7 +51,7 @@ struct Index {
   private resMgr: resourceManager.ResourceManager | null = null;
   @State loading: boolean = true;
   @State failed: boolean = false;
-  @StorageProp('baton.canvas') canvas: string = '#0D1117';
+  @StorageProp('baton.canvas') canvas: string = '#181818';
 
   aboutToAppear(): void {
     const ctx: common.Context = getContext(this);

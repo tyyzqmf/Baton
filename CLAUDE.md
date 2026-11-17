@@ -526,14 +526,18 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ## Light / Dark Theme
 
-- Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default, values match the
-  original dark UI) and `light.css` (`:root[data-theme="light"]`). Components reference semantic tokens
-  (`--canvas`, `--surface`, `--surface-elevated`, `--text-secondary`, `--spinner`, ...), never raw colors; a
-  value that only one theme needs still gets a token whose dark value is the old literal, so Dark stays
-  pixel-identical.
-- Light layering mirrors Dark: white page, `#f6f8fa` top bar/cards/inputs, `#eaeef2` raised headers. Secondary
-  text is lighter than a straight mapping (`#6e7781`) and bold tool names lighter still (`--tool-label`),
-  because mid-grey on white reads close to black.
+- Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default) and `light.css`
+  (`:root[data-theme="light"]`), both following the Codex app's neutral greys. Components reference semantic
+  tokens (`--canvas`, `--surface`, `--sidebar`, `--composer`, `--primary-fill`, `--text-secondary`, ...), never
+  raw colors. Theme-independent tokens (`--font-ui`, `--font-mono`, `--radius-*`, `--sidebar-width`,
+  `--thread-width`) sit in a plain `:root` block at the top of `dark.css`.
+- Layering: Dark is a `#181818` page with a darker `#131313` sidebar, `#212121` surfaces and `#2b2b2b` user
+  bubbles; Light is a white page with a `#f9f9f9` sidebar, `#f7f7f7` surfaces and `#f0f0f0` bubbles. The top bar
+  uses the page color (`--surface-elevated` = `--canvas`). Primary actions use the inverted
+  `--primary-fill`/`--on-primary` pair (light on dark, black on light), like Codex's send button.
+- Native shells receive `--canvas`, `--surface-elevated` and `--tab-strip` and only accept `#rrggbb`; their
+  cold-start defaults (`appearance.rs`, `tauri.conf.json`, iOS `main.mm` + `Launch1–8` colorsets, Android
+  `colors.xml`, Harmony `ThemeBridge.ets`/`color.json`) must match these palettes.
 - Settings → Appearance offers System / Light / Dark (default Dark). `web/public/theme-init.js` runs before
   first paint on every page: the preference is `localStorage['baton-theme']`, else the native copy
   (`window.__BATON_NATIVE_THEME__` / `BatonAndroid.getTheme()`), else dark; `system` resolves through

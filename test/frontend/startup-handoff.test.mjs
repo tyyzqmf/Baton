@@ -69,7 +69,7 @@ test('macOS webview paints the configured dark background before HTML loads', ()
     /tauri = \{ version = "2\.11\.1", features = \["macos-private-api"\] \}/,
   );
   assert.equal(tauriConfig.app.macOSPrivateApi, true);
-  assert.equal(tauriConfig.app.windows[0].backgroundColor, '#161b22');
+  assert.equal(tauriConfig.app.windows[0].backgroundColor, '#181818');
 });
 
 test('native container keeps the shared skeleton until WKWebView is ready', () => {
@@ -97,7 +97,7 @@ test('native container keeps the shared skeleton until WKWebView is ready', () =
   );
   assert.match(
     skeletonSection,
-    /skel\.backgroundColor = baton_appearance_color\(@"surface", @"#161b22"\)/,
+    /skel\.backgroundColor = baton_appearance_color\(@"surface", @"#181818"\)/,
   );
   assert.doesNotMatch(skeletonSection, /UIWindowLevelNormal \+ 1\.0/);
   assert.doesNotMatch(skeletonSection, /\[hostView layoutIfNeeded\]/);
@@ -332,11 +332,11 @@ test('mobile assistant paragraphs do not collapse space outside the timeline nod
 test('mobile header separator is drawn inside the fixed 44px bar', () => {
   assert.match(
     indexHtml,
-    /html\.native-mobile \.top-bar\{[^}]*border-bottom:0;box-shadow:inset 0 -1px #30363d/,
+    /html\.native-mobile \.top-bar\{[^}]*border-bottom:0;box-shadow:inset 0 -1px #2e2e2e/,
   );
   assert.match(
     styleSource,
-    /html\.native-mobile \.top-bar \{[^}]*border-bottom: 0;[^}]*box-shadow: inset 0 -1px #30363d;/s,
+    /html\.native-mobile \.top-bar \{[^}]*border-bottom: 0;[^}]*box-shadow: inset 0 -1px #2e2e2e;/s,
   );
 });
 

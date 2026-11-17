@@ -111,7 +111,7 @@ test('Git renderer exposes row and Section operations without opening Diff', () 
 
 test('Git Section toggle owns the full left side of its Header', () => {
   const css = readDarkStyles(path.join(ROOT, 'web/css/git-status.css'));
-  assert.match(css, /\.git-section-header\{[^}]*position:sticky;[^}]*top:0;[^}]*z-index:3;[^}]*padding:0;[^}]*background:#1c2128/);
+  assert.match(css, /\.git-section-header\{[^}]*position:sticky;[^}]*top:0;[^}]*z-index:3;[^}]*padding:0;[^}]*background:#222222/);
   assert.doesNotMatch(css, /\.git-section-header\{[^}]*box-shadow:/);
   assert.match(css, /\.git-section-toggle\{[^}]*padding:0 0 0 10px/);
   const toggleBase = css.indexOf('.git-section-toggle{min-width:0');
@@ -152,9 +152,9 @@ test('Git file rows keep the filename, directory, status, and actions on one com
   assert.match(css, /\.git-status-content\{[^}]*overflow-x:hidden;overflow-y:auto;scrollbar-gutter:auto/);
   assert.doesNotMatch(css, /\.git-status-content\{[^}]*scrollbar-gutter:stable/);
   assert.match(css, /\.git-status-list\{padding-right:var\(--git-scroll-spacer,0px\)/);
-  assert.match(css, /\.git-section-header::after\{[^}]*left:100%;width:var\(--git-scroll-spacer,0px\);background:#1c2128/);
+  assert.match(css, /\.git-section-header::after\{[^}]*left:100%;width:var\(--git-scroll-spacer,0px\);background:#222222/);
   assert.doesNotMatch(css, /\.git-status-content::-webkit-scrollbar\{display:none\}/);
-  assert.match(css, /\.git-section\{border-bottom:1px solid #30363d\}/);
+  assert.match(css, /\.git-section\{border-bottom:1px solid #2e2e2e\}/);
   dom.window.close();
   delete globalThis.document;
 });
@@ -277,7 +277,7 @@ test('Workspace Header actions match top-bar height without growing desktop head
   assert.match(css, /\.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:20px;height:20px/);
   assert.match(css, /html\.native-mobile #top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon,html\.native-mobile \.edge-back-top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:22px;height:22px;transform:translate\(calc\(-50% \+ 2px\),-50%\)/);
   assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?width: 16px; height: 16px;/);
-  assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?background: #6e7681;/);
+  assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?background: #7c7c7c;/);
   assert.match(style, /html\.native-mobile #top-right \.runtime-mark-codex::before,[\s\S]*?width: 24px; height: 24px;/);
   assert.doesNotMatch(style, /html\.native-mobile #top-right \.runtime-icon\s*\{[^}]*translateX\(3px\)/);
   assert.doesNotMatch(style, /\.runtime-mark-codex\s*\{[^}]*color:/);
