@@ -458,10 +458,10 @@ function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
   var parts = [];
   if (state.appState.device) {
-    parts.push('<a class="crumb-device" href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(displayDeviceName(state.appState.device)) + '</a>');
+    parts.push('<a class="crumb-device" href="' + navHref('projects', {device: state.appState.device}) + '" data-device="' + esc(state.appState.device) + '" onclick="loadProjects(this.dataset.device);return false;">' + esc(displayDeviceName(state.appState.device)) + '</a>');
   }
   if (state.appState.project) {
-    parts.push('<a class="crumb-project" href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
+    parts.push('<a class="crumb-project" href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" data-device="' + esc(state.appState.device) + '" data-phash="' + esc(state.appState.project.hash) + '" data-pname="' + esc(state.appState.project.name) + '" onclick="loadSessions(this.dataset.device,this.dataset.phash,this.dataset.pname);return false;">' + esc(state.appState.project.name) + '</a>');
   }
   if (state.appState.session) {
     var label = state.appState.sessionPreview
@@ -497,7 +497,7 @@ function updateBreadcrumb() {
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
     topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton
-      + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>'
+      + '<button class="new-session-btn" data-phash="' + esc(state.appState.project.hash) + '" onclick="startNewSession(this.dataset.phash)" title="New Session">' + _addSvg + '</button>'
       + (filesButton ? _moreHtml : '');
   } else if (state.appState.device && !state.appState.project) {
     var homeFilesButton = '<button class="project-files-entry" type="button" onclick="openHomeFilesPage(this)"'
@@ -1515,7 +1515,7 @@ async function loadProjects(device) {
 function sessionsHtml(device, projectHash, data, sel) {
   if (!data.sessions.length) {
     return '<div class="empty">No sessions yet<br><br>'
-      + '<button class="modal-btn cancel" onclick="startNewSession(\'' + esc(projectHash) + '\')">Start a session</button></div>';
+      + '<button class="modal-btn cancel" data-phash="' + esc(projectHash) + '" onclick="startNewSession(this.dataset.phash)">Start a session</button></div>';
   }
   return '<div class="list' + (sel ? ' select-mode' : '') + '">'
     + data.sessions.map(function (s) {
