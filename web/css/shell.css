@@ -1,8 +1,23 @@
 /* App shell: Codex-style header, desktop sidebar, home lists and the phone tab bar. */
 
 /* === Header === */
-body > .top-bar { border-bottom: 1px solid var(--divider); }
-html.native-mobile body > .top-bar { box-shadow: inset 0 -1px var(--divider); }
+body > .top-bar { border-bottom: 1px solid var(--border); }
+html.native-mobile body > .top-bar { box-shadow: inset 0 -1px var(--border); }
+/* Off home the narrow header holds a title over a subtitle, so it is taller than the 44px home bar. */
+@media (max-width: 1023px) {
+  body:not(.view-home) > .top-bar { min-height: 52px; }
+  html.native-mobile body:not(.view-home) > .top-bar { min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 52px); }
+  body > .breadcrumb,
+  .edge-back-underlay > .breadcrumb { height: 52px; }
+  .edge-back-underlay:not(.edge-back-home) > .top-bar { min-height: 52px; }
+  html.native-mobile .edge-back-underlay:not(.edge-back-home) > .top-bar { min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 52px); }
+  @supports (-webkit-touch-callout: none) {
+    html.native-mobile-app body:not(.view-home) > .top-bar,
+    html.native-mobile-app .edge-back-underlay:not(.edge-back-home) > .top-bar {
+      min-height: calc(max(var(--sat, env(safe-area-inset-top, 0px)), 59px) + 52px);
+    }
+  }
+}
 .top-back,
 .top-sidebar-toggle {
   display: none; align-items: center; justify-content: center; flex: 0 0 auto;
@@ -43,7 +58,7 @@ html.native-mobile .edge-back-underlay > .breadcrumb {
 /* Title row: the deepest level is the title, the levels above it form the subtitle. */
 .breadcrumb .breadcrumb-nav,
 .breadcrumb.session-detail .breadcrumb-nav {
-  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content) auto minmax(0, 1fr);
   grid-template-rows: auto auto; align-content: center; align-items: center; column-gap: 6px;
   flex: 1; min-width: 0; height: auto; max-height: none; padding: 0; overflow: hidden;
   white-space: nowrap; line-height: 16px;
@@ -67,7 +82,7 @@ html.native-mobile .edge-back-underlay > .breadcrumb {
 }
 .breadcrumb .session-title-meta,
 .breadcrumb .breadcrumb-nav.is-truncated:not(.expanded) > .session-title-meta {
-  grid-row: 2; grid-column: 4; display: inline-flex; align-items: center; gap: 2px; margin: 0;
+  grid-row: 2; grid-column: 3; display: inline-flex; align-items: center; gap: 2px; margin: 0;
 }
 .breadcrumb.session-detail .breadcrumb-nav.is-truncated:not(.expanded) { padding-right: 0; }
 .breadcrumb.session-detail .breadcrumb-nav.is-truncated:not(.expanded)::after { content: none; }
@@ -331,7 +346,15 @@ html.native-mobile .task-row .task-status { margin-top: 4px; }
   body.view-home > .top-bar { display: none; }
   html.sidebar-collapsed body.view-home > .top-bar { display: flex; }
   body > .breadcrumb { top: 0; height: 48px; left: calc(var(--sidebar-width) + 20px); }
-  html.sidebar-collapsed body > .breadcrumb { left: 52px; }
+  html.native-mobile body > .breadcrumb { height: 44px; left: calc(var(--sidebar-width) + 20px); }
+  /* Wide touch screens (iPad) keep the safe areas the hidden home top bar would have padded. */
+  html.native-mobile .sidebar {
+    padding-top: var(--sat, env(safe-area-inset-top, 0px));
+    padding-bottom: var(--sab, env(safe-area-inset-bottom, 0px));
+  }
+  html.native-mobile body.view-home > #content { padding-top: var(--sat, env(safe-area-inset-top, 0px)); }
+  html.sidebar-collapsed body > .breadcrumb,
+  html.native-mobile.sidebar-collapsed body > .breadcrumb { left: 52px; }
   .breadcrumb .breadcrumb-nav,
   .breadcrumb.session-detail .breadcrumb-nav {
     grid-template-columns: minmax(0, max-content) minmax(0, max-content) minmax(0, max-content) auto minmax(0, 1fr);
