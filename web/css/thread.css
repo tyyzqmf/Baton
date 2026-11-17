@@ -107,8 +107,12 @@ html.native-mobile .thinking-toggle { font-size: 15px; }
 .thinking-body { margin-top: 4px; padding-left: 12px; border-left: 2px solid var(--border); font-size: 13px; }
 
 /* === Status line === */
-.cc-spinner-inner { gap: 8px; max-width: var(--thread-width); margin: 0 auto; padding: 0 20px 12px; }
-.cc-spinner-glyph { display: none; }
+.cc-spinner-inner {
+  flex: 1 1 auto; justify-content: flex-start; gap: 8px; width: 100%; max-width: var(--thread-width);
+  margin: 0 auto; padding: 0 20px 12px;
+}
+.cc-spinner-glyph,
+.cc-cursor { display: none; }
 .cc-spinner-verb { font-size: 13.5px; font-weight: 500; }
 html.native-mobile .cc-spinner-inner { padding: 0 16px 12px; }
 
