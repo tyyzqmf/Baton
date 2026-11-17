@@ -301,7 +301,11 @@ export function updateSidebar() {
 
 if (root) {
   const cached = readCache();
-  if (cached?.active && cached.devices) data = { active: cached.active, devices: cached.devices };
+  if (cached?.active && cached.devices) {
+    data = { active: cached.active, devices: cached.devices };
+    // The inline home loader may have just cached this; refetching it would double the cold-load burst.
+    loadedAt = Math.min(Number(cached.cachedAt) || 0, Date.now());
+  }
   root.addEventListener('click', onClick);
   root.addEventListener('input', onInput);
   root.addEventListener('compositionend', onInput);
@@ -321,5 +325,5 @@ if (root) {
   }, REFRESH_MS);
   window.__sidebarUpdate = updateSidebar;
   render();
-  if (wide.matches) void refresh();
+  if (wide.matches && Date.now() - loadedAt > STALE_MS) void refresh();
 }
