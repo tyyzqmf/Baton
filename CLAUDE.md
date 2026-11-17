@@ -520,9 +520,30 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   (pool `control_request`, agent `blocked`, or terminal `AskUserQuestion`/`ExitPlanMode`).
 - `completed` → **Done** (grey, reuses `.badge.stopped`): turn finished / no process / stale.
   Also the fallback for legacy `idle`/`stopped`/unknown values.
-- Homepage: Active Sessions = running + needs_input (regular + agent); Completed Sessions =
-  20 most-recent completed of any type. Device/Project rows show `N running · N needs input`
-  (`needsInputCount`). `completed` is not shown on the device rows.
+- Home lists active and recent sessions together by time (Today / Yesterday / Earlier), each row with
+  its status glyph; Device/Project rows show `N running · N needs input` (`needsInputCount`).
+  `completed` is not shown on the device rows.
+
+## App Shell (Codex layout)
+
+- Wide screens (≥1024px) show `#sidebar` (`web/js/sidebar.js`): New chat, Search (⌘K/Ctrl K, only
+  sessions already loaded — there is no search API), Recents, Needs input, Pinned, recent projects with
+  their sessions (folds in sessionStorage `baton-sidebar-folded`), devices and Settings. It paints from the
+  home cache, takes fresh data from the inline loader's `baton:home-data` event, and otherwise refetches
+  `/active-sessions` + `/devices` on navigation when older than 15 s and every 60 s while visible.
+  `html.sidebar-collapsed` (localStorage `baton-sidebar-collapsed`, applied before first paint) hides it.
+- Phones and narrow windows keep the stack navigation. The inline home renders host chips (sessionStorage
+  `baton-home-host`), Pinned / Today / Yesterday / Earlier task rows (active sessions are authoritative,
+  recent project sessions fill in), Projects (Show more) and Devices. `#tab-bar` switches Tasks / Approve
+  (`needs_input`) / Review (project → Git page) and opens the New task sheet; Back on Approve/Review
+  returns to Tasks. `updateBreadcrumb` and the inline renderer set `body.view-home|view-list|view-session`.
+- Header: `#breadcrumb` is absolutely positioned over the `.top-bar` row between Back and the actions, its
+  right edge from `--top-actions-width` (ResizeObserver on `#top-right`); the deepest level is the title
+  (`data-depth` on `.breadcrumb-nav`, `crumb-project`/`crumb-device` links). The iOS keyboard shift
+  ignores an absolutely positioned breadcrumb. Narrow screens fold Files/Git/Terminal into More, which
+  forwards to the real buttons. The edge-back underlay marks a home snapshot `edge-back-home`.
+- Pins are local only (`localStorage['baton-pins']`, `web/js/shell.js`), toggled from the session header.
+- The iOS LaunchScreen mirrors the phone home skeleton: top bar, Today and five 61pt rows, tab bar.
 
 ## Light / Dark Theme
 

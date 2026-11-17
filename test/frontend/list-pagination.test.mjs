@@ -131,27 +131,27 @@ test('list cache v2 ignores and removes the old full-list cache', async () => {
   delete globalThis.localStorage;
 });
 
-test('home session card headings are constrained to one line', () => {
-  const css = readDarkStyles(path.join(ROOT, 'web/css/style.css'));
-  ['card-project', 'card-title-text'].forEach((className) => {
+test('home row titles are constrained to one line', () => {
+  const css = readDarkStyles(path.join(ROOT, 'web/css/shell.css'));
+  ['task-title', 'recent-project-name', 'sidebar-thread-title'].forEach((className) => {
     const rule = css.match(new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`));
-    assert.ok(rule);
+    assert.ok(rule, className);
     assert.match(rule[1], /white-space:\s*nowrap/);
     assert.match(rule[1], /text-overflow:\s*ellipsis/);
   });
 });
 
-test('home cards and list-style controls use background feedback while pressed', () => {
+test('home rows and list-style controls use background feedback while pressed', () => {
   const css = readDarkStyles(path.join(ROOT, 'web/css/style.css'));
+  const shell = readDarkStyles(path.join(ROOT, 'web/css/shell.css'));
   assert.match(css, /\.item:active\s*\{\s*background:\s*#212121;\s*\}/);
-  assert.match(css, /\.active-card:active\s*\{\s*background:\s*#2a2a2a;\s*\}/);
-  assert.doesNotMatch(css, /\.active-card:active\s*\{[^}]*(?:transform|box-shadow):/s);
   assert.match(css, /\.agent-thread-row:active\s*\{[^}]*border-color:\s*#4a4a4a;[^}]*background:\s*#2a2a2a;/s);
-  assert.match(css, /\.device-card:active\s*\{\s*background:\s*#2a2a2a;\s*\}/);
-  assert.doesNotMatch(css, /\.home-section-toggle:active/);
-  assert.equal(css.match(/\.recent-session:active\s*\{\s*background:\s*(#[\da-f]+);/)[1], css.match(/\.recent-session:hover\s*\{\s*background:\s*(#[\da-f]+);/)[1]);
-  assert.match(css, /\.recent-project-toggle:active,\s*\.recent-project-link:active,\s*\.recent-projects-show-more:not\(:disabled\):active\s*\{\s*background:\s*#2e2e2e;\s*\}/);
-  assert.equal(css.match(/\.breadcrumb-nav a:active\s*\{([^}]+)\}/)[1].trim(), css.match(/\.breadcrumb-nav a:hover\s*\{([^}]+)\}/)[1].trim());
+  assert.match(shell, /\.task-row:active,\s*\.recent-project:active,\s*\.device-card:active\s*\{\s*background:\s*#2a2a2a;\s*\}/);
+  assert.doesNotMatch(shell, /\.task-row:active\s*\{[^}]*(?:transform|box-shadow):/s);
+  assert.doesNotMatch(shell, /\.home-section-toggle:active/);
+  assert.match(shell, /\.task-row:hover,\s*\.recent-project:hover,\s*\.device-card:hover\s*\{\s*background:\s*#2a2a2a;\s*\}/);
+  assert.match(shell, /\.recent-projects-show-more:not\(:disabled\):active\s*\{\s*background:\s*#2a2a2a;\s*\}/);
+  assert.match(shell, /\.breadcrumb \.breadcrumb-nav a:active\s*\{\s*background:\s*none;/);
   const breadcrumbCss = readDarkStyles(path.join(ROOT, 'web/css/breadcrumb.css'));
   assert.equal(breadcrumbCss.match(/\.path-breadcrumb-item:active\s*\{[^}]*background:\s*(#[\da-f]+);/)[1], breadcrumbCss.match(/\.path-breadcrumb-item:hover\s*\{[^}]*background:\s*(#[\da-f]+);/)[1]);
 });

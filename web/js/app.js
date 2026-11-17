@@ -34,7 +34,7 @@ import { homeProject } from './project/home.js';
 import { showToast } from './components/toast.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
-import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
+import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, NEW_CHAT_ICON_SVG, NEW_PROJECT_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
 import { shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
@@ -458,17 +458,20 @@ function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
   var parts = [];
   if (state.appState.device) {
-    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(displayDeviceName(state.appState.device)) + '</a>');
+    parts.push('<a class="crumb-device" href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(displayDeviceName(state.appState.device)) + '</a>');
   }
   if (state.appState.project) {
-    parts.push('<a href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
+    parts.push('<a class="crumb-project" href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
   }
   if (state.appState.session) {
     var label = state.appState.sessionPreview
       || shortSessionId(state.appState.session, '', state.appState.runtime) + '...';
     parts.push('<span>' + esc(label) + '</span>');
   }
-  var _addSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+  var _addSvg = NEW_CHAT_ICON_SVG;
+  var _newProjectSvg = NEW_PROJECT_ICON_SVG;
+  var _moreHtml = '<button class="top-more-btn" type="button" onclick="openTopMoreMenu(this)" title="More" aria-label="More" aria-haspopup="menu">'
+    + '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>';
   var _gearHtml = '<a href="setup.html" class="top-gear" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>';
   var topRight = document.getElementById('top-right');
   topRight.classList.remove('syncing');
@@ -494,7 +497,8 @@ function updateBreadcrumb() {
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
     topRight.innerHTML = runtimeMark + filesButton + gitButton + terminalButton
-      + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>';
+      + '<button class="new-session-btn" onclick="startNewSession(\'' + esc(state.appState.project.hash) + '\')" title="New Session">' + _addSvg + '</button>'
+      + (filesButton ? _moreHtml : '');
   } else if (state.appState.device && !state.appState.project) {
     var homeFilesButton = '<button class="project-files-entry" type="button" onclick="openHomeFilesPage(this)"'
       + ' aria-label="Home files" title="Home files">' + FOLDER_ICON_SVG + '</button>';
@@ -505,7 +509,8 @@ function updateBreadcrumb() {
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
       + '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></button>';
     topRight.innerHTML = homeFilesButton + previewButton + homeTerminalButton
-      + '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _addSvg + '</button>';
+      + '<button class="new-session-btn" onclick="createNewProject()" title="New Project">' + _newProjectSvg + '</button>'
+      + _moreHtml;
   } else if (!topRight.querySelector('.top-gear')) {
     topRight.innerHTML = _gearHtml;
   }
@@ -525,14 +530,15 @@ function updateBreadcrumb() {
     titleHtml = '<span class="breadcrumb-sep">/</span><span class="breadcrumb-title">' + titleText + '</span>';
     if (state.appState.session !== '__new__') {
       titleMeta = '<div class="session-title-meta">' + sessionRuntimeControl() + agentMark
-        + sessionRenameButton() + '</div>';
+        + sessionRenameButton() + (window.sessionPinButton?.() || '') + '</div>';
     }
   }
   var titleSession = state.rootSessionId || state.appState.session || '';
   var oldNav = el.querySelector('.breadcrumb-nav');
   var expanded = oldNav?.dataset.sessionId === titleSession && oldNav.classList.contains('expanded');
+  var depth = state.appState.session ? 'session' : state.appState.project ? 'project' : 'device';
   el.innerHTML = '<div class="breadcrumb-nav' + (expanded ? ' expanded' : '')
-    + '" data-session-id="' + esc(titleSession) + '" onclick="toggleBreadcrumbExpand(this)">'
+    + '" data-depth="' + depth + '" data-session-id="' + esc(titleSession) + '" onclick="toggleBreadcrumbExpand(this)">'
     + parts.join('<span class="breadcrumb-sep">/</span>') + titleHtml + titleMeta
     + '</div>';
   el.classList.toggle('session-detail', !!state.appState.session);
@@ -549,9 +555,28 @@ function updateBreadcrumb() {
     });
   }
   el.style.display = parts.length > 0 ? 'flex' : 'none';
+  var home = !state.appState.device && !state.appState.session;
+  document.body.classList.toggle('view-home', home);
+  document.body.classList.toggle('view-session', !!state.appState.session);
+  document.body.classList.toggle('view-list', !home && !state.appState.session);
+  trackTopActionsWidth(topRight);
   requestAnimationFrame(function () {
     updateBreadcrumbTruncation(el.querySelector('.breadcrumb-nav'));
   });
+  window.__sidebarUpdate?.();
+}
+
+// The overlaid title row ends where the header actions begin.
+var _topActionsObserver = null;
+function trackTopActionsWidth(topRight) {
+  var update = function () {
+    document.documentElement.style.setProperty('--top-actions-width', topRight.offsetWidth + 'px');
+  };
+  update();
+  if (!_topActionsObserver && window.ResizeObserver) {
+    _topActionsObserver = new ResizeObserver(update);
+    _topActionsObserver.observe(topRight);
+  }
 }
 
 function openProjectTerminalPage() {
@@ -951,6 +976,11 @@ function saveNav() {
 function navigateUp() {
   if (window.closeProjectTerminal?.()) return true;
   if (state.selectMode) { exitSelectMode(); return true; }
+  if (!state.appState.device && !state.appState.session
+    && window.__homeTab && window.__homeTab() !== 'tasks') {
+    window.__setHomeTab('tasks');
+    return true;
+  }
 
   var active = document.activeElement;
   if (active && typeof active.blur === 'function') active.blur();

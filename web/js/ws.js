@@ -189,7 +189,8 @@ if (window.visualViewport && _isMobile) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
       if (topBar) chromeHeight += topBar.offsetHeight;
-      if (breadcrumb && getComputedStyle(breadcrumb).display !== 'none') {
+      var crumbStyle = breadcrumb && getComputedStyle(breadcrumb);
+      if (crumbStyle && crumbStyle.display !== 'none' && crumbStyle.position !== 'absolute') {
         chromeHeight += breadcrumb.offsetHeight;
       }
     }

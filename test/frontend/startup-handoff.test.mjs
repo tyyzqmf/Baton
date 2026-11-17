@@ -20,6 +20,10 @@ const styleSource = readDarkStyles(
   new URL('../../web/css/style.css', import.meta.url),
   'utf8',
 );
+const shellSource = readDarkStyles(
+  new URL('../../web/css/shell.css', import.meta.url),
+  'utf8',
+);
 const skeletonSource = readFileSync(
   new URL('../../web/js/components/skeleton.js', import.meta.url),
   'utf8',
@@ -142,7 +146,11 @@ test('list skeletons mirror the final row structure', () => {
   assert.match(projects, /class="item-bottom"/);
   assert.match(devices, /skeleton-item-device/);
   assert.match(devices, /class="item-bottom"/);
-  assert.match(cards, /class="card-title"/);
+  assert.match(cards, /class="task-row skeleton-row"/);
+  assert.match(cards, /class="task-meta"/);
+  assert.equal(cards, indexHtml.match(/function skelRow\(\) \{\s*return ([\s\S]*?);\s*\}/)[1]
+    .split('\n').map(line => line.trim().replace(/^\+ /, '')).join('').replace(/'\s*\+?\s*'/g, '').replace(/^'|'$/g, ''),
+    'the module skeleton and the inline first-paint skeleton draw the same row');
 
   const messages = context.window.skeletonMessages();
   assert.match(messages, /skeleton-user/);
@@ -153,27 +161,23 @@ test('list skeletons mirror the final row structure', () => {
 });
 
 test('LaunchScreen uses the mobile content geometry', () => {
-  assert.equal(launchScreen.match(/constant="99" id="c[12]h"/g)?.length, 2);
-  assert.equal(launchScreen.match(/constant="16\.5" id="c[12]ib1t"/g)?.length, 2);
-  assert.equal(launchScreen.match(/constant="14\.5" id="c[12]ib3t"/g)?.length, 2);
-  assert.match(launchScreen, /id="cardsStack">[\s\S]*?height="206"/);
-  assert.match(styleSource, /html\.native-mobile \.card-header \{ min-height: 21px; \}/);
-  assert.match(styleSource, /html\.native-mobile \.card-bottom \{ min-height: 18px; \}/);
+  // Five 61pt task rows (10pt padding, 21pt title, 2pt gap, 18pt meta) under a Today heading.
+  assert.equal(launchScreen.match(/constant="61" id="r[1-5]h"/g)?.length, 5);
+  assert.equal(launchScreen.match(/constant="13\.5" id="r[1-5]tt"/g)?.length, 5);
+  assert.equal(launchScreen.match(/constant="8\.5" id="r[1-5]mt"/g)?.length, 5);
+  assert.match(launchScreen, /text="Today"/);
+  assert.match(launchScreen, /id="tabbar"[\s\S]*constant="-58" id="tab-t"/);
+  assert.match(launchScreen, /id="tabnew"[\s\S]*?constant="46" id="tbn-w"/);
+  assert.doesNotMatch(launchScreen, /ACTIVE SESSIONS|RECENT PROJECTS/);
+  assert.match(shellSource, /html\.native-mobile \.task-title, html\.native-mobile \.recent-project-name \{ font-size: 16px; line-height: 21px; \}/);
+  assert.match(shellSource, /html\.native-mobile \.task-meta, html\.native-mobile \.task-detail,[\s\S]*?\{ font-size: 13px; line-height: 18px; \}/);
+  assert.match(shellSource, /html\.native-mobile \.task-row \{ padding-block: 10px; \}/);
+  assert.match(shellSource, /\.task-main \{ display: flex; flex-direction: column; gap: 2px;/);
+  assert.match(shellSource, /\.tab-bar-item \{[\s\S]*?height: 50px;/);
+  assert.match(shellSource, /\.tab-bar-new \{[\s\S]*?width: 46px; height: 46px;/);
   assert.match(styleSource, /html\.native-mobile \.session-item \.item-top \{ min-height: 21px; \}/);
   assert.match(styleSource, /html\.native-mobile \.project-item \.item-top \{ min-height: 19px; \}/);
   assert.match(styleSource, /html\.native-mobile \.device-item \.item-top \{ min-height: 18px; \}/);
-  assert.match(
-    styleSource,
-    /html\.native-mobile \.project-item \.subtitle \{ min-height: 18px; line-height: 18px; \}/,
-  );
-  assert.match(
-    styleSource,
-    /html\.native-mobile \.project-item \.item-bottom \{ min-height: 18px; line-height: 18px; \}/,
-  );
-  assert.match(
-    styleSource,
-    /html\.native-mobile \.session-item \.session-item-bottom \{ min-height: 18px; line-height: 18px; \}/,
-  );
 });
 
 test('desktop and mobile skeleton rows use the final content line boxes', () => {
@@ -202,17 +206,17 @@ test('browse lists reserve scrollbar width even when WebKit ignores stable gutte
   }
 });
 
-test('active session skeleton and loaded heading share the original natural height', () => {
-  assert.match(indexHtml, /content\.innerHTML = '<div class="section-title active-section-heading">Active Sessions<\/div>'/);
-  const headingStyle = styleSource.match(/\.active-section-heading \{([^}]+)\}/)?.[1];
+test('home skeleton and loaded heading share the natural group heading height', () => {
+  assert.match(indexHtml, /content\.innerHTML = '<section class="home-tasks" aria-hidden="true"><div class="home-group">'/);
+  assert.match(indexHtml, /'<h2 class="home-group-title">Today<\/h2><div class="home-group-rows">'/);
+  const headingStyle = shellSource.match(/\.home-group-title,\s*\.section-title\.home-section-heading \{([^}]+)\}/)?.[1];
   assert.ok(headingStyle);
-  assert.match(headingStyle, /display: flex/);
-  assert.doesNotMatch(headingStyle, /(?:min-|max-)?height\s*:/);
+  assert.doesNotMatch(headingStyle, /(?<![\w-])(?:min-|max-)?height\s*:/);
 });
 
 test('home devices keep bottom safe-area spacing outside the collapsible list', () => {
   assert.match(
-    styleSource,
+    shellSource,
     /\.home-devices \{[^}]*padding-bottom: calc\(8px \+ var\(--sab, env\(safe-area-inset-bottom, 0px\)\)\);/,
   );
   assert.match(indexHtml, /id="devices-section" class="home-device-list"/);

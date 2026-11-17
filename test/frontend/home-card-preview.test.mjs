@@ -15,7 +15,7 @@ async function waitFor(predicate) {
   throw new Error('Timed out waiting for inline home render');
 }
 
-test('inline home cards preserve quoted session previews for detail navigation', async () => {
+test('inline home task rows preserve quoted session previews for detail navigation', async () => {
   const preview = '{"action":"send_message","text":"quoted title"}';
   const active = {
     sessions: [{
@@ -57,28 +57,18 @@ test('inline home cards preserve quoted session previews for detail navigation',
 
   try {
     await waitFor(function () {
-      return dom.window.document.querySelector('.active-card[data-nav="active"]');
+      return dom.window.document.querySelector('.task-row[data-nav="active"]');
     });
-    assert.equal(
-      dom.window.document.querySelector('.active-card[data-nav="active"]').dataset.preview,
-      preview,
-    );
-    assert.equal(
-      dom.window.document.querySelector('.active-card[data-nav="active"]').dataset.device,
-      'MacBook-Pro',
-    );
-    assert.equal(dom.window.document.querySelector('.card-device').textContent, 'Office Mac');
+    var row = dom.window.document.querySelector('.task-row[data-nav="active"]');
+    assert.equal(row.dataset.preview, preview);
+    assert.equal(row.dataset.device, 'MacBook-Pro');
+    assert.equal(row.querySelector('.task-device').textContent, 'Office Mac');
+    assert.equal(row.querySelector('.task-title').textContent, 'Review agent');
+    assert.ok(row.classList.contains('task-running'));
+    assert.equal(row.querySelector('.task-status').getAttribute('aria-label'), 'Running');
+    assert.equal(row.querySelector('.task-side .runtime-mark').getAttribute('aria-label'), 'Codex');
     assert.deepEqual(
-      Array.from(dom.window.document.querySelector('.card-badges').children, function (element) {
-        if (element.classList.contains('agent')) return 'agent';
-        if (element.classList.contains('running')) return 'status';
-        if (element.classList.contains('runtime-mark')) return 'runtime';
-        return 'unknown';
-      }),
-      ['agent', 'status', 'runtime'],
-    );
-    assert.deepEqual(
-      Array.from(dom.window.document.querySelectorAll('.card-badges .badge.agent'), function (element) {
+      Array.from(row.querySelectorAll('.task-meta .badge.agent'), function (element) {
         return element.textContent;
       }),
       ['3 agents'],
