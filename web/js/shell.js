@@ -101,8 +101,15 @@ function homeProjects() {
   return window.__homeProjects?.() || [];
 }
 
+function onNewTaskKeydown(event) {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closeNewTaskSheet();
+}
+
 export function closeNewTaskSheet() {
   document.getElementById('newTaskSheet')?.remove();
+  document.removeEventListener('keydown', onNewTaskKeydown, true);
 }
 
 export function openNewTaskSheet() {
@@ -140,11 +147,19 @@ export function openNewTaskSheet() {
     startNewSessionIn(row.dataset.device, row.dataset.phash, row.dataset.pname);
   });
   document.body.appendChild(sheet);
+  document.addEventListener('keydown', onNewTaskKeydown, true);
   sheet.querySelector('.recent-project, .cancel')?.focus();
+}
+
+function onMoreMenuKeydown(event) {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closeTopMoreMenu();
 }
 
 export function closeTopMoreMenu() {
   document.getElementById('topMoreMenu')?.remove();
+  document.removeEventListener('keydown', onMoreMenuKeydown, true);
 }
 
 // Narrow headers fold the workspace buttons into one menu that forwards to the real buttons.
@@ -168,6 +183,7 @@ export function openTopMoreMenu(button) {
     if (item) actions[Number(item.dataset.index)]?.click();
   });
   document.body.appendChild(overlay);
+  document.addEventListener('keydown', onMoreMenuKeydown, true);
   overlay.querySelector('.top-more-item')?.focus();
 }
 

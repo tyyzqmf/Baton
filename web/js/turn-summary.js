@@ -8,6 +8,7 @@ const HIDDEN = 'turn-step-hidden';
 const FINAL = 'turn-final';
 const TOGGLE = 'turn-worked';
 const userExpanded = new Map();
+let foldedWhileRunning = null;
 
 function timeOf(element) {
   const value = element?.dataset?.serverTs || element?.dataset?.ts;
@@ -50,6 +51,7 @@ function turnKey(anchor) {
 
 export function updateTurnSummaries(container) {
   if (!container?.classList?.contains('messages')) return;
+  foldedWhileRunning = !!state.wsRunning;
   const turns = turnsOf(container);
   turns.forEach((turn, index) => {
     const items = turn.rows.flatMap(row => Array.from(row.children)
@@ -80,7 +82,8 @@ export function updateTurnSummaries(container) {
       : 'Show work';
     items.forEach((item, i) => {
       if (i === finalIndex) return;
-      if (item.classList.contains(FINAL)) clearItem(item);
+      if (item.classList.contains(FINAL) || i > finalIndex) clearItem(item);
+      if (i > finalIndex) return;
       item.classList.add(STEP);
       item.classList.toggle(HIDDEN, collapsed);
     });
@@ -118,5 +121,12 @@ document.addEventListener('click', event => {
   if (scroller) scroller.scrollTop += toggle.getBoundingClientRect().top - before;
 }, true);
 
+// The running state can change without a timeline mutation (REST status, turn end).
+export function syncTurnSummaries() {
+  if (foldedWhileRunning === !!state.wsRunning) return;
+  updateTurnSummaries(document.querySelector('#content .messages'));
+}
+
 window.updateTurnSummaries = updateTurnSummaries;
+window.syncTurnSummaries = syncTurnSummaries;
 window.resetTurnSummaries = () => userExpanded.clear();

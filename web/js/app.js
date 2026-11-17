@@ -566,17 +566,21 @@ function updateBreadcrumb() {
   window.__sidebarUpdate?.();
 }
 
-// The overlaid title row ends where the header actions begin.
+// The overlaid title row ends where the header actions begin. A restored home
+// snapshot rebuilds the top bar, so the observer follows the current element.
 var _topActionsObserver = null;
+var _observedTopRight = null;
+function updateTopActionsWidth() {
+  var topRight = document.getElementById('top-right');
+  if (topRight) document.documentElement.style.setProperty('--top-actions-width', topRight.offsetWidth + 'px');
+}
 function trackTopActionsWidth(topRight) {
-  var update = function () {
-    document.documentElement.style.setProperty('--top-actions-width', topRight.offsetWidth + 'px');
-  };
-  update();
-  if (!_topActionsObserver && window.ResizeObserver) {
-    _topActionsObserver = new ResizeObserver(update);
-    _topActionsObserver.observe(topRight);
-  }
+  updateTopActionsWidth();
+  if (!window.ResizeObserver || topRight === _observedTopRight) return;
+  if (!_topActionsObserver) _topActionsObserver = new ResizeObserver(updateTopActionsWidth);
+  if (_observedTopRight) _topActionsObserver.unobserve(_observedTopRight);
+  _topActionsObserver.observe(topRight);
+  _observedTopRight = topRight;
 }
 
 function openProjectTerminalPage() {
@@ -2000,6 +2004,7 @@ async function loadMessages(sessionId, preview, options) {
   window.deactivateGitStatus?.();
   options = options || {};
   var rootSessionId = options.rootSessionId || sessionId;
+  if (state.rootSessionId !== rootSessionId) window.resetTurnSummaries?.();
   var rootSessionPreview = options.rootSessionPreview
     || (rootSessionId === sessionId ? preview : state.rootSessionPreview)
     || '';

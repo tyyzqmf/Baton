@@ -664,15 +664,17 @@
     }
     var tasks = homeTasks(homeActiveData);
     var html = '';
+    var heading = '';
     if (homeTab === 'approve') html = approveHtml(tasks, matchesHost);
     else if (homeTab === 'review') html = reviewHtml(recentProjects || [], matchesHost);
     else if (devs.length || tasks.list.length || Array.isArray(recentProjects)) {
+      heading = '<div class="home-view-heading home-recents-heading"><h2 class="home-view-title">Recents</h2></div>';
       html = tasksHtml(tasks, matchesHost)
         + (Array.isArray(recentProjects) ? projectsSectionHtml(recentProjects, hasMoreProjects, matchesHost) : '')
         + devicesHtml(devs.filter(matchesHost));
     }
     if (!html) html = '<div class="empty">No devices yet</div>';
-    content.innerHTML = hostChipsHtml(devs) + html;
+    content.innerHTML = heading + hostChipsHtml(devs) + html;
     document.body.classList.add('view-home');
     updateTabBar(tasks);
     if (window.__returningHome) document.body.classList.add('ready');

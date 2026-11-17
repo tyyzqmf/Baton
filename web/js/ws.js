@@ -1342,6 +1342,7 @@ function applyToolResultMessages(messages) {
     }
     window.markToolRunGroups?.(container);
     window.afterToolDomMutation?.(container);
+    window.updateTurnSummaries?.(container);
   }
   return changed;
 }
@@ -2406,6 +2407,7 @@ var _stopSvg = '<svg viewBox="0 0 24 24" width="18" height="18"><rect x="4" y="4
 var _sendSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
 function updateSendBtn(options) {
   options = options || {};
+  window.syncTurnSummaries?.();
   var btn = document.getElementById('send-btn');
   var input = document.getElementById('msg-input');
   var waitingReceipt = !!pendingReceipt();
@@ -2566,6 +2568,12 @@ document.addEventListener('keydown', function (e) {
   if (newP && newP.style.display === 'flex') return;
   var takeover = document.getElementById('codexTakeoverModal');
   if (takeover && takeover.style.display === 'flex') return;
+  var overlayOpen = Array.from(document.querySelectorAll('.modal-overlay')).some(function (overlay) {
+    return overlay.style.display !== 'none' && getComputedStyle(overlay).display !== 'none';
+  });
+  if (overlayOpen) return;
+  var field = e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]');
+  if (field && field.id !== 'msg-input') return;
   if (!state.wsRunning) return;
   e.preventDefault();
   interruptSession();

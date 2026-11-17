@@ -131,62 +131,84 @@ function searchResultsHtml(known) {
     + '</div>';
 }
 
-function render() {
-  if (!root || !wide.matches) return;
-  const known = sessions();
-  const projects = data?.active?.recentProjects || [];
-  const devices = data?.devices?.devices || [];
-  const multipleDevices = devices.length > 1;
-  const waiting = Array.from(known.values()).filter(session => session.status === 'needs_input').length;
-  const pinned = readPins().map(pin => known.get(pin.deviceName + '\u0000' + pin.sessionId) || pin);
-  const searchValue = root.querySelector('.sidebar-search input')?.value ?? query;
-  const searchFocused = document.activeElement?.closest?.('.sidebar-search');
-  let body;
-  if (searchOpen && query.trim()) {
-    body = searchResultsHtml(known);
-  } else {
-    body = (pinned.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Pinned</div>'
-      + pinned.map(session => threadHtml(session, known)).join('') + '</div>' : '')
-      + '<div class="sidebar-section"><div class="sidebar-section-title">Projects</div>'
-      + (projects.length ? projects.map(project => projectHtml(project, known, multipleDevices)).join('')
-        : '<div class="sidebar-empty">' + (data ? 'No recent sessions yet' : 'Loading…') + '</div>')
-      + '</div>'
-      + (devices.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Devices</div>'
-        + devices.map(device => '<a class="sidebar-device" href="#/' + esc(encodeURIComponent(device.deviceName)) + '"'
-          + ' data-sidebar-device="' + esc(device.deviceName) + '">'
-          + '<span class="device-dot ' + (device.online ? 'online' : 'offline') + '"></span>'
-          + '<span class="sidebar-device-name">' + esc(device.deviceDisplayName || device.deviceName) + '</span>'
-          + (device.runningCount ? '<span class="sidebar-device-meta">' + device.runningCount + ' running</span>' : '')
-          + '</a>').join('') + '</div>' : '');
-  }
-  const scroll = root.querySelector('.sidebar-scroll')?.scrollTop || 0;
-  root.innerHTML = '<div class="sidebar-header">'
+const isMac = /Mac/.test(navigator.platform);
+
+function chromeHtml() {
+  return '<div class="sidebar-header">'
     + '<button class="sidebar-brand" type="button" data-sidebar-home><img src="assets/baton-logo.svg" alt=""><span>Baton</span></button>'
     + '<button class="sidebar-icon-btn" type="button" data-sidebar-collapse title="Hide sidebar" aria-label="Hide sidebar">' + ICONS.panel + '</button>'
     + '</div>'
     + '<nav class="sidebar-nav" aria-label="Primary">'
     + '<button class="sidebar-nav-item" type="button" data-sidebar-new>' + NEW_CHAT_ICON_SVG + '<span>New chat</span></button>'
-    + '<button class="sidebar-nav-item" type="button" data-sidebar-search aria-expanded="' + searchOpen + '">' + ICONS.search
-    + '<span>Search</span><kbd>' + (/Mac/.test(navigator.platform) ? '⌘K' : 'Ctrl K') + '</kbd></button>'
+    + '<button class="sidebar-nav-item" type="button" data-sidebar-search aria-expanded="false">' + ICONS.search
+    + '<span>Search</span><kbd>' + (isMac ? '⌘K' : 'Ctrl K') + '</kbd></button>'
     + '<button class="sidebar-nav-item" type="button" data-sidebar-home>' + ICONS.recents + '<span>Recents</span></button>'
     + '<button class="sidebar-nav-item" type="button" data-sidebar-approve>' + ICONS.approve + '<span>Needs input</span>'
-    + (waiting ? '<span class="sidebar-count">' + waiting + '</span>' : '') + '</button>'
+    + '<span class="sidebar-count" hidden></span></button>'
     + '</nav>'
-    + '<div class="sidebar-search"' + (searchOpen ? '' : ' hidden') + '><input type="search" placeholder="Search chats"'
-    + ' aria-label="Search chats" value="' + esc(searchValue) + '" autocomplete="off" spellcheck="false"></div>'
-    + '<div class="sidebar-scroll">' + body + '</div>'
+    + '<div class="sidebar-search" hidden><input type="search" placeholder="Search chats"'
+    + ' aria-label="Search chats" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="sidebar-scroll"></div>'
     + '<div class="sidebar-footer"><a class="sidebar-nav-item" href="setup.html">' + ICONS.settings + '<span>Settings</span></a></div>';
+}
+
+function bodyHtml(known) {
+  if (searchOpen && query.trim()) return searchResultsHtml(known);
+  const projects = data?.active?.recentProjects || [];
+  const devices = data?.devices?.devices || [];
+  const multipleDevices = devices.length > 1;
+  const pinned = readPins().map(pin => known.get(pin.deviceName + '\u0000' + pin.sessionId) || pin);
+  return (pinned.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Pinned</div>'
+    + pinned.map(session => threadHtml(session, known)).join('') + '</div>' : '')
+    + '<div class="sidebar-section"><div class="sidebar-section-title">Projects</div>'
+    + (projects.length ? projects.map(project => projectHtml(project, known, multipleDevices)).join('')
+      : '<div class="sidebar-empty">' + (data ? 'No recent sessions yet' : 'Loading…') + '</div>')
+    + '</div>'
+    + (devices.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Devices</div>'
+      + devices.map(device => '<a class="sidebar-device" href="#/' + esc(encodeURIComponent(device.deviceName)) + '"'
+        + ' data-sidebar-device="' + esc(device.deviceName) + '">'
+        + '<span class="device-dot ' + (device.online ? 'online' : 'offline') + '"></span>'
+        + '<span class="sidebar-device-name">' + esc(device.deviceDisplayName || device.deviceName) + '</span>'
+        + (device.runningCount ? '<span class="sidebar-device-meta">' + device.runningCount + ' running</span>' : '')
+        + '</a>').join('') + '</div>' : '');
+}
+
+// The chrome (header, nav, search box) is built once; refreshes and typing only replace the list.
+function renderBody(known = sessions()) {
   const scroller = root.querySelector('.sidebar-scroll');
-  if (scroller) scroller.scrollTop = scroll;
-  if (searchFocused) {
-    const input = root.querySelector('.sidebar-search input');
-    input?.focus();
-    input?.setSelectionRange(input.value.length, input.value.length);
+  if (!scroller) return;
+  const top = scroller.scrollTop;
+  scroller.innerHTML = bodyHtml(known);
+  scroller.scrollTop = top;
+}
+
+function render() {
+  if (!root || !wide.matches) return;
+  if (!root.querySelector('.sidebar-scroll')) root.innerHTML = chromeHtml();
+  const known = sessions();
+  const waiting = Array.from(known.values()).filter(session => session.status === 'needs_input').length;
+  const count = root.querySelector('.sidebar-count');
+  count.textContent = String(waiting);
+  count.hidden = !waiting;
+  renderBody(known);
+}
+
+function setSearchOpen(open) {
+  searchOpen = open;
+  const box = root.querySelector('.sidebar-search');
+  const input = box?.querySelector('input');
+  root.querySelector('[data-sidebar-search]')?.setAttribute('aria-expanded', String(open));
+  if (box) box.hidden = !open;
+  if (!open) {
+    query = '';
+    if (input) input.value = '';
   }
+  renderBody();
+  if (open) input?.focus();
 }
 
 function refresh() {
-  if (!wide.matches || typeof window.api !== 'function') return Promise.resolve();
+  if (!wide.matches || typeof window.api !== 'function' || window.__homeLoadPromise) return Promise.resolve();
   if (refreshing) return refreshing;
   refreshing = Promise.all([
     window.api('/api/bridge/active-sessions', window.__homeActiveParams?.()),
@@ -199,15 +221,15 @@ function refresh() {
   return refreshing;
 }
 
+// Load home first: it may restore a snapshot of another tab, which setHomeTab then replaces.
 function goHome(tab) {
-  window.__setHomeTab?.(tab);
   window.loadDevices?.();
+  window.__setHomeTab?.(tab);
 }
 
 function openSearch() {
-  searchOpen = true;
-  render();
-  root.querySelector('.sidebar-search input')?.focus();
+  if (!root.querySelector('.sidebar-scroll')) render();
+  setSearchOpen(true);
 }
 
 function onClick(event) {
@@ -227,10 +249,13 @@ function onClick(event) {
     window.loadProjects?.(d.sidebarDevice);
   } else if (target.hasAttribute('data-sidebar-fold')) {
     const key = d.sidebarFold;
-    if (folded.has(key)) folded.delete(key);
+    const open = folded.has(key);
+    if (open) folded.delete(key);
     else folded.add(key);
     try { sessionStorage.setItem(FOLDED_KEY, JSON.stringify(Array.from(folded))); } catch {}
-    render();
+    target.setAttribute('aria-expanded', String(open));
+    const threads = target.closest('.sidebar-project')?.querySelector('.sidebar-threads');
+    if (threads) threads.hidden = !open;
   } else if (target.hasAttribute('data-sidebar-new-in')) {
     window.startNewSessionIn?.(d.device, d.phash, d.pname);
   } else if (target.hasAttribute('data-sidebar-new')) {
@@ -238,13 +263,7 @@ function onClick(event) {
     if (app.device && app.project) window.startNewSessionIn?.(app.device, app.project.hash, app.project.name);
     else window.openNewTaskSheet?.();
   } else if (target.hasAttribute('data-sidebar-search')) {
-    if (searchOpen) {
-      searchOpen = false;
-      query = '';
-      render();
-    } else {
-      openSearch();
-    }
+    setSearchOpen(!searchOpen);
   } else if (target.hasAttribute('data-sidebar-approve')) {
     goHome('approve');
   } else if (target.hasAttribute('data-sidebar-home')) {
@@ -255,28 +274,29 @@ function onClick(event) {
 }
 
 function onInput(event) {
-  if (!event.target.closest('.sidebar-search')) return;
+  if (!event.target.closest('.sidebar-search') || event.isComposing) return;
   query = event.target.value;
-  render();
+  renderBody();
 }
 
 function onKeydown(event) {
   if (!wide.matches) return;
-  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+  const modifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     window.toggleSidebar?.(true);
     openSearch();
   } else if (event.key === 'Escape' && event.target.closest?.('.sidebar-search')) {
-    searchOpen = false;
-    query = '';
-    render();
+    event.preventDefault();
+    setSearchOpen(false);
   }
 }
 
 export function updateSidebar() {
   if (!wide.matches) return;
   render();
-  if (Date.now() - loadedAt > STALE_MS) void refresh();
+  // Home navigation fetches the same data and hands it over through baton:home-data.
+  if (Date.now() - loadedAt > STALE_MS && !document.body.classList.contains('view-home')) void refresh();
 }
 
 if (root) {
@@ -284,6 +304,7 @@ if (root) {
   if (cached?.active && cached.devices) data = { active: cached.active, devices: cached.devices };
   root.addEventListener('click', onClick);
   root.addEventListener('input', onInput);
+  root.addEventListener('compositionend', onInput);
   document.addEventListener('keydown', onKeydown);
   window.addEventListener('baton:home-data', event => {
     data = { active: event.detail.active, devices: event.detail.devices };

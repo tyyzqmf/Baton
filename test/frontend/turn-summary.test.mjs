@@ -87,6 +87,8 @@ test('a trailing interrupt does not stop the fold and an earlier final is cleare
     + row([tool('h1', '2026-11-17T00:00:02Z'), text('h2', '2026-11-17T00:00:04Z', 'Answer'),
       '<div class="tl-item msg-interrupt">Interrupted</div>']));
   assert.ok(container.querySelector('[data-message-id="h2"] > .turn-worked'));
+  assert.equal(container.querySelector('.msg-interrupt').classList.contains('turn-step-hidden'), false,
+    'the Interrupted marker after the answer stays visible');
 
   render(user('t8', '2026-11-17T00:00:00Z')
     + row([tool('i1', '2026-11-17T00:00:02Z'), text('i2', '2026-11-17T00:00:04Z', 'First')]));
@@ -98,6 +100,19 @@ test('a trailing interrupt does not stop the fold and an earlier final is cleare
   assert.ok(container.querySelector('[data-message-id="i4"] > .turn-worked'));
   assert.deepEqual([...container.querySelectorAll('.turn-step-hidden')].map(el => el.dataset.messageId || el.dataset.toolId),
     ['i1', 'i2', 'i3']);
+});
+
+test('a running state change refolds without a timeline mutation', async () => {
+  const { syncTurnSummaries } = await import('../../web/js/turn-summary.js');
+  render(user('t10', '2026-11-17T00:00:00Z')
+    + row([tool('k1', '2026-11-17T00:00:03Z'), text('k2', '2026-11-17T00:00:05Z', 'Answer')]));
+  assert.ok(container.querySelector('.turn-worked'));
+  state.wsRunning = true;
+  syncTurnSummaries();
+  assert.equal(container.querySelector('.turn-worked'), null, 'the last turn reopens while it runs again');
+  state.wsRunning = false;
+  syncTurnSummaries();
+  assert.ok(container.querySelector('.turn-worked'), 'it folds once the run ends');
 });
 
 test('durations read like Codex and an unknown duration still offers the steps', () => {
