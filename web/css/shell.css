@@ -326,6 +326,8 @@ html.native-mobile .task-row .task-status { margin-top: 4px; }
   body > .top-bar .top-logo,
   body > .top-bar .top-title { display: none !important; }
   html.sidebar-collapsed body > .top-bar .top-sidebar-toggle { display: flex; }
+  body > .top-bar .top-left { pointer-events: none; }
+  body > .top-bar .top-sidebar-toggle { pointer-events: auto; }
   body.view-home > .top-bar { display: none; }
   html.sidebar-collapsed body.view-home > .top-bar { display: flex; }
   body > .breadcrumb { top: 0; height: 48px; left: calc(var(--sidebar-width) + 20px); }

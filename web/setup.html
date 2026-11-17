@@ -33,21 +33,21 @@
   .setup-bar { display: flex; align-items: center; min-height: 44px; padding: 6px 8px; padding-top: max(var(--sat, env(safe-area-inset-top, 0px)), 6px); background: var(--surface-elevated); border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .setup-content { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); display: flex; flex-direction: column; align-items: center; background: var(--canvas); }
   .setup-back-slot { width: 28px; height: 28px; flex: 0 0 28px; display: flex; }
-  .setup-bar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .setup-bar .title { flex: 1; text-align: center; font-size: 14px; font-weight: 600; color: var(--text-primary); }
   .setup-bar .spacer { width: 28px; flex-shrink: 0; }
   .section {
-    width: 100%; max-width: 610px; background: var(--surface-elevated); border: 1px solid var(--border); box-shadow: var(--shadow-card);
-    border-radius: 10px; padding: 20px; margin-bottom: 20px;
+    width: 100%; max-width: 640px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-card);
+    border-radius: var(--radius-lg); padding: 18px 20px; margin-bottom: 16px;
   }
-  .section h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .section h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
   .section h2 .num {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 24px; height: 24px; border-radius: 50%; background: var(--success-solid);
-    font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--on-step);
+    width: 22px; height: 22px; border-radius: 50%; background: var(--fill-neutral);
+    font-size: 12px; font-weight: 600; flex-shrink: 0; color: var(--text-primary);
   }
   .platform-switch { display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 2px; padding: 2px; margin-bottom: 10px; background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; }
   .platform-option { min-height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-  .platform-option.active, .platform-option[aria-pressed="true"] { background: var(--border); color: var(--text-primary); }
+  .platform-option.active, .platform-option[aria-pressed="true"] { background: var(--surface-raised); color: var(--text-primary); }
   .code-block {
     width: 100%; background: var(--canvas); border: 1px solid var(--border); border-radius: 8px;
     padding: 14px 16px; font-family: var(--font-mono);
@@ -61,7 +61,7 @@
     -webkit-backdrop-filter: blur(4px);
   }
   .code-btn:hover { background: var(--border); color: var(--text-primary); }
-  .code-btn.copied { background: var(--success-solid); color: var(--on-accent); border-color: var(--success-solid); }
+  .code-btn.copied { background: var(--primary-fill); color: var(--on-primary); border-color: var(--primary-fill); }
   .hint { color: var(--text-secondary); font-size: 12px; margin-top: 8px; line-height: 1.5; }
   .qr-wrap { display: flex; flex-direction: column; align-items: center; }
   .qr-frame { max-width: 100%; background: var(--on-accent); padding: 12px; border-radius: 12px; display: inline-block; line-height: 0; visibility: hidden; }
@@ -75,7 +75,8 @@
   .setting-row .platform-switch { margin: 0; }
   .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 44px; height: 26px; margin: 0; border-radius: 13px; background: var(--switch-track); position: relative; cursor: pointer; transition: background .15s; }
   .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--switch-knob); transition: transform .15s; }
-  .switch:checked { background: var(--success-solid); }
+  .switch:checked { background: var(--primary-fill); }
+  .switch:checked::after { background: var(--on-primary); }
   .switch:checked::after { transform: translateX(18px); }
   .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   html.native-mobile .setup-bar {
@@ -103,7 +104,7 @@
 
 <div class="setup-bar">
   <span id="setupBackButton" class="setup-back-slot"></span>
-  <span class="title">Setup</span>
+  <span class="title">Settings</span>
   <span class="spacer"></span>
 </div>
 

@@ -1,0 +1,101 @@
+/* Secondary pages in the Codex style: page headers, Review (Git), Files, terminal and file viewer. */
+
+/* === Page headers === */
+.path-breadcrumb {
+  min-height: 48px; padding: 6px 12px 6px 8px; padding-top: max(var(--sat, env(safe-area-inset-top)), 6px);
+  border-bottom: 1px solid var(--divider); background: var(--canvas);
+}
+html.native-mobile .path-breadcrumb { min-height: calc(var(--sat, env(safe-area-inset-top, 0px)) + 44px); }
+.path-breadcrumb-item {
+  max-width: 240px; padding: 0 2px; border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-secondary); font-size: 13px; line-height: 24px;
+}
+.path-breadcrumb-scroll > .path-breadcrumb-item:last-child { color: var(--text-primary); font-weight: 600; }
+.path-breadcrumb-separator { color: var(--text-tertiary); }
+@media (hover: hover) and (pointer: fine) {
+  .path-breadcrumb-item:hover { background: var(--surface-hover); border-color: transparent; color: var(--text-primary); }
+}
+.path-breadcrumb-item:active { background: var(--surface-hover); border-color: transparent; color: var(--text-primary); }
+.workspace-switch { border-radius: var(--radius-md); color: var(--text-secondary); }
+@media (hover: hover) and (pointer: fine) {
+  .workspace-switch:hover { background: var(--surface-hover); color: var(--text-primary); }
+}
+
+/* === Review (Git) === */
+.git-status-branch { color: var(--text-secondary); }
+.git-section { border-bottom: 0; }
+.git-section-header,
+.git-section-header::after { background: var(--canvas); }
+.git-section-toggle { color: var(--text-secondary); font-size: 13px; font-weight: 600; }
+.git-count { min-width: 20px; height: 20px; border-radius: 10px; background: var(--fill-neutral); color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.git-section-files { padding: 0 8px 6px; }
+.git-file-row { min-height: 36px; margin: 1px 0; border-top: 0; border-radius: var(--radius-md); }
+.git-file-main { padding-left: 8px; border-radius: var(--radius-md); }
+.git-file-main:active { background: var(--surface-hover); }
+.git-file-name { font-size: 13.5px; }
+.git-file-directory { color: var(--text-tertiary); font-size: 12px; }
+.git-status { font-family: var(--font-mono); font-size: 12px; }
+.git-action { border-radius: var(--radius-md); color: var(--text-tertiary); }
+@media (hover: hover) and (pointer: fine) {
+  .git-file-row:hover { background: var(--surface-hover); }
+  .git-row-actions { opacity: 0; transition: opacity 0.12s; }
+  .git-file-row:hover .git-row-actions,
+  .git-file-row:focus-within .git-row-actions { opacity: 1; }
+  .git-action:hover { color: var(--text-primary); background: var(--surface-raised); }
+}
+.git-commit-bar { padding: 12px 16px 8px; }
+.git-commit-input {
+  border: 1px solid var(--composer-border) !important; border-radius: var(--radius-lg) !important;
+  background: var(--composer) !important; color: var(--text-primary);
+}
+.git-commit-input:focus { border-color: var(--border-strong) !important; outline: none; }
+.git-commit-action,
+.git-commit-action-push,
+.git-commit-action-publish { border-radius: 999px; background: var(--primary-fill); color: var(--on-primary); font-weight: 600; }
+.git-commit-action:disabled { opacity: 1; background: var(--surface-raised); color: var(--text-tertiary); }
+.git-history-section .git-section-header { border-top: 1px solid var(--divider); }
+
+/* Wide screens open Review as a side panel next to the session, like Codex's review pane. */
+:root { --review-width: min(560px, 42vw); }
+@media (min-width: 1280px) {
+  html body.view-session #gitStatusPage {
+    left: auto; right: 0; width: var(--review-width); border-left: 1px solid var(--border);
+  }
+  /* The thread makes room for the panel instead of sitting under it. */
+  body.view-session:has(> #gitStatusPage:not([hidden])) { padding-right: var(--review-width); }
+  body.view-session:has(> #gitStatusPage:not([hidden])) > .breadcrumb {
+    right: calc(var(--review-width) + var(--top-actions-width, 0px) + 12px);
+  }
+}
+
+/* === Files === */
+.project-file-row { border-radius: var(--radius-md); }
+@media (hover: hover) and (pointer: fine) {
+  .project-file-row:hover { background: var(--surface-hover); }
+}
+
+/* === File viewer === */
+.file-modal-header { border-bottom-color: var(--divider); background: var(--canvas); }
+.file-tabs { gap: 2px; padding: 2px; border: 0; border-radius: var(--radius-md); background: var(--fill-neutral); }
+.file-tab { border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); }
+.file-tab.active { background: var(--surface-elevated); color: var(--text-primary); box-shadow: var(--shadow-input); }
+
+/* === Terminal === */
+.project-terminal-header { border-bottom-color: var(--divider); background: var(--canvas); }
+
+/* === Shared dialogs === */
+.modal-box { border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface-elevated); box-shadow: var(--shadow-overlay); }
+.modal-btn { border-radius: 999px; }
+.modal-btn.confirm:not(.danger) { background: var(--primary-fill); color: var(--on-primary); border-color: var(--primary-fill); }
+.modal-input { border-radius: var(--radius-md); }
+
+/* Wide non-touch screens dock the project terminal under the session, like Codex's terminal panel. */
+:root { --terminal-dock-height: 42vh; }
+@media (min-width: 1024px) {
+  html:not(.native-mobile) body.view-session > #projectTerminalPage {
+    top: auto !important; bottom: 0; height: var(--terminal-dock-height) !important;
+    border-top: 1px solid var(--border); box-shadow: var(--shadow-sheet);
+  }
+  html:not(.native-mobile) body.view-session:has(> #projectTerminalPage) { padding-bottom: var(--terminal-dock-height); }
+  html:not(.native-mobile) body.view-session > #projectTerminalPage .path-breadcrumb { min-height: 40px; padding-top: 4px; padding-bottom: 4px; }
+}

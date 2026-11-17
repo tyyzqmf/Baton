@@ -564,6 +564,19 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Approval titles read "Do you want to allow Claude/Codex to …?"; Claude tool prompts offer "Yes,
   proceed" / "No, continue without running it"; Codex prompts keep Codex's own decision labels.
 
+## Secondary Pages (Codex layout)
+
+- `web/css/pages.css` (bundled from `entry-index.js`) restyles the full-screen pages: plain-text path
+  headers, Review (Git) section headers and rounded file rows with hover actions, a composer-style commit
+  box with a pill primary button, Files rows, file-viewer tabs and dialogs.
+- At ≥1280px a session's Git page opens as a right-hand Review pane (`--review-width`); the session column
+  yields that width through `body.view-session:has(> #gitStatusPage:not([hidden]))`. On wide non-touch
+  screens the project terminal docks under the session (`--terminal-dock-height`, overriding the inline
+  `visualViewport` top/height) and the session shrinks the same way. Narrower screens and touch devices
+  keep the full-screen pages; browsers without `:has` overlay instead of shrinking.
+- Settings (`setup.html`) and sign-in (`landing.html`) use the same neutral cards, inputs and inverted
+  primary buttons.
+
 ## Light / Dark Theme
 
 - Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default) and `light.css`
