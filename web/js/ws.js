@@ -1223,6 +1223,8 @@ function renderStrictToolBlock(element, block) {
       commandClass = state.appState.runtime === 'codex'
         ? (isLiveCodexExplore(toolUse.name, input) ? ' codex-explore' : ' codex-ran')
         : ' claude-bash';
+    } else if (state.appState.runtime === 'claude' && window.isClaudeExploreTool?.(toolUse)) {
+      commandClass = ' claude-explore';
     }
     element.className = 'tl-item tool-node ' + toolState + commandClass;
     window.setToolDetailsCollapsed?.(element, !!window._lastToolHasDetails && collapsed);
@@ -1235,12 +1237,14 @@ function renderStrictToolBlock(element, block) {
   }
   var label = block.name || 'Tool';
   var description = raw ? previewPartialInput(raw) : '';
-  var displayLabel = state.appState.runtime === 'codex' && label === 'Bash'
-    ? 'Ran'
-    : label;
+  var displayLabel = state.appState.runtime === 'codex'
+    ? (label === 'Bash' ? 'Ran' : label)
+    : (window.claudeToolName?.(label) || label);
   var fallbackCommandClass = label === 'Bash'
     ? (state.appState.runtime === 'codex' ? ' codex-ran' : ' claude-bash')
-    : '';
+    : state.appState.runtime === 'claude' && window.isClaudeExploreTool?.({ name: label })
+      ? ' claude-explore'
+      : '';
   element.className = 'tl-item tool-node tool-running' + fallbackCommandClass;
   element.innerHTML = '<div class="tool-header"><span class="tool-name">'
     + esc(displayLabel) + '</span><span class="tool-desc">'
@@ -1310,6 +1314,9 @@ function applyToolResultMessages(messages) {
       } else if (state.appState.runtime === 'claude'
         && toolUse.name === 'Bash') {
         classes.push('claude-bash');
+      } else if (state.appState.runtime === 'claude'
+        && window.isClaudeExploreTool?.(toolUse)) {
+        classes.push('claude-explore');
       }
       if (state.appState.runtime === 'codex'
         && toolUse.name === 'WriteStdin'
@@ -1915,6 +1922,7 @@ function markTurnAdjacency(container) {
     var prev = el.previousElementSibling;
     el.classList.toggle('follows-turn', !!(prev && prev.classList.contains('assistant-turn')));
   }
+  window.updateTurnSummaries?.(container);
 }
 window.markTurnAdjacency = markTurnAdjacency;
 

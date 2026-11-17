@@ -19,6 +19,11 @@ import { systemEventId } from './timeline.js';
     classPrefix: 'codex-called',
   });
   window.registerToolRunGroup({
+    kind: 'claude-explore',
+    itemClass: 'claude-explore',
+    classPrefix: 'claude-explore',
+  });
+  window.registerToolRunGroup({
     kind: 'claude-bash',
     itemClass: 'claude-bash',
     classPrefix: 'claude-bash',
@@ -166,6 +171,7 @@ import { systemEventId } from './timeline.js';
             && !codexCalled
             && !codexExplore,
           claudeBash: runtime === 'claude' && block.name === 'Bash',
+          claudeExplore: runtime === 'claude' && !!window.isClaudeExploreTool?.(block),
           codexWait: emptyTerminalWait,
           codexProcessId: String(result?.codexProcessId || block.input?.session_id || ''),
           codexBackgroundComplete: result?.codexBackground === 'complete',
@@ -218,6 +224,7 @@ import { systemEventId } from './timeline.js';
       if (item.codexRan) cls += ' codex-ran';
       if (item.codexCalled) cls += ' codex-called';
       if (item.claudeBash) cls += ' claude-bash';
+      if (item.claudeExplore) cls += ' claude-explore';
       if (item.codexWait) cls += ' codex-terminal-wait';
       if (item.codexBackgroundComplete) cls += ' codex-background-complete';
       if (item.state) cls += ' ' + item.state;

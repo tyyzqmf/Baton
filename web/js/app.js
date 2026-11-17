@@ -940,6 +940,11 @@ function showInputBar(visible) {
   }
 }
 
+function composerPlaceholder() {
+  var agent = state.appState.runtime === 'codex' ? 'Codex' : 'Claude';
+  return 'Ask ' + agent + ' anything';
+}
+
 function applyThreadInputState() {
   var bar = document.getElementById('input-bar');
   var input = document.getElementById('msg-input');
@@ -948,7 +953,7 @@ function applyThreadInputState() {
   bar.toggleAttribute('inert', blocked);
   bar.setAttribute('aria-disabled', String(blocked));
   input.readOnly = blocked;
-  input.placeholder = blocked ? 'Subagent is read-only' : 'Send a message...';
+  input.placeholder = blocked ? 'Subagent is read-only' : composerPlaceholder();
   if (blocked) {
     input.value = '';
     input.style.height = 'auto';
@@ -1892,6 +1897,8 @@ function applyNewSessionRuntime(runtime, remember) {
   if (agentToggle) agentToggle.hidden = runtime !== 'claude';
   var messages = document.querySelector('.messages');
   if (messages) messages.className = 'messages runtime-' + runtime;
+  var input = document.getElementById('msg-input');
+  if (input && !input.readOnly) input.placeholder = composerPlaceholder();
   updateBreadcrumb();
   if (typeof updateSendBtn === 'function') updateSendBtn();
 }
@@ -1939,6 +1946,8 @@ async function startNewSession(projectHash) {
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.sessionPreview = 'New Session';
   state.appState.runtime = runtime || 'claude';
+  var composer = document.getElementById('msg-input');
+  if (composer && !composer.readOnly) composer.placeholder = composerPlaceholder();
   markCurrentRoute(state.appState);
   // Reset tier — else a prior session's ai-title tier (3) blocks this session's first-prompt fallback (tier 1).
   state._titleTier = 0;
@@ -1968,7 +1977,9 @@ async function startNewSession(projectHash) {
   content.innerHTML =
     '<div class="new-session-hero">'
       + '<img class="hero-logo" src="assets/baton-logo.svg" alt="">'
-      + '<div class="hero-title">Baton</div>'
+      + '<div class="hero-title">Let’s build</div>'
+      + '<div class="hero-subtitle">' + esc(state.appState.project?.name || '')
+      + (state.appState.device ? ' · ' + esc(displayDeviceName(state.appState.device)) : '') + '</div>'
       + '<label class="agent-toggle" id="newAgentToggle"' + (runtime === 'claude' ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
     + '<div class="messages runtime-' + runtime + '" hidden></div>';

@@ -126,8 +126,8 @@ function showPermissionPrompt(msg) {
     title: summary.title,
     description: summary.description,
     options: [
-      { label: 'Yes', act: 'allow', key: '1' },
-      { label: 'No', act: 'deny', key: '2' },
+      { label: 'Yes, proceed', act: 'allow', key: '1' },
+      { label: 'No, continue without running it', act: 'deny', key: '2' },
     ],
   });
   return true;
@@ -326,10 +326,11 @@ function resolvePermissionPrompt(requestId) {
   return true;
 }
 
-function buildToolSummary(toolName, input) {
+function buildToolSummary(toolName, input, agent) {
+  agent = agent || (state.appState.runtime === 'codex' ? 'Codex' : 'Claude');
   if (toolName === 'Bash' || toolName === 'bash') {
     return {
-      title: 'Run command?',
+      title: 'Do you want to allow ' + agent + ' to run this command?',
       description: input.command || input.cmd || '',
     };
   }
@@ -337,8 +338,9 @@ function buildToolSummary(toolName, input) {
     || toolName === 'MultiEdit' || toolName === 'NotebookEdit') {
     var filePath = input.file_path || input.path || '';
     return {
-      title: toolName + ': ' + filePath,
-      description: toolName === 'Write' ? 'Create/overwrite file' : 'Edit file',
+      title: 'Do you want to allow ' + agent + ' to '
+        + (toolName === 'Write' ? 'create or overwrite' : 'edit') + ' this file?',
+      description: filePath,
     };
   }
   var description;
@@ -347,7 +349,7 @@ function buildToolSummary(toolName, input) {
     description = description.slice(0, 500) + '…';
   }
   return {
-    title: toolName || 'Run tool?',
+    title: toolName ? 'Do you want to allow ' + agent + ' to use ' + toolName + '?' : 'Run tool?',
     description: description,
   };
 }

@@ -545,6 +545,25 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Pins are local only (`localStorage['baton-pins']`, `web/js/shell.js`), toggled from the session header.
 - The iOS LaunchScreen mirrors the phone home skeleton: top bar, Today and five 61pt rows, tab bar.
 
+## Conversation (Codex layout)
+
+- `web/css/thread.css` layers the Codex look over `style.css`: a centered `--thread-width` column,
+  right-aligned user bubbles, no timeline rail, quiet activity rows (chevron after the label, shimmer
+  while running), Codex-style approval cards, and a composer whose `.input-row` grid puts the textarea
+  above the + / mic / send row. Placeholders read "Ask Claude/Codex anything".
+- Claude tools use the Codex verbs (`CLAUDE_TOOL_NAMES` in `tool.js`: Ran / Explored / Edited / Called …);
+  Bash rows show the command. Consecutive Read/Grep/Glob/LS form a `claude-explore` run group, like
+  Codex's `codex-explore`.
+- "Worked for" (`web/js/turn-summary.js`): after every timeline mutation (`markTurnAdjacency`) each
+  finished turn whose last item is assistant text hides its earlier items (`turn-step-hidden`; a row of
+  only hidden items gets `turn-row-hidden`) and prepends a `.turn-worked` toggle to that final text.
+  Duration runs from the user row's timestamp to the last timestamped item. A turn with a
+  `stream-preview` row, or the last turn while `state.wsRunning`, stays expanded. `comparableMarkup`
+  strips the toggle and these classes, so reconciliation keeps the nodes; copy reads
+  `data-message-text`, so the label never enters copied text. Only `entry-index.js` imports it.
+- Approval titles read "Do you want to allow Claude/Codex to …?"; Claude tool prompts offer "Yes,
+  proceed" / "No, continue without running it"; Codex prompts keep Codex's own decision labels.
+
 ## Light / Dark Theme
 
 - Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default) and `light.css`

@@ -18,6 +18,7 @@ import '../css/copy.css';
 import './globals.js';   // defines window.loadViewerLibs (does NOT download libs yet)
 import './app.js';
 import './shell.js';
+import './turn-summary.js';
 import './sidebar.js';
 import './preview-prewarm.js';
 import './project/browser.js';
