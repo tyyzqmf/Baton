@@ -25,8 +25,8 @@ const ICONS = {
   recents: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   approve: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
-  chevron: '<svg class="sidebar-chevron" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>',
-  folder: '<svg class="recent-project-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></svg>',
+  folderClosed: '<svg class="sidebar-folder sidebar-folder-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></svg>',
+  folderOpen: '<svg class="sidebar-folder sidebar-folder-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18V6a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v2"/><path d="M3 18l2.6-6.7A2 2 0 0 1 7.5 10H21l-2.8 8.3a2 2 0 0 1-1.9 1.7H5a2 2 0 0 1-2-2Z"/></svg>',
 };
 
 function esc(value) {
@@ -34,13 +34,6 @@ function esc(value) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function ago(iso) {
-  const elapsed = Date.now() - (Date.parse(iso || '') || 0);
-  if (!iso || elapsed < 60000) return 'now';
-  if (elapsed < 3600000) return Math.floor(elapsed / 60000) + 'm';
-  if (elapsed < 86400000) return Math.floor(elapsed / 3600000) + 'h';
-  return Math.floor(elapsed / 86400000) + 'd';
-}
 
 function deviceName(name) {
   return window.__deviceDisplayNames?.[name] || state.deviceDisplayNameMap?.[name] || name;
@@ -58,8 +51,37 @@ function currentSession() {
   return { device: state.appState.device, session: state.rootSessionId || state.appState.session };
 }
 
-function statusClass(status) {
-  return status === 'running' ? ' running' : status === 'needs_input' ? ' needs-input' : '';
+function runtimeMark(session) {
+  const codex = session.runtime === 'codex' || String(session.sessionId || '').startsWith('codex:');
+  const label = codex ? 'Codex' : 'Claude Code';
+  const src = window.__runtimeIconSource?.(codex ? 'codex' : 'claude')
+    || './assets/' + (codex ? 'codex.svg' : 'claude-code.svg');
+  return '<span class="runtime-mark' + (codex ? ' runtime-mark-codex' : '') + '" role="img" aria-label="' + label + '" title="' + label + '">'
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(src) + '" alt="" aria-hidden="true"></span>';
+}
+
+// Finished sessions show nothing, like Codex; only running and waiting ones carry a glyph.
+function statusHtml(status) {
+  if (status === 'running') return '<span class="sidebar-status running" role="img" aria-label="Running"></span>';
+  if (status === 'needs_input') return '<span class="sidebar-status needs-input" role="img" aria-label="Needs input"></span>';
+  return '';
+}
+
+const PROJECT_STATES = {
+  'needs-input': 'Needs input', running: 'Running', online: 'Device online', offline: 'Device offline',
+};
+
+// One dot per project: waiting beats running, then the device's connection.
+function projectState(project, known, devices) {
+  let running = false;
+  for (const session of known.values()) {
+    if (session.deviceName !== project.deviceName || session.projectHash !== project.projectHash) continue;
+    if (session.status === 'needs_input') return 'needs-input';
+    if (session.status === 'running') running = true;
+  }
+  if (running) return 'running';
+  const device = devices.get(project.deviceName);
+  return device ? (device.online ? 'online' : 'offline') : '';
 }
 
 // Active rows are authoritative for status; recent project rows supply the rest.
@@ -88,26 +110,29 @@ function threadHtml(session, known) {
     + ' data-pname="' + esc(live.projectName || live.projectHash) + '" data-sid="' + esc(live.sessionId) + '"'
     + ' data-preview="' + esc(live.preview || '') + '" data-isagent="' + (live.isAgent ? 'true' : '') + '"'
     + (active ? ' aria-current="page"' : '') + ' title="' + esc(sessionTitle(live)) + '">'
-    + '<span class="sidebar-status' + statusClass(live.status) + '" aria-hidden="true"></span>'
+    + runtimeMark(live)
     + '<span class="sidebar-thread-title">' + esc(sessionTitle(live)) + '</span>'
-    + (live.lastActive ? '<time datetime="' + esc(live.lastActive) + '">' + ago(live.lastActive) + '</time>' : '')
+    + statusHtml(live.status)
     + '</a>';
 }
 
-function projectHtml(project, known, multipleDevices) {
+function projectHtml(project, known, devices) {
   const key = JSON.stringify([project.deviceName, project.projectHash]);
   const open = !folded.has(key);
   const threads = (project.sessions || []).map(session => threadHtml({
     deviceName: project.deviceName, projectHash: project.projectHash, projectName: project.projectName, ...session,
   }, known)).join('');
   const href = '#/' + encodeURIComponent(project.deviceName) + '/' + encodeURIComponent(project.projectHash);
+  const dot = projectState(project, known, devices);
+  const device = devices.get(project.deviceName)?.deviceDisplayName || deviceName(project.deviceName);
   return '<div class="sidebar-project">'
     + '<div class="sidebar-project-row">'
     + '<button class="sidebar-project-toggle" type="button" data-sidebar-fold="' + esc(key) + '" aria-expanded="' + open + '">'
-    + ICONS.chevron + ICONS.folder
+    + ICONS.folderClosed + ICONS.folderOpen
     + '<span class="sidebar-project-name">' + esc(project.projectName) + '</span>'
-    + (multipleDevices ? '<span class="sidebar-project-device">' + esc(deviceName(project.deviceName)) + '</span>' : '')
-    + '</button>'
+    + '<span class="sidebar-project-meta"><span class="sidebar-project-device">' + esc(device) + '</span>'
+    + (dot ? '<span class="sidebar-project-dot ' + dot + '" role="img" aria-label="' + PROJECT_STATES[dot] + '"></span>' : '')
+    + '</span></button>'
     + '<button class="sidebar-icon-btn sidebar-row-action" type="button" data-sidebar-new-in'
     + ' data-device="' + esc(project.deviceName) + '" data-phash="' + esc(project.projectHash) + '"'
     + ' data-pname="' + esc(project.projectName) + '" title="New chat in ' + esc(project.projectName) + '"'
@@ -156,12 +181,12 @@ function bodyHtml(known) {
   if (searchOpen && query.trim()) return searchResultsHtml(known);
   const projects = data?.active?.recentProjects || [];
   const devices = data?.devices?.devices || [];
-  const multipleDevices = devices.length > 1;
+  const byDevice = new Map(devices.map(device => [device.deviceName, device]));
   const pinned = readPins().map(pin => known.get(pin.deviceName + '\u0000' + pin.sessionId) || pin);
   return (pinned.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Pinned</div>'
     + pinned.map(session => threadHtml(session, known)).join('') + '</div>' : '')
     + '<div class="sidebar-section"><div class="sidebar-section-title">Projects</div>'
-    + (projects.length ? projects.map(project => projectHtml(project, known, multipleDevices)).join('')
+    + (projects.length ? projects.map(project => projectHtml(project, known, byDevice)).join('')
       : '<div class="sidebar-empty">' + (data ? 'No recent sessions yet' : 'Loading…') + '</div>')
     + '</div>'
     + (devices.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Devices</div>'

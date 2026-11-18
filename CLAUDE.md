@@ -530,8 +530,13 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   sessions already loaded — there is no search API), Recents, Needs input, Pinned, recent projects with
   their sessions (folds in sessionStorage `baton-sidebar-folded`), devices and Settings. It paints from the
   home cache, takes fresh data from the inline loader's `baton:home-data` event, and otherwise refetches
-  `/active-sessions` + `/devices` on navigation when older than 15 s and every 60 s while visible.
+  `/active-sessions` + `/devices` on navigation when older than 15 s and every 60 s while visible. A cache
+  the inline loader wrote in the last 15 s counts as fresh, so a cold load fetches that data only once.
   `html.sidebar-collapsed` (localStorage `baton-sidebar-collapsed`, applied before first paint) hides it.
+- Like Codex, session rows show the runtime mark (Claude / Codex) before the title and only a running
+  spinner or needs-input dot after it, no time. Project rows show an open/closed folder, the device's display
+  name on every row and one dot: needs input (amber) > running (blue) > device online (green) > offline
+  (hollow); on pointer devices hover (or keyboard focus) swaps device and dot for New chat in project.
 - Phones and narrow windows keep the stack navigation. The inline home renders host chips (sessionStorage
   `baton-home-host`), Pinned / Today / Yesterday / Earlier task rows (active sessions are authoritative,
   recent project sessions fill in), Projects (Show more) and Devices. `#tab-bar` switches Tasks / Approve

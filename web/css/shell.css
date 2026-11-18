@@ -425,22 +425,36 @@ html.native-mobile .task-row .task-status { margin-top: 4px; }
   display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 30px; padding: 0 8px;
   border: 0; background: transparent; color: var(--text-normal); font: 13px/1 var(--font-ui); text-align: left; cursor: pointer;
 }
-.sidebar-project-toggle .sidebar-chevron { flex: 0 0 auto; color: var(--text-tertiary); transition: transform 0.15s; }
-.sidebar-project-toggle[aria-expanded="true"] .sidebar-chevron { transform: rotate(90deg); }
-.sidebar-project-toggle .recent-project-icon { width: 16px; height: 16px; }
-.sidebar-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-project-device { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-row-action { opacity: 0; }
-.sidebar-project-row:hover .sidebar-row-action,
-.sidebar-row-action:focus-visible { opacity: 1; }
+.sidebar-folder { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-secondary); }
+.sidebar-project-toggle .sidebar-folder-open,
+.sidebar-project-toggle[aria-expanded="true"] .sidebar-folder-closed { display: none; }
+.sidebar-project-toggle[aria-expanded="true"] .sidebar-folder-open { display: block; }
+.sidebar-project-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-project-meta { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 50%; margin-left: auto; }
+.sidebar-project-device { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* Project dot: waiting (amber) > running (blue) > device online (green) > offline (hollow). */
+.sidebar-project-dot { flex: 0 0 auto; width: 7px; height: 7px; margin-right: 3.5px; border-radius: 50%; }
+.sidebar-project-dot.needs-input { background: var(--status-needs-input); }
+.sidebar-project-dot.running { background: var(--accent); }
+.sidebar-project-dot.online { background: var(--success); }
+.sidebar-project-dot.offline { box-shadow: inset 0 0 0 1.5px var(--text-tertiary); }
+/* Pointer devices swap the device and dot for "New chat in project" on hover, like Codex. */
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-row-action { display: none; }
+  .sidebar-project-row:hover .sidebar-row-action,
+  .sidebar-project-row:has(:focus-visible) .sidebar-row-action { display: grid; }
+  .sidebar-project-row:hover .sidebar-project-meta,
+  .sidebar-project-row:has(:focus-visible) .sidebar-project-meta { display: none; }
+}
 .sidebar-threads { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px; }
 .sidebar-threads[hidden] { display: none; }
-.sidebar-thread { gap: 8px; height: 30px; padding-left: 12px; color: var(--text-secondary); }
+/* Threads sit under the project name; pinned and search rows start at the folder column. */
+.sidebar-thread { gap: 8px; height: 30px; padding: 0 8px 0 32px; color: var(--text-secondary); }
+.sidebar-section > .sidebar-thread { padding-left: 8px; }
 .sidebar-thread-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-thread time,
 .sidebar-device-meta { flex: 0 0 auto; color: var(--text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .sidebar-thread.active { background: var(--sidebar-selected); color: var(--text-primary); }
-.sidebar-thread-more { height: 28px; padding-left: 34px; color: var(--text-tertiary); font-size: 12px; }
+.sidebar-thread-more { height: 28px; padding-left: 56px; color: var(--text-tertiary); font-size: 12px; }
 .sidebar-device .device-dot { width: 7px; height: 7px; }
 .sidebar-device-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-empty { padding: 6px 8px; color: var(--text-tertiary); font-size: 12px; }
