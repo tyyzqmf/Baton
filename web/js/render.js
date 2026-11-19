@@ -164,6 +164,7 @@ import { systemEventId } from './timeline.js';
           toolDetails: !!window._lastToolHasDetails,
           html,
           toolId: block.id,
+          toolName: block.name || '',
           codexCalled,
           codexExplore,
           codexRan: runtime === 'codex'
@@ -234,7 +235,8 @@ import { systemEventId } from './timeline.js';
     if (item.type === 'interrupt') cls += ' msg-interrupt';
     if (item.type === 'summary') cls += ' summary-tl';
     if (item.type === 'panel') cls += ' command-panel-tl';
-    const toolAttr = item.toolId ? ` data-tool-id="${escapeAttribute(item.toolId)}"` : '';
+    const toolAttr = (item.toolId ? ` data-tool-id="${escapeAttribute(item.toolId)}"` : '')
+      + (item.toolName ? ` data-tool-name="${escapeAttribute(item.toolName)}"` : '');
     const messageAttr = item.messageId ? ` data-message-id="${escapeAttribute(item.messageId)}"` : '';
     const nativeAttr = item.nativeId ? ` data-native-id="${escapeAttribute(item.nativeId)}"` : '';
     const processAttr = item.codexProcessId ? ` data-codex-process="${escapeAttribute(item.codexProcessId)}"` : '';

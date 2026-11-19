@@ -56,11 +56,14 @@ test('the toggle expands the steps and the choice survives recomputation', () =>
   container.querySelector('.turn-worked').click();
   assert.equal(container.querySelector('.turn-step-hidden'), null);
   assert.equal(container.querySelector('.turn-worked').getAttribute('aria-expanded'), 'true');
+  assert.equal(container.querySelector('.turn-worked').parentElement.dataset.toolId, 'c1',
+    'open, the toggle heads the turn and the steps follow it');
   updateTurnSummaries(container);
   assert.equal(container.querySelector('.turn-step-hidden'), null);
   assert.equal(container.querySelectorAll('.turn-worked').length, 1);
   container.querySelector('.turn-worked').click();
   assert.deepEqual([...container.querySelectorAll('.turn-step-hidden')].map(el => el.dataset.toolId), ['c1']);
+  assert.equal(container.querySelector('.turn-worked').parentElement.dataset.messageId, 'c2', 'folded, it heads the answer');
 });
 
 test('running turns, step-less answers and turns ending on a tool stay as they are', () => {

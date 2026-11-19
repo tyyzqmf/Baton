@@ -561,11 +561,22 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   Codex's `codex-explore`.
 - "Worked for" (`web/js/turn-summary.js`): after every timeline mutation (`markTurnAdjacency`) each
   finished turn whose last item is assistant text hides its earlier items (`turn-step-hidden`; a row of
-  only hidden items gets `turn-row-hidden`) and prepends a `.turn-worked` toggle to that final text.
+  only hidden items gets `turn-row-hidden`). Its `.turn-worked` toggle heads the final text while folded
+  and moves to the turn's first item when open, so the steps follow it as in Codex.
   Duration runs from the user row's timestamp to the last timestamped item. A turn with a
   `stream-preview` row, or the last turn while `state.wsRunning`, stays expanded. `comparableMarkup`
   strips the toggle and these classes, so reconciliation keeps the nodes; copy reads
   `data-message-text`, so the label never enters copied text. Only `entry-index.js` imports it.
+- Step runs (`web/js/step-runs.js`, run from `updateTurnSummaries` after the fold, in every turn, running
+  or not, including rows before the first loaded user message): two or more consecutive thinking / tool
+  items between texts fold behind a `.step-run-toggle` prepended to the run's first item (after an open
+  `.turn-worked`). The summary counts steps by `data-tool-name`, set on tool rows by `render.js` and the
+  live `ws.js` paths ("Ran 3 commands, read 2 files · 42s · 1 failed"; thinking-only runs read "Thought
+  for 7s"). The trailing run of a running turn names its current step instead ("Editing app.js ·
+  6 steps"). A lone step keeps its own row. Members get `step-run-hidden`, the head `step-run-collapsed`
+  (only its toggles show), fully hidden rows `step-run-row-hidden`. `comparableMarkup` strips them, and
+  folded steps never pull the view down (`window.isFoldedStep` in `onMutation` / `onlyHiddenToolUpdates`).
+  Opened runs stay open per session (`resetTurnSummaries` clears them).
 - Approval titles read "Do you want to allow Claude/Codex to …?"; Claude tool prompts offer "Yes,
   proceed" / "No, continue without running it"; Codex prompts keep Codex's own decision labels.
 

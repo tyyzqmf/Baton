@@ -1182,7 +1182,9 @@ function getStrictStreamRenderer() {
         markTurnAdjacency(container);
       }
       if (element?.classList.contains('tool-run-group-hidden')
-        || element?.classList.contains('tool-run-row-hidden')) return;
+        || element?.classList.contains('tool-run-row-hidden')
+        || element?.classList.contains('step-run-row-hidden')
+        || window.isFoldedStep?.(element)) return;
       followBottomAfterLayout();
     },
   });
@@ -1229,6 +1231,7 @@ function renderStrictToolBlock(element, block) {
     element.className = 'tl-item tool-node ' + toolState + commandClass;
     window.setToolDetailsCollapsed?.(element, !!window._lastToolHasDetails && collapsed);
     if (block.toolUseId) element.dataset.toolId = block.toolUseId;
+    element.dataset.toolName = toolUse.name;
     if (toolUse.name === 'TodoWrite') {
       element.dataset.codexPlan = '1';
     }
@@ -1246,6 +1249,7 @@ function renderStrictToolBlock(element, block) {
       ? ' claude-explore'
       : '';
   element.className = 'tl-item tool-node tool-running' + fallbackCommandClass;
+  if (block.name) element.dataset.toolName = block.name;
   element.innerHTML = '<div class="tool-header"><span class="tool-name">'
     + esc(displayLabel) + '</span><span class="tool-desc">'
     + esc(description) + '</span><span class="tool-status">running</span></div>';
@@ -1328,6 +1332,7 @@ function applyToolResultMessages(messages) {
       }
       if (window._lastToolState) classes.push(window._lastToolState);
       node.className = classes.join(' ');
+      if (toolUse.name) node.dataset.toolName = toolUse.name;
       if (toolUse.name === 'TodoWrite') node.dataset.codexPlan = '1';
       window.setToolDetailsCollapsed?.(node, collapsed);
       if (result.codexProcessId) {
@@ -1971,6 +1976,8 @@ function onlyHiddenToolUpdates(messages, includeCollapsedResults = false) {
           var toolId = block.type === 'tool_use' ? block.id : block.tool_use_id;
           var node = document.querySelector('.messages [data-tool-id="' + toolId + '"]');
           return node?.classList.contains('tool-run-group-hidden')
+            || window.isFoldedStep?.(node)
+            || node?.classList.contains('turn-step-hidden')
             || (includeCollapsedResults && block.type === 'tool_result'
               && node?.classList.contains('tool-details-collapsed')
               && !!node.querySelector('.tool-body'));

@@ -45,6 +45,10 @@ function comparableMarkup(element) {
       'turn-step',
       'turn-step-hidden',
       'turn-final',
+      'step-run',
+      'step-run-head',
+      'step-run-hidden',
+      'step-run-collapsed',
     );
     if (node.getAttribute('class') === '') node.removeAttribute('class');
     node.removeAttribute?.('aria-expanded');
@@ -54,7 +58,7 @@ function comparableMarkup(element) {
       node.removeAttribute('id');
     }
   }
-  for (var button of clone.querySelectorAll('.clamp-btn, .message-action, .turn-worked')) button.remove();
+  for (var button of clone.querySelectorAll('.clamp-btn, .message-action, .turn-worked, .step-run-toggle')) button.remove();
   return clone.outerHTML;
 }
 

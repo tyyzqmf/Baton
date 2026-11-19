@@ -89,6 +89,7 @@ html.native-mobile .tool-desc { font-size: 14px; }
 }
 .tool-node.tool-running > .tool-header .tool-name,
 .thinking-tl:not(.thinking-empty) .thinking-block:not([data-thinking-duration-ms]) .thinking-label,
+.step-run-toggle.running .step-run-label,
 .cc-spinner-verb {
   background: linear-gradient(90deg, var(--text-tertiary) 0%, var(--text-tertiary) 35%,
     var(--text-primary) 50%, var(--text-tertiary) 65%, var(--text-tertiary) 100%);
@@ -98,7 +99,9 @@ html.native-mobile .tool-desc { font-size: 14px; }
 @media (prefers-reduced-motion: reduce) {
   .tool-node.tool-running > .tool-header .tool-name,
   .thinking-tl:not(.thinking-empty) .thinking-block:not([data-thinking-duration-ms]) .thinking-label,
+  .step-run-toggle.running .step-run-label,
   .cc-spinner-verb { animation: none; background: none; color: var(--text-secondary); }
+  .step-run-spinner { animation: none; }
 }
 
 /* === Thinking === */
@@ -220,4 +223,39 @@ html.native-mobile .hero-title { font-size: 24px; }
 .turn-worked:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 @media (hover: hover) and (pointer: fine) { .turn-worked:hover { color: var(--text-primary); } }
 html.native-mobile .turn-worked { font-size: 14px; }
-.turn-step:not(.turn-step-hidden) ~ .turn-final > .turn-worked { margin-top: 6px; }
+.turn-step > .turn-worked { margin-top: 2px; }
+
+/* === Step runs: consecutive thinking / tool steps between texts fold into one row, like Codex === */
+.step-run-hidden,
+.step-run-head.step-run-collapsed > :not(.step-run-toggle):not(.turn-worked),
+.assistant-turn.step-run-row-hidden { display: none !important; }
+.step-run-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 2px 0;
+  border: 0; background: transparent; color: var(--text-secondary); font: 13.5px/22px var(--font-ui);
+  text-align: left; cursor: pointer;
+}
+html.native-mobile .step-run-toggle { font-size: 15px; }
+.step-run-icon { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-tertiary); }
+.step-run-spinner {
+  flex: 0 0 auto; box-sizing: border-box; width: 13px; height: 13px; margin: 0 1.5px;
+  border: 1.5px solid var(--text-tertiary); border-top-color: transparent; border-radius: 50%;
+  animation: apk-spin 0.9s linear infinite;
+}
+.step-run-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-run-meta,
+.step-run-failed { flex: 0 0 auto; color: var(--text-tertiary); font-size: 12.5px; white-space: nowrap; }
+.step-run-failed { color: var(--danger); }
+.step-run-chevron { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-tertiary); transition: transform 0.15s ease; }
+.step-run-toggle[aria-expanded="true"] .step-run-chevron { transform: rotate(90deg); }
+.step-run-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .step-run-toggle:hover { color: var(--text-primary); }
+  .step-run-toggle:hover .step-run-chevron { color: var(--text-secondary); }
+}
+/* An open run's steps hang under its summary on one guide line. */
+.step-run:not(.step-run-head):not(.step-run-hidden),
+.step-run-head:not(.step-run-collapsed) > :not(.step-run-toggle):not(.turn-worked) {
+  margin-left: 7px; padding-left: 16px; border-left: 1px solid var(--divider);
+}
+.step-run-head:not(.step-run-collapsed) { padding-bottom: 0; }
+.assistant-turn:has(> .step-run:not(.step-run-hidden):not(.step-run-collapsed)) { margin-bottom: 0; }
