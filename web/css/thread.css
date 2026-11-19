@@ -1,0 +1,261 @@
+/* Conversation: Codex-style thread column, bubbles, activity rows, approvals and composer. */
+
+/* === Thread column === */
+.messages { max-width: var(--thread-width); margin: 0 auto; padding: 16px 20px 24px; }
+html.native-mobile .messages { padding: 12px 16px 16px; }
+
+/* === User message: right-aligned bubble === */
+.msg-user {
+  width: fit-content; max-width: min(85%, 640px); margin: 28px 0 10px auto;
+  padding: 10px 16px; border-radius: var(--radius-bubble); background: var(--bubble-user);
+}
+.messages > .msg-user:first-child,
+.messages > .loading-older + .msg-user { margin-top: 8px; }
+.msg-user .msg-text { font-size: 14.5px; line-height: 1.55; }
+html.native-mobile .msg-user .msg-text { font-size: 16px; line-height: 1.5; }
+.msg-user .msg-meta { justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.msg-user .msg-meta .msg-time { margin-top: 0; font-size: 11px; }
+@media (hover: hover) and (pointer: fine) {
+  .msg-user .msg-meta { opacity: 0; transition: opacity 0.15s; }
+  .msg-user:hover .msg-meta,
+  .msg-user:focus-within .msg-meta,
+  .msg-user[data-pending] .msg-meta,
+  .msg-user .msg-meta:has(.sending-status, .send-retry) { opacity: 1; }
+}
+.msg-user.agent-context { box-shadow: none; outline: 1px dashed var(--border-strong); outline-offset: -1px; }
+
+/* === Assistant turn: no timeline rail === */
+.assistant-turn { margin-bottom: 4px; }
+.tl-item { padding-left: 0; padding-top: 4px; padding-bottom: 4px; }
+.tl-item::before,
+.tl-item::after { content: none !important; display: none !important; }
+.tool-node.tool-details-collapsed { padding-top: 3px; padding-bottom: 3px; }
+.assistant-text { padding-top: 6px; color: var(--text-primary); font-size: 14.5px; line-height: 1.65; }
+html.native-mobile .assistant-text { font-size: 16px; line-height: 1.6; }
+.assistant-text p { margin-bottom: 10px; }
+.assistant-text code {
+  padding: 1px 5px; border-radius: 5px; background: var(--fill-neutral);
+  color: var(--text-primary); font-size: 0.86em;
+}
+.assistant-text pre {
+  margin: 10px 0; padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); background: var(--code-bg);
+}
+.assistant-text pre code { padding: 0; background: none; font-size: 12.5px; }
+html.native-mobile .assistant-text pre code { font-size: 13px; }
+.assistant-text h1 { font-size: 20px; }
+.assistant-text h2 { font-size: 17px; }
+.assistant-text h3 { font-size: 15px; }
+.assistant-text strong { color: var(--text-primary); }
+.assistant-text blockquote { border-left-width: 2px; }
+
+/* === Activity rows (tool calls) === */
+.tool-header { gap: 6px; font-size: 13.5px; line-height: 22px; color: var(--text-secondary); }
+html.native-mobile .tool-header { font-size: 15px; line-height: 22px; }
+.tool-name { color: var(--text-secondary); font-weight: 500; }
+.tool-desc { flex: 0 1 auto; color: var(--text-tertiary); font-size: 13px; }
+html.native-mobile .tool-desc { font-size: 14px; }
+.claude-bash .tool-desc,
+.codex-ran .tool-desc { color: var(--text-secondary); font-family: var(--font-mono); font-size: 12.5px; }
+.tool-desc.file-link { color: var(--text-secondary); }
+.tool-detail-chevron { order: 20; color: var(--text-tertiary); opacity: 0; transition: opacity 0.15s, transform 0.2s ease; }
+.tool-node:not(.tool-details-collapsed) > .tool-header .tool-detail-chevron { opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .tool-header:hover .tool-detail-chevron { opacity: 1; }
+  .tool-header:hover .tool-name,
+  .tool-header:hover .tool-desc { color: var(--text-primary); }
+}
+@media (hover: none) { .tool-detail-chevron { opacity: 0.7; } }
+.tool-node.error > .tool-header .tool-name { color: var(--danger); }
+.tool-node.warning > .tool-header .tool-name { color: var(--warning); }
+.tool-run-group-count,
+.codex-explore-group-count { order: 1; color: var(--text-tertiary); font-size: 12px; }
+.tool-run-continuation .tool-header::before,
+.codex-explore-continuation .tool-header::before { content: none; }
+.tool-run-continuation > .tool-header,
+.codex-explore-continuation > .tool-header { padding-left: 14px; }
+.tool-status, .tool-flag { order: 2; font-size: 12px; color: var(--text-tertiary); }
+.tool-flag { color: var(--warning); }
+.tool-body {
+  margin: 6px 0 6px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--code-bg); overflow: hidden;
+}
+.tool-note { border-bottom-color: var(--border); }
+
+/* Running labels shimmer like Codex's "Thinking" / "Running". */
+@keyframes thread-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+.tool-node.tool-running > .tool-header .tool-name,
+.thinking-tl:not(.thinking-empty) .thinking-block:not([data-thinking-duration-ms]) .thinking-label,
+.step-run-toggle.running .step-run-label,
+.cc-spinner-verb {
+  background: linear-gradient(90deg, var(--text-tertiary) 0%, var(--text-tertiary) 35%,
+    var(--text-primary) 50%, var(--text-tertiary) 65%, var(--text-tertiary) 100%);
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+  color: transparent; animation: thread-shimmer 2.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-node.tool-running > .tool-header .tool-name,
+  .thinking-tl:not(.thinking-empty) .thinking-block:not([data-thinking-duration-ms]) .thinking-label,
+  .step-run-toggle.running .step-run-label,
+  .cc-spinner-verb { animation: none; background: none; color: var(--text-secondary); }
+  .step-run-spinner { animation: none; }
+}
+
+/* === Thinking === */
+.thinking-toggle { font-size: 13.5px; color: var(--text-secondary); }
+html.native-mobile .thinking-toggle { font-size: 15px; }
+.thinking-body { margin-top: 4px; padding-left: 12px; border-left: 2px solid var(--border); font-size: 13px; }
+
+/* === Status line === */
+.cc-spinner-inner {
+  flex: 1 1 auto; justify-content: flex-start; gap: 8px; width: 100%; max-width: var(--thread-width);
+  margin: 0 auto; padding: 0 20px 12px;
+}
+.cc-spinner-glyph,
+.cc-cursor { display: none; }
+.cc-spinner-verb { font-size: 13.5px; font-weight: 500; }
+html.native-mobile .cc-spinner-inner { padding: 0 16px 12px; }
+
+/* === Interrupt and system rows === */
+.msg-interrupt { color: var(--text-tertiary); font-size: 13px; }
+
+/* === Approval card === */
+.permission-prompt {
+  margin-top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-xl);
+  background: var(--surface); box-shadow: var(--shadow-popover);
+}
+.permission-title { font-size: 15px; font-weight: 600; line-height: 1.4; }
+.permission-desc {
+  margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--code-bg); color: var(--text-primary); font-family: var(--font-mono); font-size: 12.5px;
+}
+.permission-options { gap: 2px; }
+.permission-btn {
+  align-items: center; gap: 10px; min-height: 40px; padding: 8px 10px; border: 0;
+  border-radius: var(--radius-md); background: transparent; color: var(--text-primary); font-size: 14px;
+}
+.permission-btn.allow,
+.permission-btn.deny { border: 0; }
+/* Numbered decisions: the first (approve) one is the primary action. Question options are plain rows. */
+.permission-btn.allow:has(.permission-key) { background: var(--primary-fill); color: var(--on-primary); }
+.permission-btn.allow:has(.permission-key) .permission-key { background: rgba(var(--canvas-rgb), 0.18); color: inherit; }
+.permission-btn.allow:has(.permission-key) .permission-desc-inline { color: inherit; opacity: 0.75; }
+.permission-btn:not(:has(.permission-key)) { border: 1px solid var(--border); margin-bottom: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .permission-btn:hover,
+  .permission-btn.deny:hover { background: var(--surface-hover); color: var(--text-primary); }
+  .permission-btn.allow:has(.permission-key):hover { background: var(--primary-fill-hover); color: var(--on-primary); }
+}
+.permission-key { flex-basis: 20px; height: 20px; line-height: 20px; border-radius: var(--radius-sm); }
+.permission-input,
+.permission-submit { border-radius: var(--radius-md); }
+.permission-submit { background: var(--primary-fill); color: var(--on-primary); }
+
+/* === Composer === */
+#input-bar { padding: 6px 16px calc(12px + var(--sab, env(safe-area-inset-bottom, 0px))); }
+#input-bar > * { width: 100%; max-width: var(--thread-width); margin-inline: auto; }
+#input-bar.kb-up { padding-bottom: 8px; }
+.input-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "text text text text" "add . mic send";
+  align-items: center; gap: 4px 6px; padding: 10px 10px 8px 12px;
+  border: 1px solid var(--composer-border); border-radius: var(--radius-composer);
+  background: var(--composer); box-shadow: var(--shadow-input);
+}
+.input-row:focus-within { border-color: var(--border-strong); }
+#msg-input { grid-area: text; padding: 2px 4px 6px; font-size: 14.5px; line-height: 21px; }
+html.native-mobile #msg-input { padding: 2px 4px 6px; font-size: 16px; line-height: 22px; }
+.img-btn {
+  grid-area: add; width: 30px; height: 30px; border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); font-weight: 400;
+}
+.img-btn svg { width: 16px; height: 16px; stroke-width: 2; }
+html.native-mobile .img-btn { width: 40px; height: 40px; margin: -5px; padding: 5px; background-clip: content-box; }
+@media (hover: hover) and (pointer: fine) {
+  .img-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+}
+#mic-btn { grid-area: mic; }
+#send-btn { grid-area: send; width: 32px; height: 32px; background: var(--surface-raised); color: var(--text-tertiary); }
+html.native-mobile #send-btn, html.native-mobile .mic-btn { width: 34px; height: 34px; }
+#send-btn:disabled:not(.has-text):not(.is-stop) { background: var(--surface-raised); color: var(--text-tertiary); }
+#send-btn.has-text { background: var(--primary-fill); color: var(--on-primary); }
+#send-btn.is-stop { background: var(--primary-fill); color: var(--on-primary); }
+#input-bar[inert] .input-row { background: var(--composer); }
+#slash-popup {
+  margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface-elevated); box-shadow: var(--shadow-menu);
+}
+.slash-item { border-radius: var(--radius-md); margin: 0 4px; }
+.slash-item.active { background: var(--surface-hover); }
+#img-preview-row { padding-inline: 4px; }
+
+/* === New session: Codex "Let's build" === */
+body.new-session #content > #input-bar { max-width: calc(var(--thread-width) + 32px); padding: 0 16px; }
+.new-session-hero { padding: 0 24px 24px; }
+.hero-logo { display: none; }
+.hero-title { margin-top: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.2px; }
+.hero-subtitle { margin-top: 6px; color: var(--text-secondary); font-size: 15px; }
+html.native-mobile .hero-title { font-size: 24px; }
+
+/* === Scroll to bottom: centered above the composer === */
+.scroll-bottom-btn { left: 50%; right: auto; transform: translateX(-50%); width: 32px; height: 32px; background: var(--surface-elevated); }
+@media (min-width: 1024px) {
+  html:not(.sidebar-collapsed) .scroll-bottom-btn { left: calc(50% + var(--sidebar-width) / 2); }
+}
+@media (orientation: landscape) {
+  html.native-mobile-app .scroll-bottom-btn { right: auto; }
+}
+
+/* === Worked for: finished turns fold their steps above the final answer === */
+.turn-step-hidden,
+.assistant-turn.turn-row-hidden { display: none !important; }
+.turn-worked {
+  display: flex; align-items: center; gap: 6px; width: 100%; margin: 0 0 10px; padding: 4px 0;
+  border: 0; background: transparent; color: var(--text-tertiary); font: 500 13px/18px var(--font-ui);
+  text-align: left; cursor: pointer;
+}
+.turn-worked::after { content: ""; flex: 1; height: 1px; margin-left: 6px; background: var(--divider); }
+.turn-worked-chevron { display: inline-block; transition: transform 0.15s ease; }
+.turn-worked[aria-expanded="true"] .turn-worked-chevron { transform: rotate(90deg); }
+.turn-worked:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+@media (hover: hover) and (pointer: fine) { .turn-worked:hover { color: var(--text-primary); } }
+html.native-mobile .turn-worked { font-size: 14px; }
+.turn-step > .turn-worked { margin-top: 2px; }
+
+/* === Step runs: consecutive thinking / tool steps between texts fold into one row, like Codex === */
+.step-run-hidden,
+.step-run-head.step-run-collapsed > :not(.step-run-toggle):not(.turn-worked),
+.assistant-turn.step-run-row-hidden { display: none !important; }
+.step-run-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 2px 0;
+  border: 0; background: transparent; color: var(--text-secondary); font: 13.5px/22px var(--font-ui);
+  text-align: left; cursor: pointer;
+}
+html.native-mobile .step-run-toggle { font-size: 15px; }
+.step-run-icon { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-tertiary); }
+.step-run-spinner {
+  flex: 0 0 auto; box-sizing: border-box; width: 13px; height: 13px; margin: 0 1.5px;
+  border: 1.5px solid var(--text-tertiary); border-top-color: transparent; border-radius: 50%;
+  animation: apk-spin 0.9s linear infinite;
+}
+.step-run-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-run-meta,
+.step-run-failed { flex: 0 0 auto; color: var(--text-tertiary); font-size: 12.5px; white-space: nowrap; }
+.step-run-failed { color: var(--danger); }
+.step-run-chevron { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-tertiary); transition: transform 0.15s ease; }
+.step-run-toggle[aria-expanded="true"] .step-run-chevron { transform: rotate(90deg); }
+.step-run-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .step-run-toggle:hover { color: var(--text-primary); }
+  .step-run-toggle:hover .step-run-chevron { color: var(--text-secondary); }
+}
+/* An open run's steps hang under its summary on one guide line. */
+.step-run:not(.step-run-head):not(.step-run-hidden),
+.step-run-head:not(.step-run-collapsed) > :not(.step-run-toggle):not(.turn-worked) {
+  margin-left: 7px; padding-left: 16px; border-left: 1px solid var(--divider);
+}
+.step-run-head:not(.step-run-collapsed) { padding-bottom: 0; }
+.assistant-turn:has(> .step-run:not(.step-run-hidden):not(.step-run-collapsed)) { margin-bottom: 0; }

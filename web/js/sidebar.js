@@ -1,0 +1,354 @@
+// Desktop sidebar: navigation, projects with their recent sessions, and devices.
+import { state } from './state.js';
+import { NEW_CHAT_ICON_SVG } from './components/icons.js';
+import { readPins } from './shell.js';
+import { attachmentPreviewText } from './components/attachment.js';
+
+const CACHE_KEY = 'apeek_home_cache';
+const FOLDED_KEY = 'baton-sidebar-folded';
+const REFRESH_MS = 60000;
+const STALE_MS = 15000;
+
+const root = document.getElementById('sidebar');
+const wide = window.matchMedia('(min-width: 1024px)');
+let data = null;
+let loadedAt = 0;
+let refreshing = null;
+let query = '';
+let searchOpen = false;
+let folded = new Set();
+try { folded = new Set(JSON.parse(sessionStorage.getItem(FOLDED_KEY) || '[]')); } catch {}
+
+const ICONS = {
+  panel: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>',
+  recents: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  approve: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  folderClosed: '<svg class="sidebar-folder sidebar-folder-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></svg>',
+  folderOpen: '<svg class="sidebar-folder sidebar-folder-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18V6a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v2"/><path d="M3 18l2.6-6.7A2 2 0 0 1 7.5 10H21l-2.8 8.3a2 2 0 0 1-1.9 1.7H5a2 2 0 0 1-2-2Z"/></svg>',
+};
+
+function esc(value) {
+  return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+
+function deviceName(name) {
+  return window.__deviceDisplayNames?.[name] || state.deviceDisplayNameMap?.[name] || name;
+}
+
+function readCache() {
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; }
+}
+
+function sessionTitle(session) {
+  return session.isAgent && session.agentName ? session.agentName : attachmentPreviewText(session.preview || 'No preview');
+}
+
+function currentSession() {
+  return { device: state.appState.device, session: state.rootSessionId || state.appState.session };
+}
+
+function runtimeMark(session) {
+  const codex = session.runtime === 'codex' || String(session.sessionId || '').startsWith('codex:');
+  const label = codex ? 'Codex' : 'Claude Code';
+  const src = window.__runtimeIconSource?.(codex ? 'codex' : 'claude')
+    || './assets/' + (codex ? 'codex.svg' : 'claude-code.svg');
+  return '<span class="runtime-mark' + (codex ? ' runtime-mark-codex' : '') + '" role="img" aria-label="' + label + '" title="' + label + '">'
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(src) + '" alt="" aria-hidden="true"></span>';
+}
+
+// Finished sessions show nothing, like Codex; only running and waiting ones carry a glyph.
+function statusHtml(status) {
+  if (status === 'running') return '<span class="sidebar-status running" role="img" aria-label="Running"></span>';
+  if (status === 'needs_input') return '<span class="sidebar-status needs-input" role="img" aria-label="Needs input"></span>';
+  return '';
+}
+
+const PROJECT_STATES = {
+  'needs-input': 'Needs input', running: 'Running', online: 'Device online', offline: 'Device offline',
+};
+
+// One dot per project: waiting beats running, then the device's connection.
+function projectState(project, known, devices) {
+  let running = false;
+  for (const session of known.values()) {
+    if (session.deviceName !== project.deviceName || session.projectHash !== project.projectHash) continue;
+    if (session.status === 'needs_input') return 'needs-input';
+    if (session.status === 'running') running = true;
+  }
+  if (running) return 'running';
+  const device = devices.get(project.deviceName);
+  return device ? (device.online ? 'online' : 'offline') : '';
+}
+
+// Active rows are authoritative for status; recent project rows supply the rest.
+function sessions() {
+  const byKey = new Map();
+  const add = session => {
+    if (!session?.sessionId || !session.deviceName) return;
+    const key = session.deviceName + '\u0000' + session.sessionId;
+    if (!byKey.has(key)) byKey.set(key, session);
+  };
+  (data?.active?.sessions || []).forEach(add);
+  (data?.active?.recentProjects || []).forEach(project => (project.sessions || []).forEach(session => add({
+    deviceName: project.deviceName, projectHash: project.projectHash, projectName: project.projectName, ...session,
+  })));
+  return byKey;
+}
+
+function threadHtml(session, known) {
+  const current = currentSession();
+  const live = known.get(session.deviceName + '\u0000' + session.sessionId) || session;
+  const active = current.device === live.deviceName && current.session === live.sessionId;
+  const href = '#/' + encodeURIComponent(live.deviceName) + '/' + encodeURIComponent(live.projectHash)
+    + '/' + encodeURIComponent(live.sessionId);
+  return '<a class="sidebar-thread' + (active ? ' active' : '') + '" href="' + esc(href) + '" data-sidebar-open'
+    + ' data-device="' + esc(live.deviceName) + '" data-phash="' + esc(live.projectHash) + '"'
+    + ' data-pname="' + esc(live.projectName || live.projectHash) + '" data-sid="' + esc(live.sessionId) + '"'
+    + ' data-preview="' + esc(live.preview || '') + '" data-isagent="' + (live.isAgent ? 'true' : '') + '"'
+    + (active ? ' aria-current="page"' : '') + ' title="' + esc(sessionTitle(live)) + '">'
+    + runtimeMark(live)
+    + '<span class="sidebar-thread-title">' + esc(sessionTitle(live)) + '</span>'
+    + statusHtml(live.status)
+    + '</a>';
+}
+
+function projectHtml(project, known, devices) {
+  const key = JSON.stringify([project.deviceName, project.projectHash]);
+  const open = !folded.has(key);
+  const threads = (project.sessions || []).map(session => threadHtml({
+    deviceName: project.deviceName, projectHash: project.projectHash, projectName: project.projectName, ...session,
+  }, known)).join('');
+  const href = '#/' + encodeURIComponent(project.deviceName) + '/' + encodeURIComponent(project.projectHash);
+  const dot = projectState(project, known, devices);
+  const device = devices.get(project.deviceName)?.deviceDisplayName || deviceName(project.deviceName);
+  return '<div class="sidebar-project">'
+    + '<div class="sidebar-project-row">'
+    + '<button class="sidebar-project-toggle" type="button" data-sidebar-fold="' + esc(key) + '" aria-expanded="' + open + '">'
+    + ICONS.folderClosed + ICONS.folderOpen
+    + '<span class="sidebar-project-name">' + esc(project.projectName) + '</span>'
+    + '<span class="sidebar-project-meta"><span class="sidebar-project-device">' + esc(device) + '</span>'
+    + (dot ? '<span class="sidebar-project-dot ' + dot + '" role="img" aria-label="' + PROJECT_STATES[dot] + '"></span>' : '')
+    + '</span></button>'
+    + '<button class="sidebar-icon-btn sidebar-row-action" type="button" data-sidebar-new-in'
+    + ' data-device="' + esc(project.deviceName) + '" data-phash="' + esc(project.projectHash) + '"'
+    + ' data-pname="' + esc(project.projectName) + '" title="New chat in ' + esc(project.projectName) + '"'
+    + ' aria-label="New chat in ' + esc(project.projectName) + '">' + NEW_CHAT_ICON_SVG + '</button>'
+    + '</div>'
+    + '<div class="sidebar-threads"' + (open ? '' : ' hidden') + '>' + threads
+    + '<a class="sidebar-thread-more" href="' + esc(href) + '" data-sidebar-project'
+    + ' data-device="' + esc(project.deviceName) + '" data-phash="' + esc(project.projectHash) + '"'
+    + ' data-pname="' + esc(project.projectName) + '">View all</a></div></div>';
+}
+
+function searchResultsHtml(known) {
+  const needle = query.trim().toLowerCase();
+  const matches = Array.from(known.values()).filter(session => (sessionTitle(session) + ' ' + (session.projectName || ''))
+    .toLowerCase().includes(needle))
+    .sort((a, b) => (Date.parse(b.lastActive || '') || 0) - (Date.parse(a.lastActive || '') || 0))
+    .slice(0, 50);
+  return '<div class="sidebar-section"><div class="sidebar-section-title">Results</div>'
+    + (matches.length ? matches.map(session => threadHtml(session, known)).join('')
+      : '<div class="sidebar-empty">No matching sessions</div>')
+    + '</div>';
+}
+
+const isMac = /Mac/.test(navigator.platform);
+
+function chromeHtml() {
+  return '<div class="sidebar-header">'
+    + '<button class="sidebar-brand" type="button" data-sidebar-home><img src="assets/baton-logo.svg" alt=""><span>Baton</span></button>'
+    + '<button class="sidebar-icon-btn" type="button" data-sidebar-collapse title="Hide sidebar" aria-label="Hide sidebar">' + ICONS.panel + '</button>'
+    + '</div>'
+    + '<nav class="sidebar-nav" aria-label="Primary">'
+    + '<button class="sidebar-nav-item" type="button" data-sidebar-new>' + NEW_CHAT_ICON_SVG + '<span>New chat</span></button>'
+    + '<button class="sidebar-nav-item" type="button" data-sidebar-search aria-expanded="false">' + ICONS.search
+    + '<span>Search</span><kbd>' + (isMac ? '⌘K' : 'Ctrl K') + '</kbd></button>'
+    + '<button class="sidebar-nav-item" type="button" data-sidebar-home>' + ICONS.recents + '<span>Recents</span></button>'
+    + '<button class="sidebar-nav-item" type="button" data-sidebar-approve>' + ICONS.approve + '<span>Needs input</span>'
+    + '<span class="sidebar-count" hidden></span></button>'
+    + '</nav>'
+    + '<div class="sidebar-search" hidden><input type="search" placeholder="Search chats"'
+    + ' aria-label="Search chats" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="sidebar-scroll"></div>'
+    + '<div class="sidebar-footer"><a class="sidebar-nav-item" href="setup.html">' + ICONS.settings + '<span>Settings</span></a></div>';
+}
+
+function bodyHtml(known) {
+  if (searchOpen && query.trim()) return searchResultsHtml(known);
+  const projects = data?.active?.recentProjects || [];
+  const devices = data?.devices?.devices || [];
+  const byDevice = new Map(devices.map(device => [device.deviceName, device]));
+  const pinned = readPins().map(pin => known.get(pin.deviceName + '\u0000' + pin.sessionId) || pin);
+  return (pinned.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Pinned</div>'
+    + pinned.map(session => threadHtml(session, known)).join('') + '</div>' : '')
+    + '<div class="sidebar-section"><div class="sidebar-section-title">Projects</div>'
+    + (projects.length ? projects.map(project => projectHtml(project, known, byDevice)).join('')
+      : '<div class="sidebar-empty">' + (data ? 'No recent sessions yet' : 'Loading…') + '</div>')
+    + '</div>'
+    + (devices.length ? '<div class="sidebar-section"><div class="sidebar-section-title">Devices</div>'
+      + devices.map(device => '<a class="sidebar-device" href="#/' + esc(encodeURIComponent(device.deviceName)) + '"'
+        + ' data-sidebar-device="' + esc(device.deviceName) + '">'
+        + '<span class="device-dot ' + (device.online ? 'online' : 'offline') + '"></span>'
+        + '<span class="sidebar-device-name">' + esc(device.deviceDisplayName || device.deviceName) + '</span>'
+        + (device.runningCount ? '<span class="sidebar-device-meta">' + device.runningCount + ' running</span>' : '')
+        + '</a>').join('') + '</div>' : '');
+}
+
+// The chrome (header, nav, search box) is built once; refreshes and typing only replace the list.
+function renderBody(known = sessions()) {
+  const scroller = root.querySelector('.sidebar-scroll');
+  if (!scroller) return;
+  const top = scroller.scrollTop;
+  scroller.innerHTML = bodyHtml(known);
+  scroller.scrollTop = top;
+}
+
+function render() {
+  if (!root || !wide.matches) return;
+  if (!root.querySelector('.sidebar-scroll')) root.innerHTML = chromeHtml();
+  const known = sessions();
+  const waiting = Array.from(known.values()).filter(session => session.status === 'needs_input').length;
+  const count = root.querySelector('.sidebar-count');
+  count.textContent = String(waiting);
+  count.hidden = !waiting;
+  renderBody(known);
+}
+
+function setSearchOpen(open) {
+  searchOpen = open;
+  const box = root.querySelector('.sidebar-search');
+  const input = box?.querySelector('input');
+  root.querySelector('[data-sidebar-search]')?.setAttribute('aria-expanded', String(open));
+  if (box) box.hidden = !open;
+  if (!open) {
+    query = '';
+    if (input) input.value = '';
+  }
+  renderBody();
+  if (open) input?.focus();
+}
+
+function refresh() {
+  if (!wide.matches || typeof window.api !== 'function' || window.__homeLoadPromise) return Promise.resolve();
+  if (refreshing) return refreshing;
+  refreshing = Promise.all([
+    window.api('/api/bridge/active-sessions', window.__homeActiveParams?.()),
+    window.api('/api/bridge/devices'),
+  ]).then(([active, devices]) => {
+    data = { active, devices };
+    loadedAt = Date.now();
+    render();
+  }).catch(() => {}).finally(() => { refreshing = null; });
+  return refreshing;
+}
+
+// Load home first: it may restore a snapshot of another tab, which setHomeTab then replaces.
+function goHome(tab) {
+  window.loadDevices?.();
+  window.__setHomeTab?.(tab);
+}
+
+function openSearch() {
+  if (!root.querySelector('.sidebar-scroll')) render();
+  setSearchOpen(true);
+}
+
+function onClick(event) {
+  const target = event.target.closest('a, button');
+  if (!target || !root.contains(target)) return;
+  const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button > 0;
+  if (target.tagName === 'A' && modified) return;
+  const d = target.dataset;
+  if (target.hasAttribute('data-sidebar-open')) {
+    event.preventDefault();
+    window.openActiveSession?.(target);
+  } else if (target.hasAttribute('data-sidebar-project')) {
+    event.preventDefault();
+    window.loadSessions?.(d.device, d.phash, d.pname);
+  } else if (target.hasAttribute('data-sidebar-device')) {
+    event.preventDefault();
+    window.loadProjects?.(d.sidebarDevice);
+  } else if (target.hasAttribute('data-sidebar-fold')) {
+    const key = d.sidebarFold;
+    const open = folded.has(key);
+    if (open) folded.delete(key);
+    else folded.add(key);
+    try { sessionStorage.setItem(FOLDED_KEY, JSON.stringify(Array.from(folded))); } catch {}
+    target.setAttribute('aria-expanded', String(open));
+    const threads = target.closest('.sidebar-project')?.querySelector('.sidebar-threads');
+    if (threads) threads.hidden = !open;
+  } else if (target.hasAttribute('data-sidebar-new-in')) {
+    window.startNewSessionIn?.(d.device, d.phash, d.pname);
+  } else if (target.hasAttribute('data-sidebar-new')) {
+    const app = state.appState;
+    if (app.device && app.project) window.startNewSessionIn?.(app.device, app.project.hash, app.project.name);
+    else window.openNewTaskSheet?.();
+  } else if (target.hasAttribute('data-sidebar-search')) {
+    setSearchOpen(!searchOpen);
+  } else if (target.hasAttribute('data-sidebar-approve')) {
+    goHome('approve');
+  } else if (target.hasAttribute('data-sidebar-home')) {
+    goHome('tasks');
+  } else if (target.hasAttribute('data-sidebar-collapse')) {
+    window.toggleSidebar?.(false);
+  }
+}
+
+function onInput(event) {
+  if (!event.target.closest('.sidebar-search') || event.isComposing) return;
+  query = event.target.value;
+  renderBody();
+}
+
+function onKeydown(event) {
+  if (!wide.matches) return;
+  const modifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    window.toggleSidebar?.(true);
+    openSearch();
+  } else if (event.key === 'Escape' && event.target.closest?.('.sidebar-search')) {
+    event.preventDefault();
+    setSearchOpen(false);
+  }
+}
+
+export function updateSidebar() {
+  if (!wide.matches) return;
+  render();
+  // Home navigation fetches the same data and hands it over through baton:home-data.
+  if (Date.now() - loadedAt > STALE_MS && !document.body.classList.contains('view-home')) void refresh();
+}
+
+if (root) {
+  const cached = readCache();
+  if (cached?.active && cached.devices) {
+    data = { active: cached.active, devices: cached.devices };
+    // The inline home loader may have just cached this; refetching it would double the cold-load burst.
+    loadedAt = Math.min(Number(cached.cachedAt) || 0, Date.now());
+  }
+  root.addEventListener('click', onClick);
+  root.addEventListener('input', onInput);
+  root.addEventListener('compositionend', onInput);
+  document.addEventListener('keydown', onKeydown);
+  window.addEventListener('baton:home-data', event => {
+    data = { active: event.detail.active, devices: event.detail.devices };
+    loadedAt = Date.now();
+    render();
+  });
+  window.addEventListener('baton:pins', render);
+  wide.addEventListener?.('change', () => { if (wide.matches) updateSidebar(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') updateSidebar();
+  });
+  setInterval(() => {
+    if (document.visibilityState === 'visible' && wide.matches) void refresh();
+  }, REFRESH_MS);
+  window.__sidebarUpdate = updateSidebar;
+  render();
+  if (wide.matches && Date.now() - loadedAt > STALE_MS) void refresh();
+}

@@ -70,7 +70,7 @@ test('native mobile startup shows cached home content before refresh completes',
   try {
     await waitFor(() => h.doc.querySelector('#content > *'));
     assert.ok(h.doc.querySelector('#recent-projects-section'));
-    assert.equal(h.doc.querySelector('.skeleton-card'), null);
+    assert.equal(h.doc.querySelector('.skeleton-row'), null);
     assert.equal(h.win.__inlineRendered, true);
   } finally { h.win.close(); }
 });
@@ -80,42 +80,46 @@ test('native mobile startup shows a skeleton while uncached refresh is pending',
   const h = harness({ fetchData: () => pending, nativeMobile: true });
   try {
     await waitFor(() => h.doc.querySelector('#content > *'));
-    assert.ok(h.doc.querySelector('.skeleton-card'));
+    assert.ok(h.doc.querySelector('.skeleton-row'));
     assert.equal(h.doc.querySelector('#recent-projects-section'), null);
   } finally { h.win.close(); }
 });
 
-test('home consumes recentProjects from the existing two requests and keeps active cards and devices', async () => {
+test('home consumes recentProjects from the existing two requests and lists tasks, projects and devices', async () => {
   const h = harness();
   try {
     await waitFor(() => h.doc.querySelectorAll('.recent-project').length === 2);
     assert.deepEqual(h.requests, ['/api/bridge/active-sessions', '/api/bridge/devices']);
-    assert.equal(h.doc.querySelectorAll('#active-section .active-card').length, 1);
+    const rows = [...h.doc.querySelectorAll('.home-tasks .task-row')];
+    assert.equal(rows.length, 2, 'active sessions and recent project sessions merge without duplicates');
     assert.equal(h.doc.querySelectorAll('#devices-section .device-item').length, 2);
     assert.equal(h.doc.querySelector('#recent-agents-section'), null);
     assert.doesNotMatch(h.doc.getElementById('content').textContent, /Legacy completed card|Completed Sessions/);
     assert.deepEqual([...h.doc.querySelectorAll('.recent-project-device')].map(el => el.textContent), ['Office Mac', 'Dev EC2']);
-    assert.deepEqual([...h.doc.querySelectorAll('.recent-session-status')].map(el => el.textContent), ['Needs input', 'Done']);
-    assert.deepEqual([...h.doc.querySelectorAll('.recent-session .runtime-mark')].map(el => el.getAttribute('aria-label')), ['Codex', 'Claude Code']);
-    assert.deepEqual([...h.doc.querySelectorAll('.recent-session-title')].map(el => el.textContent), [session.agentName, displayPreview]);
+    assert.deepEqual(rows.map(el => el.querySelector('.task-status').getAttribute('aria-label')), ['Needs input', 'Done']);
+    assert.deepEqual(rows.map(el => el.querySelector('.runtime-mark').getAttribute('aria-label')), ['Codex', 'Claude Code']);
+    assert.deepEqual(rows.map(el => el.querySelector('.task-title').textContent), [session.agentName, displayPreview]);
+    assert.deepEqual(rows.map(el => el.querySelector('.task-device').textContent), ['Office Mac', 'Dev EC2']);
+    assert.equal(rows[0].querySelector('.task-detail').textContent, session.agentDetail);
     assert.equal(h.doc.querySelector('.recent-project-name').textContent, project.projectName);
-    assert.equal(h.doc.querySelector('#recent-projects-section script'), null);
-    assert.deepEqual([...h.doc.querySelectorAll('.recent-session')].map(el => el.title), [session.agentName + '\n' + session.agentDetail, displayPreview]);
-    assert.equal(h.doc.querySelector('#active-section').compareDocumentPosition(h.doc.querySelector('#recent-projects-section')) & 4, 4);
+    assert.equal(h.doc.querySelector('#content script'), null);
+    assert.deepEqual(rows.map(el => el.title), [session.agentName + '\n' + session.agentDetail, displayPreview]);
+    assert.equal(h.doc.querySelector('.home-tasks').compareDocumentPosition(h.doc.querySelector('#recent-projects-section')) & 4, 4);
     assert.equal(h.doc.querySelector('#recent-projects-section').compareDocumentPosition(h.doc.querySelector('#devices-section')) & 4, 4);
+    assert.ok(h.doc.body.classList.contains('view-home'));
   } finally { h.win.close(); }
 });
 
 test('project and session links keep identity, preserve modified clicks, and reuse existing navigation', async () => {
   const h = harness();
   try {
-    await waitFor(() => h.doc.querySelector('.recent-session'));
+    await waitFor(() => h.doc.querySelector('.task-row'));
     const opened = [];
     h.win.loadProjects = () => {};
     h.win.loadSessions = (...args) => opened.push(args);
     h.win.openActiveSession = el => opened.push({ ...el.dataset });
-    const projectLink = h.doc.querySelector('.recent-project-link');
-    const row = h.doc.querySelector('.recent-session');
+    const projectLink = h.doc.querySelector('a.recent-project');
+    const row = h.doc.querySelector('.task-row');
     const href = '#/' + encodeURIComponent(project.deviceName) + '/' + encodeURIComponent(project.projectHash);
     assert.equal(projectLink.getAttribute('href'), href);
     assert.equal(row.getAttribute('href'), href + '/' + encodeURIComponent(session.sessionId));
@@ -148,18 +152,18 @@ test('cached projects remain usable when refreshing the home data fails', async 
     reject(new Error('offline'));
     await h.win.__homeLoadPromise;
     assert.equal(h.doc.querySelectorAll('.recent-project').length, 2);
-    assert.equal(h.doc.querySelector('.recent-session').dataset.preview, preview);
-    assert.equal(h.doc.querySelectorAll('.recent-session-title')[1].textContent, displayPreview);
+    assert.equal(h.doc.querySelector('.task-row').dataset.preview, preview);
+    assert.equal(h.doc.querySelectorAll('.task-title')[1].textContent, displayPreview);
   } finally { h.win.close(); }
 });
 
 test('returning from a session restores the home frame and position before refreshing', async () => {
   const h = harness();
   try {
-    await waitFor(() => h.doc.querySelector('.recent-project-toggle'));
+    await waitFor(() => h.doc.querySelector('.recent-projects-toggle'));
     await h.win.__homeLoadPromise;
     const content = h.doc.getElementById('content');
-    h.doc.querySelector('.recent-project-toggle').click();
+    h.doc.querySelector('.recent-projects-toggle').click();
     const snapshot = {
       topBarHtml: h.doc.querySelector('.top-bar').innerHTML,
       breadcrumbHtml: '', breadcrumbDisplay: 'none',
@@ -167,21 +171,23 @@ test('returning from a session restores the home frame and position before refre
     };
     content.innerHTML = '<div>Session detail</div>';
     content.scrollTop = 0;
+    h.doc.body.classList.remove('view-home');
     let resolveFresh;
     const pending = new Promise(resolve => { resolveFresh = resolve; });
     const loading = h.win.__loadHome(pending, Promise.resolve(devices), {
       restoreSnapshot: snapshot, resetScroll: false,
     });
     assert.equal(content.scrollTop, 640);
-    assert.equal(h.doc.querySelector('.recent-project-toggle').getAttribute('aria-expanded'), 'false');
+    assert.ok(h.doc.body.classList.contains('view-home'));
+    assert.equal(h.doc.querySelector('.recent-projects-toggle').getAttribute('aria-expanded'), 'false');
     const fresh = { ...active, recentProjects: active.recentProjects.map(project => ({ ...project, projectName: 'Updated project' })) };
     resolveFresh(fresh);
     await loading;
     assert.equal(content.scrollTop, 640);
     assert.equal(h.doc.querySelector('.recent-project-name').textContent, 'Updated project');
-    assert.equal(h.doc.querySelector('.recent-project-toggle').getAttribute('aria-expanded'), 'false');
-    h.doc.querySelector('.recent-project-toggle').click();
-    assert.equal(h.doc.querySelector('.recent-project-toggle').getAttribute('aria-expanded'), 'true');
+    assert.equal(h.doc.querySelector('.recent-projects-toggle').getAttribute('aria-expanded'), 'false');
+    h.doc.querySelector('.recent-projects-toggle').click();
+    assert.equal(h.doc.querySelector('.recent-projects-toggle').getAttribute('aria-expanded'), 'true');
     await h.win.__loadHome(Promise.resolve(fresh), Promise.resolve(devices), { resetScroll: true });
     assert.equal(content.scrollTop, 0);
   } finally { h.win.close(); }
@@ -201,83 +207,103 @@ test('an empty project snapshot has a quiet empty state without hiding devices',
   } finally { h.win.close(); }
 });
 
-test('recent projects account for the active list spacing only when active sessions are present', async () => {
+test('host chips filter tasks, projects and devices without new requests', async () => {
   const h = harness();
   try {
-    const style = h.doc.createElement('style');
-    style.textContent = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
-    h.doc.head.appendChild(style);
+    await waitFor(() => h.doc.querySelector('.host-chip'));
     await h.win.__homeLoadPromise;
-    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.recent-projects-toggle')).paddingTop, '8px');
-
-    await h.win.__loadHome(Promise.resolve({ ...active, sessions: [] }), Promise.resolve(devices));
-    const content = h.doc.getElementById('content');
-    assert.equal(content.firstElementChild.id, 'recent-projects-section');
-    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.recent-projects-toggle')).paddingTop, '16px');
-    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.devices-toggle')).minHeight, '0px');
-
-    const edgePreview = content.cloneNode(true);
-    edgePreview.removeAttribute('id');
-    edgePreview.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
-    h.doc.body.appendChild(edgePreview);
-    assert.equal(h.win.getComputedStyle(edgePreview.querySelector('.recent-projects-toggle')).paddingTop, '16px');
-    edgePreview.remove();
-
-    await h.win.__loadHome(Promise.resolve(active), Promise.resolve(devices));
-    assert.equal(h.win.getComputedStyle(h.doc.querySelector('.recent-projects-toggle')).paddingTop, '8px');
+    const chips = [...h.doc.querySelectorAll('.host-chip')];
+    assert.deepEqual(chips.map(el => el.textContent), ['All', 'Office Mac', 'Dev EC2']);
+    assert.equal(chips[0].getAttribute('aria-pressed'), 'true');
+    chips[2].click();
+    assert.equal(h.doc.querySelector('.host-chip.active').dataset.host, 'Linux');
+    assert.deepEqual([...h.doc.querySelectorAll('.task-row')].map(el => el.dataset.device), ['Linux']);
+    assert.deepEqual([...h.doc.querySelectorAll('a.recent-project')].map(el => el.dataset.device), ['Linux']);
+    assert.deepEqual([...h.doc.querySelectorAll('.device-card')].map(el => el.dataset.name), ['Linux']);
+    assert.equal(h.win.sessionStorage.getItem('baton-home-host'), 'Linux');
+    h.doc.querySelector('.host-chip[data-host=""]').click();
+    assert.equal(h.doc.querySelectorAll('.task-row').length, 2);
+    assert.equal(h.requests.length, 2);
   } finally { h.win.close(); }
 });
 
-test('section and project collapse independently; View all never toggles the project', async () => {
+test('the tab bar switches between tasks, approvals and review and counts waiting sessions', async () => {
   const h = harness();
   try {
-    await waitFor(() => h.doc.querySelector('button.recent-project-toggle'));
+    await waitFor(() => h.doc.querySelector('.task-row'));
+    await h.win.__homeLoadPromise;
+    const bar = h.doc.getElementById('tab-bar');
+    assert.equal(bar.querySelector('.tab-bar-badge').hidden, false);
+    assert.equal(bar.querySelector('.tab-bar-badge').textContent, '1');
+    bar.querySelector('[data-home-tab="approve"]').click();
+    assert.equal(bar.querySelector('[data-home-tab="approve"]').getAttribute('aria-current'), 'page');
+    assert.equal(h.doc.querySelector('.home-view-title').textContent, 'Needs input');
+    assert.deepEqual([...h.doc.querySelectorAll('.task-row')].map(el => el.dataset.sid), [session.sessionId]);
+    assert.equal(h.doc.getElementById('recent-projects-section'), null);
+    bar.querySelector('[data-home-tab="review"]').click();
+    const reviews = [...h.doc.querySelectorAll('.review-project')];
+    assert.equal(reviews.length, 2);
+    const opened = [];
+    h.win.loadProjects = () => {};
+    h.win.openProjectReview = (...args) => opened.push(args);
+    reviews[0].click();
+    assert.deepEqual(opened, [[project.deviceName, project.projectHash, project.projectName]]);
+    assert.equal(h.win.sessionStorage.getItem('baton-home-tab'), 'review');
+    h.win.__setHomeTab('tasks');
+    assert.ok(h.doc.getElementById('recent-projects-section'));
+    assert.equal(h.requests.length, 2);
+  } finally { h.win.close(); }
+});
+
+test('pinned sessions lead the task list and keep their saved title when absent from recent data', async () => {
+  const h = harness({
+    fetchData: async url => ({ ok: true, json: async () => url.includes('active-sessions') ? active : devices }),
+  });
+  try {
+    h.win.localStorage.setItem('baton-pins', JSON.stringify([
+      { sessionId: 'claude-session', deviceName: 'Linux', projectHash: project.projectHash, projectName: project.projectName, preview: 'Pinned old title' },
+      { sessionId: 'gone', deviceName: 'Linux', projectHash: 'old', projectName: 'Old project', preview: 'Archived pin' },
+    ]));
+    await h.win.__loadHome(Promise.resolve(active), Promise.resolve(devices));
+    const groups = [...h.doc.querySelectorAll('.home-group')];
+    assert.equal(groups[0].querySelector('.home-group-title').textContent, 'Pinned');
+    assert.deepEqual([...groups[0].querySelectorAll('.task-title')].map(el => el.textContent), [displayPreview, 'Archived pin']);
+    assert.equal(h.doc.querySelectorAll('.task-row[data-sid="claude-session"]').length, 1, 'a pinned session is not repeated below');
+  } finally { h.win.close(); }
+});
+
+test('the Projects section folds without navigating and project rows open their session list', async () => {
+  const h = harness();
+  try {
+    await waitFor(() => h.doc.querySelector('a.recent-project'));
     const sectionToggle = h.doc.querySelector('.recent-projects-toggle');
-    const projectToggle = h.doc.querySelector('.recent-project-toggle');
     const list = h.doc.getElementById(sectionToggle.getAttribute('aria-controls'));
-    const panel = h.doc.getElementById(projectToggle.getAttribute('aria-controls'));
-    const otherPanel = h.doc.querySelectorAll('.recent-project-sessions')[1];
     assert.equal(sectionToggle.getAttribute('aria-expanded'), 'true');
-    assert.equal(projectToggle.getAttribute('aria-expanded'), 'true');
     assert.equal(list.hidden, false);
-    assert.equal(panel.hidden, false);
     const opened = [];
     h.win.loadProjects = () => {};
     h.win.loadSessions = (...args) => opened.push(args);
-    projectToggle.click();
-    assert.equal(panel.hidden, true);
-    assert.equal(projectToggle.getAttribute('aria-expanded'), 'false');
-    assert.equal(otherPanel.hidden, false);
-    assert.equal(opened.length, 0);
     sectionToggle.click();
     assert.equal(list.hidden, true);
+    assert.equal(opened.length, 0);
     sectionToggle.click();
     assert.equal(list.hidden, false);
-    assert.equal(panel.hidden, true, 'opening the section preserves each project state');
-    const link = h.doc.querySelector('.recent-project-link');
-    assert.equal(link.closest('button'), null);
-    link.click();
+    h.doc.querySelector('a.recent-project').click();
     assert.deepEqual(opened, [[project.deviceName, project.projectHash, project.projectName]]);
-    assert.equal(panel.hidden, true, 'View all does not expand the project');
-    projectToggle.click();
-    assert.equal(panel.hidden, false);
     assert.equal(h.requests.length, 2, 'folding never queries the backend');
   } finally { h.win.close(); }
 });
 
-test('a home refresh preserves folds by device and project when project order changes', async () => {
+test('a home refresh preserves the folded Projects section when project order changes', async () => {
   const h = harness();
   try {
-    await waitFor(() => h.doc.querySelector('button.recent-project-toggle'));
+    await waitFor(() => h.doc.querySelector('a.recent-project'));
     await h.win.__homeLoadPromise;
-    h.doc.querySelector('.recent-project-toggle').click();
     h.doc.querySelector('.recent-projects-toggle').click();
     const fresh = { ...active, recentProjects: [...active.recentProjects].reverse() };
     await h.win.__loadHome(Promise.resolve(fresh), Promise.resolve(devices));
     assert.equal(h.doc.getElementById('recent-project-list').hidden, true);
-    const toggles = [...h.doc.querySelectorAll('.recent-project-toggle')];
-    assert.deepEqual(toggles.map(el => el.getAttribute('aria-expanded')), ['true', 'false']);
-    assert.deepEqual([...h.doc.querySelectorAll('.recent-project-sessions')].map(el => el.hidden), [false, true]);
+    assert.deepEqual([...h.doc.querySelectorAll('a.recent-project')].map(el => el.dataset.device), ['Linux', project.deviceName]);
   } finally { h.win.close(); }
 });
 
@@ -345,12 +371,10 @@ test('Show more appends unseen projects without replacing existing projects, ses
     };
     const original = h.doc.querySelector('.recent-project');
     const originalProjects = [...h.doc.querySelectorAll('.recent-project')];
-    const originalSession = h.doc.querySelector('.recent-session');
-    const activeSection = h.doc.getElementById('active-section');
+    const originalSession = h.doc.querySelector('.task-row');
+    const activeSection = h.doc.querySelector('.home-tasks');
     const activeHtml = activeSection.innerHTML;
     const devicesSection = h.doc.getElementById('devices-section');
-    const foldKey = h.doc.querySelector('.recent-project-toggle').dataset.homeToggle;
-    h.doc.querySelector('.recent-project-toggle').click();
     const button = h.doc.querySelector('[data-show-more-projects]');
     assert.equal(button.textContent, 'Show more');
     button.click();
@@ -369,16 +393,14 @@ test('Show more appends unseen projects without replacing existing projects, ses
     await run;
     assert.equal(h.doc.querySelectorAll('.recent-project').length, 8);
     originalProjects.forEach((node, i) => assert.equal(h.doc.querySelectorAll('.recent-project')[i], node));
-    assert.equal(h.doc.querySelector('.recent-session'), originalSession);
+    assert.equal(h.doc.querySelector('.task-row'), originalSession);
     assert.equal(originalSession.dataset.preview, preview);
-    assert.equal(h.doc.getElementById('active-section'), activeSection);
+    assert.equal(h.doc.querySelector('.home-tasks'), activeSection);
     assert.equal(activeSection.innerHTML, activeHtml);
     assert.equal(h.doc.getElementById('devices-section'), devicesSection);
     assert.deepEqual([...h.doc.querySelectorAll('.recent-project-name')].map(el => el.textContent),
       ['Project 0', 'Project 1', 'Project 2', 'Project 3', 'Project 4', 'Project 7', 'Project 6', 'Project 5']);
     assert.equal(h.doc.getElementById('recent-projects-footer'), null);
-    const folded = [...h.doc.querySelectorAll('.recent-project-toggle')].find(el => el.dataset.homeToggle === foldKey);
-    assert.equal(folded.getAttribute('aria-expanded'), 'false');
     assert.deepEqual({ ...h.win.__homeActiveParams() }, { allProjects: true });
     const cached = JSON.parse(h.win.localStorage.getItem('apeek_home_cache')).active;
     assert.equal(cached.recentProjects.length, 8);
@@ -389,7 +411,7 @@ test('Show more appends unseen projects without replacing existing projects, ses
     await h.win.__loadHome(Promise.resolve(complete), Promise.resolve(devices));
     assert.equal(h.doc.querySelector('.recent-project-name').textContent, 'Project 7',
       'a normal refresh still applies the latest ordering');
-    assert.match(h.doc.getElementById('active-section').textContent, /Updated active session/);
+    assert.match(h.doc.querySelector('.home-tasks').textContent, /Updated active session/);
   } finally { h.win.close(); }
 });
 
@@ -462,7 +484,7 @@ test('Show more deduplicates by device and project and adds no more than ten pro
     h.win.api = async () => expanded;
     h.doc.querySelector('[data-show-more-projects]').click();
     await h.win.__homeLoadPromise;
-    const links = [...h.doc.querySelectorAll('.recent-project-link')];
+    const links = [...h.doc.querySelectorAll('a.recent-project')];
     const keys = links.map(el => JSON.stringify([el.dataset.device, el.dataset.phash]));
     assert.equal(links.length, 15);
     assert.equal(new Set(keys).size, 15);

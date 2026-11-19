@@ -281,7 +281,7 @@
         canvas.width = Math.max(1, Math.round(view.w * scale));
         canvas.height = Math.max(1, Math.round(view.h * scale));
         var ctx = canvas.getContext('2d');
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim() || '#0d1117';
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim() || '#181818';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         try {

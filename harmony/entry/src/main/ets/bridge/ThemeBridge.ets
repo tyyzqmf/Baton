@@ -7,7 +7,7 @@ import { window } from '@kit.ArkUI';
 // the choice so the next cold start opens in it.
 
 // --canvas in web/css/themes/dark.css and light.css.
-const CANVAS_DARK: string = '#0D1117';
+const CANVAS_DARK: string = '#181818';
 const CANVAS_LIGHT: string = '#FFFFFF';
 
 export class Appearance {

@@ -10,11 +10,11 @@ const selector = '.codex-visualization[data-visualization-path]';
 const maxDocuments = 12;
 const maxBytes = 1024 * 1024;
 const themeProperties = {
-  '--color-text-primary': 'light-dark(#24292f,#e6edf3)',
-  '--color-text-secondary': 'light-dark(#656d76,#8b949e)',
-  '--color-background-primary': 'light-dark(#fff,#0d1117)',
-  '--color-background-secondary': 'light-dark(#f6f8fa,#161b22)',
-  '--color-border-primary': 'light-dark(#d0d7de,#30363d)',
+  '--color-text-primary': 'light-dark(#0d0d0d,#ececec)',
+  '--color-text-secondary': 'light-dark(#6b6b6b,#a3a3a3)',
+  '--color-background-primary': 'light-dark(#fff,#181818)',
+  '--color-background-secondary': 'light-dark(#f7f7f7,#212121)',
+  '--color-border-primary': 'light-dark(#e5e5e5,#2e2e2e)',
   '--font-sans': 'system-ui,sans-serif',
   '--font-mono': 'ui-monospace,monospace',
 };

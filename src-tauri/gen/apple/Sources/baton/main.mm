@@ -35,7 +35,7 @@ static UIColor *baton_appearance_color(NSString *name, NSString *fallback) {
         BOOL canvas = [name isEqual:@"canvas"];
         return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
             BOOL dark = traits.userInterfaceStyle == UIUserInterfaceStyleDark;
-            return baton_hex_color(canvas ? (dark ? @"#0d1117" : @"#ffffff") : (dark ? @"#161b22" : @"#f6f8fa"));
+            return baton_hex_color(canvas ? (dark ? @"#181818" : @"#ffffff") : (dark ? @"#181818" : @"#ffffff"));
         }];
     }
     NSString *hex = baton_saved_appearance()[name] ?: fallback;
@@ -47,7 +47,7 @@ static void baton_apply_appearance(UIWindow *window) {
     NSString *preference = baton_preference();
     window.overrideUserInterfaceStyle = [preference isEqual:@"system"] ? UIUserInterfaceStyleUnspecified
         : [preference isEqual:@"light"] ? UIUserInterfaceStyleLight : UIUserInterfaceStyleDark;
-    window.backgroundColor = baton_appearance_color(@"canvas", @"#0d1117");
+    window.backgroundColor = baton_appearance_color(@"canvas", @"#181818");
     [window.rootViewController setNeedsStatusBarAppearanceUpdate];
 }
 
@@ -152,7 +152,7 @@ static void baton_sync_launch_snapshots(void) {
     baton_sync_launch_snapshots();
     UIWindow *window = message.webView.window;
     baton_apply_appearance(window);
-    UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
+    UIColor *background = baton_appearance_color(@"canvas", @"#181818");
     message.webView.backgroundColor = background;
     message.webView.scrollView.backgroundColor = background;
     message.webView.scrollView.indicatorStyle = [baton_preference() isEqual:@"system"] ? UIScrollViewIndicatorStyleDefault
@@ -170,7 +170,7 @@ static void baton_install_appearance_bridge(WKWebView *webview) {
     NSString *script = [NSString stringWithFormat:@"window.__BATON_NATIVE_THEME__='%@';", baton_preference()];
     [webview.configuration.userContentController addUserScript:[[WKUserScript alloc]
         initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
-    UIColor *background = baton_appearance_color(@"canvas", @"#0d1117");
+    UIColor *background = baton_appearance_color(@"canvas", @"#181818");
     webview.backgroundColor = background;
     webview.scrollView.backgroundColor = background;
     [webview evaluateJavaScript:[script stringByAppendingString:
@@ -603,7 +603,7 @@ static void baton_attach_skeleton_overlay(UIWindow *kw) {
 
     UIViewController *skeletonController = [UIViewController new];
     UIView *skel = [[UIView alloc] initWithFrame:hostView.bounds];
-    skel.backgroundColor = baton_appearance_color(@"surface", @"#161b22");
+    skel.backgroundColor = baton_appearance_color(@"surface", @"#181818");
     skel.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     skeletonController.view = skel;

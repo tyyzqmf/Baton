@@ -268,7 +268,7 @@
       + '<button type="button" onclick="switchClaudeStatsView(this,\'models\')">Models</button></div>'
       + '<div class="cc-range-tabs">' + ranges.map(function (range, index) {
         return '<button class="' + (index === 0 ? 'active' : '') + '" type="button" data-range="'
-          + esc(range.key) + '" onclick="switchClaudeStatsRange(this,\'' + esc(range.key) + '\')">'
+          + esc(range.key) + '" onclick="switchClaudeStatsRange(this,this.dataset.range)">'
           + esc(range.label) + '</button>';
       }).join('') + '</div></div>'
       + '<div class="cc-stats-ranges">' + ranges.map(function (range, index) {

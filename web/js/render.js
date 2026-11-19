@@ -19,6 +19,11 @@ import { systemEventId } from './timeline.js';
     classPrefix: 'codex-called',
   });
   window.registerToolRunGroup({
+    kind: 'claude-explore',
+    itemClass: 'claude-explore',
+    classPrefix: 'claude-explore',
+  });
+  window.registerToolRunGroup({
     kind: 'claude-bash',
     itemClass: 'claude-bash',
     classPrefix: 'claude-bash',
@@ -159,6 +164,7 @@ import { systemEventId } from './timeline.js';
           toolDetails: !!window._lastToolHasDetails,
           html,
           toolId: block.id,
+          toolName: block.name || '',
           codexCalled,
           codexExplore,
           codexRan: runtime === 'codex'
@@ -166,6 +172,7 @@ import { systemEventId } from './timeline.js';
             && !codexCalled
             && !codexExplore,
           claudeBash: runtime === 'claude' && block.name === 'Bash',
+          claudeExplore: runtime === 'claude' && !!window.isClaudeExploreTool?.(block),
           codexWait: emptyTerminalWait,
           codexProcessId: String(result?.codexProcessId || block.input?.session_id || ''),
           codexBackgroundComplete: result?.codexBackground === 'complete',
@@ -218,6 +225,7 @@ import { systemEventId } from './timeline.js';
       if (item.codexRan) cls += ' codex-ran';
       if (item.codexCalled) cls += ' codex-called';
       if (item.claudeBash) cls += ' claude-bash';
+      if (item.claudeExplore) cls += ' claude-explore';
       if (item.codexWait) cls += ' codex-terminal-wait';
       if (item.codexBackgroundComplete) cls += ' codex-background-complete';
       if (item.state) cls += ' ' + item.state;
@@ -227,7 +235,8 @@ import { systemEventId } from './timeline.js';
     if (item.type === 'interrupt') cls += ' msg-interrupt';
     if (item.type === 'summary') cls += ' summary-tl';
     if (item.type === 'panel') cls += ' command-panel-tl';
-    const toolAttr = item.toolId ? ` data-tool-id="${escapeAttribute(item.toolId)}"` : '';
+    const toolAttr = (item.toolId ? ` data-tool-id="${escapeAttribute(item.toolId)}"` : '')
+      + (item.toolName ? ` data-tool-name="${escapeAttribute(item.toolName)}"` : '');
     const messageAttr = item.messageId ? ` data-message-id="${escapeAttribute(item.messageId)}"` : '';
     const nativeAttr = item.nativeId ? ` data-native-id="${escapeAttribute(item.nativeId)}"` : '';
     const processAttr = item.codexProcessId ? ` data-codex-process="${escapeAttribute(item.codexProcessId)}"` : '';

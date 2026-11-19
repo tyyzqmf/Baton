@@ -1,15 +1,14 @@
 // Skeleton loading placeholders
 
 function skeletonCards(n) {
-  var cards = '';
+  var rows = '';
   for (var i = 0; i < n; i++) {
-    cards += '<div class="active-card skeleton-card">'
-      + '<div class="card-header"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="card-title"><span class="skel skel-w80 skel-h14"></span></div>'
-      + '<div class="card-bottom"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
-      + '</div>';
+    rows += '<div class="task-row skeleton-row"><span class="task-status"></span>'
+      + '<span class="task-main"><span class="task-title"><span class="skel skel-w60 skel-h14"></span></span>'
+      + '<span class="task-meta"><span class="skel skel-w40"></span></span></span>'
+      + '<span class="task-side"><span class="skel skel-w16"></span></span></div>';
   }
-  return cards;
+  return rows;
 }
 
 function skeletonMessages() {

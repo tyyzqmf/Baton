@@ -38,3 +38,12 @@ export const CLOSE_ICON_SVG = '<svg class="file-modal-close-icon" viewBox="0 0 2
   + '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
 export const CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"'
   + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+export const NEW_CHAT_ICON_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none"'
+  + ' stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+export const NEW_PROJECT_ICON_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none"'
+  + ' stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M12 11v6M9 14h6"/></svg>';
+export const PIN_ICON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none"'
+  + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M9 4h6l-1 5 4 4H6l4-4Z"/><path d="M12 13v7"/></svg>';

@@ -12,6 +12,7 @@
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon.svg" media="(prefers-color-scheme: light)">
 <link rel="icon" type="image/svg+xml" href="assets/baton-app-icon-light.svg" media="(prefers-color-scheme: dark)">
 <script>
+  try { if (localStorage.getItem('baton-sidebar-collapsed') === '1') document.documentElement.classList.add('sidebar-collapsed'); } catch (e) {}
   if (sessionStorage.getItem('baton-returning-home') === '1') {
     window.__returningHome = true;
     document.documentElement.classList.add('returning-home');
@@ -24,7 +25,7 @@
 <!-- Critical CSS inline — prevents FOUC before bundled CSS loads (mobile webview cold start) -->
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{background:var(--canvas);color:var(--text-primary);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px}
+  html,body{background:var(--canvas);color:var(--text-primary);font-family:var(--font-ui);font-size:14px}
   html,body{height:100%;overflow:clip}
   body{display:flex;flex-direction:column;position:fixed;width:100%;top:0;left:0;bottom:0}
   .top-bar{display:flex;justify-content:space-between;align-items:center;padding:6px 8px 6px 12px;padding-top:max(var(--sat,env(safe-area-inset-top)),6px);background:var(--surface-elevated);border-bottom:1px solid var(--border);flex-shrink:0}
@@ -71,6 +72,8 @@
   body.browse-view #content{overflow-y:scroll;scrollbar-gutter:stable}
 </style>
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/shell.css">
+<link rel="stylesheet" href="css/thread.css">
 <!-- Inline shell: auth guard + parallel fetch (devices + active-sessions) + first paint.
      Runs before entry-index.js so the network request flies out at HTML parse time.
      entry-index.js loads in parallel (browser default for type=module) and takes over interactivity. -->
@@ -100,7 +103,6 @@
   var recentProjectsCollapsed = false;
   var devicesCollapsed = false;
   var collapsedRecentProjects = new Set();
-  var recentTimeObserver = null;
   var allRecentProjects = false;
   var loadingRecentProjects = false;
   var homeActiveData = null;
@@ -114,6 +116,7 @@
   }
   function writeCache(active, devices) {
     try { localStorage.setItem(CACHE_KEY, JSON.stringify({ active: active, devices: devices, cachedAt: Date.now() })); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('baton:home-data', { detail: { active: active, devices: devices } })); } catch (e) {}
   }
   // Shared top-right activity indicator for all cached list refreshes.
   function setSync(syncing) {
@@ -235,37 +238,128 @@
       + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(runtimeIconSource(runtime)) + '" alt="" aria-hidden="true"></span>';
   }
 
-  function fitRecentTimeColumn() {
-    if (recentTimeObserver) recentTimeObserver.disconnect();
-    var section = document.getElementById('recent-projects-section');
-    if (!section) return;
-    var previous = section.querySelector('.recent-time-measure');
-    if (previous) previous.remove();
-    var labels = section.querySelectorAll('.recent-session-time-short');
-    if (!labels.length) return;
-    // Measure every loaded label, including folded projects, using the same
-    // font as the visible times. One shared width keeps runtime icons aligned.
-    var measure = document.createElement('span');
-    measure.className = 'recent-session-time recent-time-measure';
-    measure.setAttribute('aria-hidden', 'true');
-    labels.forEach(function (label) {
-      var sample = document.createElement('span');
-      sample.textContent = label.textContent;
-      measure.appendChild(sample);
+  // Home tabs (Tasks / Approve / Review), host filter and local pins.
+  var HOME_TABS = ['tasks', 'approve', 'review'];
+  var homeTab = sessionStorage.getItem('baton-home-tab');
+  if (HOME_TABS.indexOf(homeTab) < 0) homeTab = 'tasks';
+  var homeHost = sessionStorage.getItem('baton-home-host') || '';
+  var collapseIcon = '<svg class="collapse-arrow" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>';
+  var chevronIcon = '<svg class="row-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>';
+  var folderIcon = '<svg class="recent-project-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<g class="recent-folder-closed"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></g></svg>';
+  var reviewIcon = '<svg class="recent-project-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<circle cx="6" cy="6" r="2.25"/><circle cx="6" cy="18" r="2.25"/><circle cx="18" cy="8" r="2.25"/><path d="M6 8.25v7.5M18 10.25c0 4-4 4.5-9.5 6"/></svg>';
+
+  function readPins() {
+    try {
+      var pins = JSON.parse(localStorage.getItem('baton-pins') || '[]');
+      return Array.isArray(pins) ? pins.filter(function (pin) {
+        return pin && pin.sessionId && pin.deviceName && pin.projectHash;
+      }) : [];
+    } catch (e) { return []; }
+  }
+  window.__readPins = readPins;
+
+  function deviceLabel(deviceName) {
+    return (window.__deviceDisplayNames || {})[deviceName] || deviceName;
+  }
+  function compactAgo(iso) {
+    var elapsed = timeAgo(iso);
+    return elapsed === 'just now' ? 'now' : elapsed.replace(' ago', '');
+  }
+  function statusKey(status) {
+    return status === 'running' ? 'running' : status === 'needs_input' ? 'needs-input' : 'done';
+  }
+  function statusText(status) {
+    return status === 'running' ? 'Running' : status === 'needs_input' ? 'Needs input' : 'Done';
+  }
+  function sessionKey(s) { return JSON.stringify([s.deviceName, s.sessionId]); }
+  function timeValue(iso) { return Date.parse(iso || '') || 0; }
+
+  // Active sessions are authoritative for running/needs input; recent project rows fill in the rest.
+  function homeTasks(activeData) {
+    var byKey = {};
+    var list = [];
+    function add(s) {
+      if (!s || !s.sessionId || !s.deviceName || byKey[sessionKey(s)]) return;
+      byKey[sessionKey(s)] = s;
+      list.push(s);
+    }
+    ((activeData && activeData.sessions) || []).forEach(add);
+    ((activeData && activeData.recentProjects) || []).forEach(function (project) {
+      (project.sessions || []).forEach(function (s) {
+        add(Object.assign({ deviceName: project.deviceName, projectHash: project.projectHash, projectName: project.projectName }, s));
+      });
     });
-    section.appendChild(measure);
-    function updateWidth() {
-      var width = Math.ceil(measure.getBoundingClientRect().width);
-      if (width > 0) section.style.setProperty('--recent-time-width', width + 'px');
+    list.sort(function (a, b) { return timeValue(b.lastActive) - timeValue(a.lastActive); });
+    return { list: list, byKey: byKey };
+  }
+  window.__homeTasks = function () { return homeTasks(homeActiveData || (readCache() || {}).active); };
+
+  function taskRowHtml(s) {
+    var title = s.isAgent && s.agentName ? s.agentName : attachmentPreviewText(s.preview || 'No preview');
+    var href = '#/' + encodeURIComponent(s.deviceName) + '/' + encodeURIComponent(s.projectHash) + '/' + encodeURIComponent(s.sessionId);
+    var agentCount = Math.max(0, Number(s.agentCount) || 0);
+    var meta = '<span class="task-project">' + esc(s.projectName || s.projectHash) + '</span>'
+      + '<span class="task-device">' + esc(deviceLabel(s.deviceName)) + '</span>'
+      + (agentCount ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>'
+        : s.isAgent ? '<span class="badge agent">Agent</span>' : '');
+    var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
+    return '<a class="task-row task-' + statusKey(s.status) + '" href="' + esc(href) + '" data-nav="active"'
+      + ' data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '"'
+      + ' data-device="' + esc(s.deviceName) + '" data-phash="' + esc(s.projectHash) + '"'
+      + ' data-pname="' + esc(s.projectName || s.projectHash) + '" data-isagent="' + (s.isAgent ? 'true' : '') + '"'
+      + ' title="' + esc(title + (detail ? '\n' + detail : '')) + '">'
+      + '<span class="task-status" role="img" aria-label="' + statusText(s.status) + '"></span>'
+      + '<span class="task-main"><span class="task-title">' + esc(title) + '</span>'
+      + '<span class="task-meta">' + meta + '</span>'
+      + (detail ? '<span class="task-detail">' + esc(detail) + '</span>' : '') + '</span>'
+      + '<span class="task-side">' + runtimeIcon(s) + '<time class="task-time" datetime="' + esc(s.lastActive || '') + '"'
+      + ' aria-label="' + esc(timeAgo(s.lastActive)) + '">' + compactAgo(s.lastActive) + '</time></span></a>';
+  }
+
+  function taskGroupHtml(label, rows) {
+    return '<div class="home-group"><h2 class="home-group-title">' + label + '</h2>'
+      + '<div class="home-group-rows">' + rows.map(taskRowHtml).join('') + '</div></div>';
+  }
+
+  function tasksHtml(tasks, matchesHost) {
+    var pinnedKeys = {};
+    var pinned = readPins().filter(matchesHost).map(function (pin) {
+      pinnedKeys[sessionKey(pin)] = true;
+      return tasks.byKey[sessionKey(pin)] || pin;
+    });
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    var groups = { Today: [], Yesterday: [], Earlier: [] };
+    tasks.list.filter(function (s) { return matchesHost(s) && !pinnedKeys[sessionKey(s)]; }).slice(0, 40)
+      .forEach(function (s) {
+        var time = timeValue(s.lastActive);
+        groups[time >= today.getTime() ? 'Today' : time >= yesterday.getTime() ? 'Yesterday' : 'Earlier'].push(s);
+      });
+    var html = pinned.length ? taskGroupHtml('Pinned', pinned) : '';
+    ['Today', 'Yesterday', 'Earlier'].forEach(function (label) {
+      if (groups[label].length) html += taskGroupHtml(label, groups[label]);
+    });
+    return '<section class="home-tasks" aria-label="Sessions">'
+      + (html || '<p class="home-empty">No sessions yet</p>') + '</section>';
+  }
+
+  function hostChipsHtml(devs) {
+    if (devs.length < 2) return '';
+    function chip(name, label, online) {
+      var active = homeHost === name;
+      return '<button class="host-chip' + (active ? ' active' : '') + '" type="button" data-host="' + esc(name) + '" aria-pressed="' + active + '">'
+        + (name ? '<span class="device-dot ' + (online ? 'online' : 'offline') + '"></span>' : '') + esc(label) + '</button>';
     }
-    updateWidth();
-    if (window.ResizeObserver) {
-      recentTimeObserver = new ResizeObserver(updateWidth);
-      recentTimeObserver.observe(measure);
-    }
+    return '<div class="home-hosts" role="group" aria-label="Devices">' + chip('', 'All', true)
+      + devs.map(function (d) { return chip(d.deviceName, d.deviceDisplayName || d.deviceName, d.online); }).join('') + '</div>';
   }
 
   function moreProjectsControl() {
+
     return '<button class="recent-projects-show-more' + (loadingRecentProjects ? ' recent-projects-loading' : '')
       + '" type="button" data-show-more-projects' + (loadingRecentProjects ? ' disabled aria-busy="true"' : '') + '>'
       + (loadingRecentProjects ? 'Loading…' : 'Show more') + '</button>';
@@ -340,6 +434,13 @@
         else collapsedRecentProjects.add(key);
         return;
       }
+      var host = e.target.closest('[data-host]');
+      if (host) {
+        homeHost = host.dataset.host || '';
+        try { sessionStorage.setItem('baton-home-host', homeHost); } catch (err) {}
+        renderInline(homeActiveData || {}, homeDeviceData || { devices: [] });
+        return;
+      }
       var t = e.target.closest('[data-nav]');
       if (!t || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button > 0) return;
       e.preventDefault();
@@ -348,13 +449,61 @@
         if (act === 'device' && typeof window.loadProjects === 'function') window.loadProjects(t.dataset.name);
         else if (act === 'project' && typeof window.loadSessions === 'function') window.loadSessions(t.dataset.device, t.dataset.phash, t.dataset.pname);
         else if (act === 'active' && typeof window.openActiveSession === 'function') window.openActiveSession(t);
+        else if (act === 'review' && typeof window.openProjectReview === 'function') window.openProjectReview(t.dataset.device, t.dataset.phash, t.dataset.pname);
       };
       if (typeof window.loadProjects === 'function') run();
       else (window.__navQueue = window.__navQueue || []).push(run);
     });
   }
 
+  function bindTabBar() {
+    var bar = document.getElementById('tab-bar');
+    if (!bar || bar.__bound) return;
+    bar.__bound = true;
+    bar.addEventListener('click', function (e) {
+      var tab = e.target.closest('[data-home-tab]');
+      if (tab) { setHomeTab(tab.dataset.homeTab); return; }
+      if (!e.target.closest('[data-home-new]')) return;
+      var run = function () { window.openNewTaskSheet(); };
+      if (typeof window.openNewTaskSheet === 'function') run();
+      else (window.__navQueue = window.__navQueue || []).push(run);
+    });
+  }
+
+  function updateTabBar(tasks) {
+    var bar = document.getElementById('tab-bar');
+    if (!bar) return;
+    bindTabBar();
+    var waiting = tasks.list.filter(function (s) { return s.status === 'needs_input'; }).length;
+    bar.querySelectorAll('[data-home-tab]').forEach(function (tab) {
+      var active = tab.dataset.homeTab === homeTab;
+      tab.classList.toggle('active', active);
+      if (active) tab.setAttribute('aria-current', 'page');
+      else tab.removeAttribute('aria-current');
+    });
+    var badge = bar.querySelector('.tab-bar-badge');
+    if (badge) {
+      badge.textContent = waiting > 9 ? '9+' : String(waiting);
+      badge.hidden = !waiting;
+    }
+  }
+
+  function setHomeTab(tab) {
+    homeTab = HOME_TABS.indexOf(tab) < 0 ? 'tasks' : tab;
+    try { sessionStorage.setItem('baton-home-tab', homeTab); } catch (e) {}
+    if (!document.body.classList.contains('view-home') || !(homeActiveData || homeDeviceData)) return;
+    renderInline(homeActiveData || {}, homeDeviceData || { devices: [] });
+    var content = document.getElementById('content');
+    if (content) content.scrollTop = 0;
+  }
+  window.__setHomeTab = setHomeTab;
+  window.__homeTab = function () { return homeTab; };
+  window.__homeProjects = function () {
+    return (homeActiveData && homeActiveData.recentProjects) || ((readCache() || {}).active || {}).recentProjects || [];
+  };
+
   function restoreReturningHomePreview(snapshot) {
+
     var returningFromSettings = !snapshot;
     if (returningFromSettings) {
       if (!window.__returningHome) return false;
@@ -379,7 +528,8 @@
       image.src = runtimeIconSource(image.closest('.runtime-mark-codex') ? 'codex' : 'claude');
     });
     content.replaceChildren(preview.content);
-    fitRecentTimeColumn();
+    document.body.classList.add('view-home');
+    updateTabBar(homeTasks(homeActiveData || (readCache() || {}).active));
     content.scrollTop = snapshot.scrollTop || 0;
     if (returningFromSettings) sessionStorage.removeItem('baton-page-preview');
     bindHomeNavigation(content);
@@ -391,41 +541,26 @@
   }
   window.__restoreHomePreview = restoreReturningHomePreview;
 
-  function recentProjectHtml(project, index) {
-    var folderIcon = '<svg class="recent-project-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-      + '<g class="recent-folder-closed"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></g>'
-      + '<g class="recent-folder-open"><path d="M3 18V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1"/>'
-      + '<path d="M3 18 6 10.5Q6.6 9 8 9h11q2 0 2 2l-2 7.5Q18.5 20 17 20H5q-2 0-2-2Z"/></g></svg>';
-    var arrowIcon = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>';
-    var deviceLabel = (window.__deviceDisplayNames || {})[project.deviceName] || project.deviceName;
-    var projectHref = '#/' + encodeURIComponent(project.deviceName) + '/' + encodeURIComponent(project.projectHash);
-    var projectData = ' data-device="' + esc(project.deviceName) + '" data-phash="' + esc(project.projectHash) + '" data-pname="' + esc(project.projectName) + '"';
-    var projectKey = JSON.stringify([project.deviceName, project.projectHash]);
-    var collapsed = collapsedRecentProjects.has(projectKey);
-    var panelId = 'recent-project-sessions-' + index;
-    return '<section class="recent-project" aria-labelledby="recent-project-name-' + index + '">'
-      + '<div class="recent-project-header">'
-      + '<button class="recent-project-toggle" type="button" data-home-toggle="' + esc(projectKey) + '" aria-expanded="' + !collapsed + '" aria-controls="' + panelId + '">'
-      + folderIcon + '<span class="recent-project-context"><span class="recent-project-name" id="recent-project-name-' + index + '" title="' + esc(project.projectName) + '">' + esc(project.projectName) + '</span>'
-      + '<span class="recent-project-device" title="' + esc(deviceLabel) + '">' + esc(deviceLabel) + '</span></span></button>'
-      + '<a class="recent-project-link" href="' + esc(projectHref) + '" data-nav="project"' + projectData + '>'
-      + '<span class="recent-project-more">View all</span>' + arrowIcon + '</a></div>'
-      + '<div class="recent-project-sessions" id="' + panelId + '"' + (collapsed ? ' hidden' : '') + '>' + project.sessions.map(function (s) {
-        var title = s.isAgent && s.agentName ? s.agentName : attachmentPreviewText(s.preview || 'No preview');
-        var detail = s.status === 'needs_input' && s.agentDetail ? '\n' + s.agentDetail : '';
-        var label = s.status === 'running' ? 'Running' : s.status === 'needs_input' ? 'Needs input' : 'Done';
-        var statusClass = s.status === 'running' ? 'running' : s.status === 'needs_input' ? 'idle' : 'stopped';
-        var elapsed = timeAgo(s.lastActive);
-        var compactElapsed = elapsed === 'just now' ? 'now' : elapsed.replace(' ago', '');
-        return '<a class="recent-session" href="' + esc(projectHref + '/' + encodeURIComponent(s.sessionId)) + '" data-nav="active"' + projectData
-          + ' data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-isagent="' + (s.isAgent ? 'true' : '') + '"'
-          + ' title="' + esc(title + detail) + '">'
-          + '<span class="recent-session-title">' + esc(title) + '</span>'
-          + '<span class="session-badges"><span class="badge recent-session-status ' + statusClass + '">' + label + '</span>'
-          + runtimeIcon(s) + '</span><time class="recent-session-time" datetime="' + esc(s.lastActive) + '" aria-label="' + esc(elapsed) + '">'
-          + '<span class="recent-session-time-full">' + elapsed + '</span>'
-          + '<span class="recent-session-time-short" aria-hidden="true">' + compactElapsed + '</span></time></a>';
-      }).join('') + '</div></section>';
+  function recentProjectHtml(project, index, review) {
+    var href = '#/' + encodeURIComponent(project.deviceName) + '/' + encodeURIComponent(project.projectHash);
+    var latest = '';
+    var running = 0;
+    var waiting = 0;
+    (project.sessions || []).forEach(function (s) {
+      if (timeValue(s.lastActive) > timeValue(latest)) latest = s.lastActive;
+      if (s.status === 'running') running++;
+      else if (s.status === 'needs_input') waiting++;
+    });
+    var status = waiting ? '<span class="project-status needs-input" role="img" aria-label="' + waiting + ' needs input"></span>'
+      : running ? '<span class="project-status running" role="img" aria-label="' + running + ' running"></span>' : '';
+    return '<a class="recent-project' + (review ? ' review-project' : '') + '"' + (review ? '' : ' id="recent-project-' + index + '"')
+      + ' href="' + esc(href) + '" data-nav="' + (review ? 'review' : 'project') + '" data-device="' + esc(project.deviceName) + '"'
+      + ' data-phash="' + esc(project.projectHash) + '" data-pname="' + esc(project.projectName) + '" title="' + esc(project.projectName) + '">'
+      + (review ? reviewIcon : folderIcon)
+      + '<span class="recent-project-context"><span class="recent-project-name">' + esc(project.projectName) + '</span>'
+      + '<span class="recent-project-device">' + esc(deviceLabel(project.deviceName)) + '</span></span>'
+      + status + (latest ? '<time class="recent-project-time" datetime="' + esc(latest) + '">' + compactAgo(latest) + '</time>' : '')
+      + chevronIcon + '</a>';
   }
 
   function appendRecentProjects(fresh) {
@@ -444,10 +579,9 @@
     });
     var keepScroll = content.scrollTop;
     footer.insertAdjacentHTML('beforebegin', added.map(function (p, i) {
-      return recentProjectHtml(p, existing.length + i);
+      return !homeHost || p.deviceName === homeHost ? recentProjectHtml(p, existing.length + i) : '';
     }).join(''));
     footer.remove();
-    fitRecentTimeColumn();
     content.scrollTop = keepScroll;
     // Cache exactly what remains displayed; a normal home refresh replaces it
     // with current activity and the latest project ordering.
@@ -455,6 +589,57 @@
       recentProjects: existing.concat(added), hasMoreProjects: false,
     });
     return homeActiveData;
+  }
+
+  function projectsSectionHtml(projects, hasMore, matchesHost) {
+    return '<section id="recent-projects-section" aria-labelledby="recent-projects-heading">'
+      + '<h2 class="section-title home-section-heading" id="recent-projects-heading">'
+      + '<button class="home-section-toggle recent-projects-toggle" type="button" data-home-toggle="recent-projects" aria-expanded="' + !recentProjectsCollapsed + '" aria-controls="recent-project-list">'
+      + 'Projects' + collapseIcon + '</button></h2>'
+      + '<div class="recent-project-list" id="recent-project-list"' + (recentProjectsCollapsed ? ' hidden' : '') + '>'
+      + projects.map(function (p, i) { return matchesHost(p) ? recentProjectHtml(p, i) : ''; }).join('')
+      + (projects.length ? '' : '<p class="recent-projects-empty">No recent sessions yet</p>')
+      + (hasMore ? '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl() + '</div>' : '')
+      + '</div></section>';
+  }
+
+  function devicesHtml(devs) {
+    if (!devs.length) return '';
+    return '<section class="home-devices" aria-labelledby="devices-heading">'
+      + '<h2 class="section-title home-section-heading" id="devices-heading">'
+      + '<button class="home-section-toggle devices-toggle" type="button" data-home-toggle="devices" aria-expanded="' + !devicesCollapsed + '" aria-controls="devices-section">'
+      + 'Devices' + collapseIcon + '</button></h2>'
+      + '<div id="devices-section" class="home-device-list"' + (devicesCollapsed ? ' hidden' : '') + '>'
+      + devs.map(function (d) {
+        var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
+        return '<a class="item device-item device-card" href="#/' + esc(encodeURIComponent(d.deviceName)) + '" data-nav="device" data-name="' + esc(d.deviceName) + '">'
+          + '<div class="item-top"><span class="device-dot ' + (d.online ? 'online' : 'offline') + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
+          + '</a>';
+      }).join('') + '</div></section>';
+  }
+
+  function homeViewHeading(title, hint) {
+    return '<div class="home-view-heading"><h2 class="home-view-title" id="home-view-title">' + title + '</h2>'
+      + '<p class="home-view-hint">' + hint + '</p></div>';
+  }
+
+  function approveHtml(tasks, matchesHost) {
+    var rows = tasks.list.filter(function (s) { return s.status === 'needs_input' && matchesHost(s); });
+    return '<section class="home-tasks home-approve" aria-labelledby="home-view-title">'
+      + homeViewHeading('Needs input', 'Sessions waiting for an approval or an answer.')
+      + (rows.length ? '<div class="home-group-rows">' + rows.map(taskRowHtml).join('') + '</div>'
+        : '<p class="home-empty">Nothing needs your input.</p>')
+      + '</section>';
+  }
+
+  function reviewHtml(projects, matchesHost) {
+    var rows = projects.filter(matchesHost);
+    return '<section class="home-review" aria-labelledby="home-view-title">'
+      + homeViewHeading('Review', 'Open a project’s Git changes.')
+      + (rows.length ? '<div class="home-group-rows">' + rows.map(function (p, i) { return recentProjectHtml(p, i, true); }).join('') + '</div>'
+        : '<p class="home-empty">No recent projects.</p>')
+      + '</section>';
   }
 
   function renderInline(activeData, devData) {
@@ -468,75 +653,30 @@
       deviceDisplayNames[device.deviceName] = device.deviceDisplayName || device.deviceName;
     });
     window.__deviceDisplayNames = deviceDisplayNames;
-    var displayDeviceName = function (deviceName) {
-      return deviceDisplayNames[deviceName] || deviceName;
-    };
-    var html = '';
-    var collapseIcon = '<svg class="collapse-arrow" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>';
-    var actives = (activeData && activeData.sessions) || [];
-    if (actives.length) {
-      var activeCollapsible = actives.length > 10;
-      var activeCollapsed = activeCollapsible && sessionStorage.getItem('apeek_activeCollapsed') === '1';
-      html += '<div class="section-title active-section-heading' + (activeCollapsible ? ' collapsible' + (activeCollapsed ? '' : ' expanded') : '') + '"' + (activeCollapsible ? ' onclick="toggleActiveSessions()"' : '') + '>Active Sessions (' + actives.length + ')' + (activeCollapsible ? collapseIcon : '') + '</div>';
-      html += '<div id="active-section" class="active-grid" style="' + (activeCollapsed ? 'display:none' : '') + '">';
-      html += actives.map(function (s) {
-        var agentCount = Math.max(0, Number(s.agentCount) || 0);
-        var agentBadge = s.isAgent && !agentCount ? '<span class="badge agent">Agent</span>' : '';
-        var childAgentsBadge = agentCount ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>' : '';
-        var displayStatus = s.status;
-        var statusLabel = displayStatus === 'running' ? 'Running' : displayStatus === 'needs_input' ? 'Needs input' : 'Done';
-        var statusClass = displayStatus === 'running' ? 'running' : displayStatus === 'needs_input' ? 'idle' : 'stopped';
-        var title = s.isAgent && s.agentName ? s.agentName : attachmentPreviewText(s.preview || 'No preview');
-        var detail = s.status === 'needs_input' && s.agentDetail ? s.agentDetail : '';
-        return '<div class="active-card ' + esc(statusClass) + '"'
-          + ' data-nav="active"'
-          + ' data-sid="' + esc(s.sessionId) + '"'
-          + ' data-preview="' + esc(s.preview || '') + '"'
-          + ' data-device="' + esc(s.deviceName) + '"'
-          + ' data-phash="' + esc(s.projectHash) + '"'
-          + ' data-pname="' + esc(s.projectName) + '"'
-          + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + childAgentsBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span>' + runtimeIcon(s) + '</span></div>'
-          + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
-          + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
-          + '</div>';
-      }).join('');
-      html += '</div>';
-    }
+    if (homeHost && !devs.some(function (d) { return d.deviceName === homeHost; })) homeHost = '';
+    var matchesHost = function (item) { return !homeHost || item.deviceName === homeHost; };
     var recentProjects = activeData && activeData.recentProjects;
+    var hasMoreProjects = false;
     if (Array.isArray(recentProjects)) {
-      var hasMoreProjects = activeData.hasMoreProjects || (!allRecentProjects && recentProjects.length > 5);
+      hasMoreProjects = activeData.hasMoreProjects || (!allRecentProjects && recentProjects.length > 5);
       recentProjects = recentProjects.slice(0, allRecentProjects ? 15 : 5);
       homeActiveData = Object.assign({}, activeData, { recentProjects: recentProjects, hasMoreProjects: hasMoreProjects });
-      html += '<section id="recent-projects-section" aria-labelledby="recent-projects-heading">'
-        + '<h2 class="section-title home-section-heading" id="recent-projects-heading">'
-        + '<button class="home-section-toggle recent-projects-toggle" type="button" data-home-toggle="recent-projects" aria-expanded="' + !recentProjectsCollapsed + '" aria-controls="recent-project-list">'
-        + 'Recent Projects' + collapseIcon + '</button></h2>'
-        + '<div class="recent-project-list" id="recent-project-list"' + (recentProjectsCollapsed ? ' hidden' : '') + '>';
-      html += recentProjects.map(recentProjectHtml).join('');
-      if (!recentProjects.length) html += '<p class="recent-projects-empty">No recent sessions yet</p>';
-      if (hasMoreProjects) html += '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl() + '</div>';
-      html += '</div></section>';
     }
-    if (devs.length) {
-      html += '<section class="home-devices" aria-labelledby="devices-heading">'
-        + '<h2 class="section-title home-section-heading" id="devices-heading">'
-        + '<button class="home-section-toggle devices-toggle" type="button" data-home-toggle="devices" aria-expanded="' + !devicesCollapsed + '" aria-controls="devices-section">'
-        + 'Devices (' + devs.length + ')' + collapseIcon + '</button></h2>';
-      html += '<div id="devices-section" class="home-device-list"' + (devicesCollapsed ? ' hidden' : '') + '>';
-      html += devs.map(function (d) {
-        var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
-        var dotClass = d.online ? 'online' : 'offline';
-        return '<a class="item device-item device-card" href="#/' + esc(encodeURIComponent(d.deviceName)) + '" data-nav="device" data-name="' + esc(d.deviceName) + '">'
-          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
-          + '</a>';
-      }).join('');
-      html += '</div></section>';
+    var tasks = homeTasks(homeActiveData);
+    var html = '';
+    var heading = '';
+    if (homeTab === 'approve') html = approveHtml(tasks, matchesHost);
+    else if (homeTab === 'review') html = reviewHtml(recentProjects || [], matchesHost);
+    else if (devs.length || tasks.list.length || Array.isArray(recentProjects)) {
+      heading = '<div class="home-view-heading home-recents-heading"><h2 class="home-view-title">Recents</h2></div>';
+      html = tasksHtml(tasks, matchesHost)
+        + (Array.isArray(recentProjects) ? projectsSectionHtml(recentProjects, hasMoreProjects, matchesHost) : '')
+        + devicesHtml(devs.filter(matchesHost));
     }
     if (!html) html = '<div class="empty">No devices yet</div>';
-    content.innerHTML = html;
-    fitRecentTimeColumn();
+    content.innerHTML = heading + hostChipsHtml(devs) + html;
+    document.body.classList.add('view-home');
+    updateTabBar(tasks);
     if (window.__returningHome) document.body.classList.add('ready');
     bindHomeNavigation(content);
 
@@ -549,26 +689,19 @@
   }
 
   // Without cache, the Web skeleton mirrors the native launch layout.
-  function skelCard() {
-    return '<div class="active-card skeleton-card">'
-      + '<div class="card-header"><span class="skel skel-w40"></span><span class="skel skel-w16"></span></div>'
-      + '<div class="card-title"><span class="skel skel-w80 skel-h14"></span></div>'
-      + '<div class="card-bottom"><span class="skel skel-w24"></span><span class="skel skel-w16"></span></div>'
-      + '</div>';
+  function skelRow() {
+    return '<div class="task-row skeleton-row"><span class="task-status"></span>'
+      + '<span class="task-main"><span class="task-title"><span class="skel skel-w60 skel-h14"></span></span>'
+      + '<span class="task-meta"><span class="skel skel-w40"></span></span></span>'
+      + '<span class="task-side"><span class="skel skel-w16"></span></span></div>';
   }
   function renderSkeleton(force) {
     var content = document.getElementById('content');
     if (!content || (window.__inlineRendered && !force)) return;
-    content.innerHTML = '<div class="section-title active-section-heading">Active Sessions</div>'
-      + '<div id="active-section" class="active-grid">' + skelCard() + skelCard() + '</div>'
-      + '<div class="section-title home-section-heading"><div class="home-section-toggle recent-projects-toggle">Recent Projects</div></div>'
-      + '<div class="recent-project-list" aria-hidden="true"><div class="recent-project">'
-      + '<div class="recent-project-header"><div class="recent-project-toggle"><span class="skel skel-w40"></span></div></div>'
-      + '<div class="recent-session"><span class="skel skel-w60"></span></div>'
-      + '<div class="recent-session"><span class="skel skel-w40"></span></div>'
-      + '<div class="recent-session"><span class="skel skel-w80"></span></div>'
-      + '<div class="recent-session"><span class="skel skel-w60"></span></div>'
-      + '<div class="recent-session"><span class="skel skel-w40"></span></div></div></div>';
+    content.innerHTML = '<section class="home-tasks" aria-hidden="true"><div class="home-group">'
+      + '<h2 class="home-group-title">Today</h2><div class="home-group-rows">'
+      + skelRow() + skelRow() + skelRow() + skelRow() + skelRow() + '</div></div></section>';
+    document.body.classList.add('view-home');
     if (document.body) document.body.classList.add('ready');
     markFirstWebFrameReady();
   }
@@ -692,14 +825,25 @@
 <body>
 <script>if(/Mac/.test(navigator.platform)&&navigator.maxTouchPoints<2)document.body.classList.add('is-macos');</script>
 
+<!-- Sidebar (wide screens) -->
+<aside id="sidebar" class="sidebar" aria-label="Sidebar"></aside>
+
 <!-- Top bar -->
 <div class="top-bar" data-tauri-drag-region onclick="document.getElementById('content').scrollTo({top:0,behavior:'smooth'})">
-  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer"><span class="top-logo" aria-hidden="true"><img src="assets/baton-logo.svg" alt=""></span><span class="top-title">Baton</span></div>
+  <div class="top-left" onclick="event.stopPropagation();loadDevices();" style="cursor:pointer"><button class="top-back" type="button" aria-label="Back" title="Back" onclick="event.stopPropagation();navigateUp()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button><button class="top-sidebar-toggle" type="button" aria-label="Show sidebar" title="Show sidebar" onclick="event.stopPropagation();toggleSidebar(true)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/></svg></button><span class="top-logo" aria-hidden="true"><img src="assets/baton-logo.svg" alt=""></span><span class="top-title">Baton</span></div>
   <div id="top-right" onclick="event.stopPropagation()"><a href="setup.html" class="top-gear syncing" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a></div>
 </div>
 
 <!-- Breadcrumb -->
 <div id="breadcrumb" class="breadcrumb"></div>
+
+<!-- Phone tab bar (home views); CSS orders it below the content. -->
+<nav id="tab-bar" class="tab-bar" aria-label="Home">
+  <button class="tab-bar-item active" type="button" data-home-tab="tasks" aria-current="page"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg><span>Tasks</span></button>
+  <button class="tab-bar-item" type="button" data-home-tab="approve"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span>Approve</span><span class="tab-bar-badge" hidden></span></button>
+  <button class="tab-bar-item" type="button" data-home-tab="review"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.25"/><circle cx="6" cy="18" r="2.25"/><circle cx="18" cy="8" r="2.25"/><path d="M6 8.25v7.5M18 10.25c0 4-4 4.5-9.5 6"/></svg><span>Review</span></button>
+  <button class="tab-bar-new" type="button" data-home-new aria-label="New task" title="New task"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+</nav>
 
 <!-- Content area -->
 <div id="content"></div>
@@ -716,7 +860,7 @@
   <div class="input-row">
     <input type="file" id="img-picker" multiple style="display:none" onchange="onImagePicked(this)" />
     <button class="img-btn" onclick="openAttachmentPicker()" title="Add files"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-    <textarea id="msg-input" rows="1" placeholder="Send a message..." onpaste="onInputPaste(event)"></textarea>
+    <textarea id="msg-input" rows="1" placeholder="Ask anything" onpaste="onInputPaste(event)"></textarea>
     <button id="mic-btn" class="mic-btn" style="display:none" onclick="toggleDictation()" title="Voice input"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
     <button id="send-btn" disabled onclick="onSendBtnClick()"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
   </div>

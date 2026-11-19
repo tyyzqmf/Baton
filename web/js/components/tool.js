@@ -26,6 +26,37 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     Agent: 'Ran Agent',
     WriteStdin: 'Ran',
   };
+  // Claude tools use the same Codex activity verbs; explore tools group under "Explored".
+  const CLAUDE_TOOL_NAMES = {
+    Bash: 'Ran',
+    BashOutput: 'Read Output',
+    KillShell: 'Stopped',
+    Read: 'Explored',
+    Grep: 'Explored',
+    Glob: 'Explored',
+    LS: 'Explored',
+    Edit: 'Edited',
+    MultiEdit: 'Edited',
+    Write: 'Edited',
+    NotebookEdit: 'Edited',
+    TodoWrite: 'Updated Plan',
+    WebSearch: 'Searched the web',
+    WebFetch: 'Fetched',
+    Agent: 'Ran Agent',
+    Task: 'Ran Agent',
+  };
+  const CLAUDE_EXPLORE_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS']);
+  function claudeMcpName(name) {
+    const match = /^mcp__(.+?)__(.+)$/.exec(name || '');
+    return match ? match[1] + '.' + match[2] : '';
+  }
+  function claudeToolName(name) {
+    return claudeMcpName(name) ? 'Called' : CLAUDE_TOOL_NAMES[name] || name;
+  }
+  window.claudeToolName = claudeToolName;
+  window.isClaudeExploreTool = function (toolUse) {
+    return CLAUDE_EXPLORE_TOOLS.has(toolUse?.name);
+  };
   function esc(str) {
     if (!str) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -997,6 +1028,11 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       ? renderCodexMcp(input, toolResult)
       : (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
     if (runtime === 'codex') info.name = codexToolName(name, input, toolResult);
+    else {
+      info.name = claudeToolName(name);
+      if (name === 'Bash') info.desc = input.command || input.cmd || info.desc;
+      if (claudeMcpName(name)) info.desc = claudeMcpName(name);
+    }
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult, name);
 

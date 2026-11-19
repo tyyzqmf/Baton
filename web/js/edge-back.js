@@ -283,6 +283,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   function makeUnderlay(snapshot) {
     var layer = document.createElement('div');
     layer.className = 'edge-back-underlay';
+    if (snapshot.breadcrumbDisplay === 'none') layer.classList.add('edge-back-home');
 
     var topBar = document.createElement('div');
     topBar.className = 'top-bar';

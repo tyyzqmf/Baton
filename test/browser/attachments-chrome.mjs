@@ -203,7 +203,7 @@ try {
       && Number(pie.getAttribute('r'))+Number(pie.getAttribute('stroke-width'))/2
         < Number(ring.getAttribute('r'))-Number(ring.getAttribute('stroke-width'))/2
       && getComputedStyle(pie).stroke===getComputedStyle(ring).stroke
-      && getComputedStyle(ring).stroke==='rgb(201, 209, 217)';})()`), true);
+      && getComputedStyle(ring).stroke==='rgb(212, 212, 212)';})()`), true);
   await screenshot('mobile-upload-progress');
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
   await screenshot('mobile-upload-progress-3x');

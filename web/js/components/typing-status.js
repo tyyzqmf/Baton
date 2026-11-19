@@ -61,6 +61,7 @@ import { state } from '../state.js';
   };
 
   window.updateSpinner = function () {
+    window.syncTurnSummaries?.();
     var el = document.getElementById('cc-spinner');
     if (!state.appState.session) {
       clearTimeout(_hideTimer);

@@ -520,20 +520,93 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   (pool `control_request`, agent `blocked`, or terminal `AskUserQuestion`/`ExitPlanMode`).
 - `completed` → **Done** (grey, reuses `.badge.stopped`): turn finished / no process / stale.
   Also the fallback for legacy `idle`/`stopped`/unknown values.
-- Homepage: Active Sessions = running + needs_input (regular + agent); Completed Sessions =
-  20 most-recent completed of any type. Device/Project rows show `N running · N needs input`
-  (`needsInputCount`). `completed` is not shown on the device rows.
+- Home lists active and recent sessions together by time (Today / Yesterday / Earlier), each row with
+  its status glyph; Device/Project rows show `N running · N needs input` (`needsInputCount`).
+  `completed` is not shown on the device rows.
+
+## App Shell (Codex layout)
+
+- Wide screens (≥1024px) show `#sidebar` (`web/js/sidebar.js`): New chat, Search (⌘K/Ctrl K, only
+  sessions already loaded — there is no search API), Recents, Needs input, Pinned, recent projects with
+  their sessions (folds in sessionStorage `baton-sidebar-folded`), devices and Settings. It paints from the
+  home cache, takes fresh data from the inline loader's `baton:home-data` event, and otherwise refetches
+  `/active-sessions` + `/devices` on navigation when older than 15 s and every 60 s while visible. A cache
+  the inline loader wrote in the last 15 s counts as fresh, so a cold load fetches that data only once.
+  `html.sidebar-collapsed` (localStorage `baton-sidebar-collapsed`, applied before first paint) hides it.
+- Like Codex, session rows show the runtime mark (Claude / Codex) before the title and only a running
+  spinner or needs-input dot after it, no time. Project rows show an open/closed folder, the device's display
+  name on every row and one dot: needs input (amber) > running (blue) > device online (green) > offline
+  (hollow); on pointer devices hover (or keyboard focus) swaps device and dot for New chat in project.
+- Phones and narrow windows keep the stack navigation. The inline home renders host chips (sessionStorage
+  `baton-home-host`), Pinned / Today / Yesterday / Earlier task rows (active sessions are authoritative,
+  recent project sessions fill in), Projects (Show more) and Devices. `#tab-bar` switches Tasks / Approve
+  (`needs_input`) / Review (project → Git page) and opens the New task sheet; Back on Approve/Review
+  returns to Tasks. `updateBreadcrumb` and the inline renderer set `body.view-home|view-list|view-session`.
+- Header: `#breadcrumb` is absolutely positioned over the `.top-bar` row between Back and the actions, its
+  right edge from `--top-actions-width` (ResizeObserver on `#top-right`); the deepest level is the title
+  (`data-depth` on `.breadcrumb-nav`, `crumb-project`/`crumb-device` links). The iOS keyboard shift
+  ignores an absolutely positioned breadcrumb. Narrow screens fold Files/Git/Terminal into More, which
+  forwards to the real buttons. The edge-back underlay marks a home snapshot `edge-back-home`.
+- Pins are local only (`localStorage['baton-pins']`, `web/js/shell.js`), toggled from the session header.
+- The iOS LaunchScreen mirrors the phone home skeleton: top bar, Today and five 61pt rows, tab bar.
+
+## Conversation (Codex layout)
+
+- `web/css/thread.css` layers the Codex look over `style.css`: a centered `--thread-width` column,
+  right-aligned user bubbles, no timeline rail, quiet activity rows (chevron after the label, shimmer
+  while running), Codex-style approval cards, and a composer whose `.input-row` grid puts the textarea
+  above the + / mic / send row. Placeholders read "Ask Claude/Codex anything".
+- Claude tools use the Codex verbs (`CLAUDE_TOOL_NAMES` in `tool.js`: Ran / Explored / Edited / Called …);
+  Bash rows show the command. Consecutive Read/Grep/Glob/LS form a `claude-explore` run group, like
+  Codex's `codex-explore`.
+- "Worked for" (`web/js/turn-summary.js`): after every timeline mutation (`markTurnAdjacency`) each
+  finished turn whose last item is assistant text hides its earlier items (`turn-step-hidden`; a row of
+  only hidden items gets `turn-row-hidden`). Its `.turn-worked` toggle heads the final text while folded
+  and moves to the turn's first item when open, so the steps follow it as in Codex.
+  Duration runs from the user row's timestamp to the last timestamped item. A turn with a
+  `stream-preview` row, or the last turn while `state.wsRunning`, stays expanded. `comparableMarkup`
+  strips the toggle and these classes, so reconciliation keeps the nodes; copy reads
+  `data-message-text`, so the label never enters copied text. Only `entry-index.js` imports it.
+- Step runs (`web/js/step-runs.js`, run from `updateTurnSummaries` after the fold, in every turn, running
+  or not, including rows before the first loaded user message): two or more consecutive thinking / tool
+  items between texts fold behind a `.step-run-toggle` prepended to the run's first item (after an open
+  `.turn-worked`). The summary counts steps by `data-tool-name`, set on tool rows by `render.js` and the
+  live `ws.js` paths ("Ran 3 commands, read 2 files · 42s · 1 failed"; thinking-only runs read "Thought
+  for 7s"). The trailing run of a running turn names its current step instead ("Editing app.js ·
+  6 steps"). A lone step keeps its own row. Members get `step-run-hidden`, the head `step-run-collapsed`
+  (only its toggles show), fully hidden rows `step-run-row-hidden`. `comparableMarkup` strips them, and
+  folded steps never pull the view down (`window.isFoldedStep` in `onMutation` / `onlyHiddenToolUpdates`).
+  Opened runs stay open per session (`resetTurnSummaries` clears them).
+- Approval titles read "Do you want to allow Claude/Codex to …?"; Claude tool prompts offer "Yes,
+  proceed" / "No, continue without running it"; Codex prompts keep Codex's own decision labels.
+
+## Secondary Pages (Codex layout)
+
+- `web/css/pages.css` (bundled from `entry-index.js`) restyles the full-screen pages: plain-text path
+  headers, Review (Git) section headers and rounded file rows with hover actions, a composer-style commit
+  box with a pill primary button, Files rows, file-viewer tabs and dialogs.
+- At ≥1280px a session's Git page opens as a right-hand Review pane (`--review-width`); the session column
+  yields that width through `body.view-session:has(> #gitStatusPage:not([hidden]))`. On wide non-touch
+  screens the project terminal docks under the session (`--terminal-dock-height`, overriding the inline
+  `visualViewport` top/height) and the session shrinks the same way. Narrower screens and touch devices
+  keep the full-screen pages; browsers without `:has` overlay instead of shrinking.
+- Settings (`setup.html`) and sign-in (`landing.html`) use the same neutral cards, inputs and inverted
+  primary buttons.
 
 ## Light / Dark Theme
 
-- Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default, values match the
-  original dark UI) and `light.css` (`:root[data-theme="light"]`). Components reference semantic tokens
-  (`--canvas`, `--surface`, `--surface-elevated`, `--text-secondary`, `--spinner`, ...), never raw colors; a
-  value that only one theme needs still gets a token whose dark value is the old literal, so Dark stays
-  pixel-identical.
-- Light layering mirrors Dark: white page, `#f6f8fa` top bar/cards/inputs, `#eaeef2` raised headers. Secondary
-  text is lighter than a straight mapping (`#6e7781`) and bold tool names lighter still (`--tool-label`),
-  because mid-grey on white reads close to black.
+- Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default) and `light.css`
+  (`:root[data-theme="light"]`), both following the Codex app's neutral greys. Components reference semantic
+  tokens (`--canvas`, `--surface`, `--sidebar`, `--composer`, `--primary-fill`, `--text-secondary`, ...), never
+  raw colors. Theme-independent tokens (`--font-ui`, `--font-mono`, `--radius-*`, `--sidebar-width`,
+  `--thread-width`) sit in a plain `:root` block at the top of `dark.css`.
+- Layering: Dark is a `#181818` page with a darker `#131313` sidebar, `#212121` surfaces and `#2b2b2b` user
+  bubbles; Light is a white page with a `#f9f9f9` sidebar, `#f7f7f7` surfaces and `#f0f0f0` bubbles. The top bar
+  uses the page color (`--surface-elevated` = `--canvas`). Primary actions use the inverted
+  `--primary-fill`/`--on-primary` pair (light on dark, black on light), like Codex's send button.
+- Native shells receive `--canvas`, `--surface-elevated` and `--tab-strip` and only accept `#rrggbb`; their
+  cold-start defaults (`appearance.rs`, `tauri.conf.json`, iOS `main.mm` + `Launch1–8` colorsets, Android
+  `colors.xml`, Harmony `ThemeBridge.ets`/`color.json`) must match these palettes.
 - Settings → Appearance offers System / Light / Dark (default Dark). `web/public/theme-init.js` runs before
   first paint on every page: the preference is `localStorage['baton-theme']`, else the native copy
   (`window.__BATON_NATIVE_THEME__` / `BatonAndroid.getTheme()`), else dark; `system` resolves through

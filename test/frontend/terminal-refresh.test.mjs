@@ -119,9 +119,9 @@ test('the mobile terminal uses the page scrollbar width and colors', async conte
     const options = browser.window.__terminalOptions;
     assert.equal(options.scrollbar?.width, 6);
     assert.equal(options.fontSize, 14);
-    assert.equal(options.theme.scrollbarSliderBackground, '#3a4049');
-    assert.equal(options.theme.scrollbarSliderHoverBackground, '#4a5059');
-    assert.equal(options.theme.scrollbarSliderActiveBackground, '#4a5059');
+    assert.equal(options.theme.scrollbarSliderBackground, '#3b3b3b');
+    assert.equal(options.theme.scrollbarSliderHoverBackground, '#4b4b4b');
+    assert.equal(options.theme.scrollbarSliderActiveBackground, '#4b4b4b');
     assert.equal(options.theme.overviewRulerBorder, '#00000000');
   } finally {
     await browser.close();

@@ -67,11 +67,11 @@ test('session toolbar exposes the terminal without losing runtime or agent contr
       window.updateBreadcrumb();
     }
 
-    await context.test('runtime and Agent capsules follow the title, leaving four header actions', () => {
+    await context.test('runtime and Agent capsules follow the title, leaving four header actions and More', () => {
       for (const runtime of ['codex', 'claude']) {
         showSession(runtime);
         assert.deepEqual([...document.querySelectorAll('#top-right > button')].map(button => button.title), [
-          'Project files', 'Git changes', 'Terminal', 'New Session',
+          'Project files', 'Git changes', 'Terminal', 'New Session', 'More',
         ]);
         const meta = document.querySelector('.session-title-meta');
         assert.ok(meta.previousElementSibling.classList.contains('breadcrumb-title'));

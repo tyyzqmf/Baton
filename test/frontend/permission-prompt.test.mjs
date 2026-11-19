@@ -64,7 +64,7 @@ test('Codex command approval renders the native three decisions in order', () =>
   commandPrompt();
 
   assert.equal(document.querySelector('.messages').classList.contains('has-permission-prompt'), true);
-  assert.equal(document.querySelector('.permission-title').textContent, 'Run command?');
+  assert.equal(document.querySelector('.permission-title').textContent, 'Do you want to allow Codex to run this command?');
   assert.equal(document.querySelector('.permission-desc').textContent, 'git add README.md');
   assert.deepEqual(
     [...document.querySelectorAll('.permission-label')].map((el) => el.textContent),
@@ -365,7 +365,7 @@ test('a deferred permission resolved during loading never appears later', async 
   assert.equal(document.getElementById('permission-prompt'), null);
 });
 
-test('Claude tool approvals keep the legacy Yes and No decisions', () => {
+test('Claude tool approvals offer the allow and deny decisions in Codex wording', () => {
   reset();
   const content = document.getElementById('content');
   Object.defineProperty(content, 'scrollHeight', { configurable: true, value: 640 });
@@ -380,7 +380,7 @@ test('Claude tool approvals keep the legacy Yes and No decisions', () => {
 
   assert.deepEqual(
     [...document.querySelectorAll('.permission-label')].map((el) => el.textContent),
-    ['Yes', 'No'],
+    ['Yes, proceed', 'No, continue without running it'],
   );
   assert.equal(content.scrollTop, 640);
   window.handlePermissionOption(document.querySelectorAll('.permission-btn')[0]);

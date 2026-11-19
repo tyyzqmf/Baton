@@ -15,25 +15,25 @@ function terminalTheme() {
   const style = getComputedStyle(document.documentElement);
   const color = (name, fallback) => style.getPropertyValue('--' + name).trim() || fallback;
   const base = {
-    background: color('canvas', '#0d1117'), foreground: color('text-primary', '#e6edf3'),
-    cursor: color('text-primary', '#e6edf3'),
-    scrollbarSliderBackground: color('scrollbar', '#3a4049'),
-    scrollbarSliderHoverBackground: color('scrollbar-hover', '#4a5059'),
-    scrollbarSliderActiveBackground: color('scrollbar-hover', '#4a5059'),
+    background: color('canvas', '#181818'), foreground: color('text-primary', '#ececec'),
+    cursor: color('text-primary', '#ececec'),
+    scrollbarSliderBackground: color('scrollbar', '#3b3b3b'),
+    scrollbarSliderHoverBackground: color('scrollbar-hover', '#4b4b4b'),
+    scrollbarSliderActiveBackground: color('scrollbar-hover', '#4b4b4b'),
     overviewRulerBorder: '#00000000',
   };
   if (document.documentElement.dataset.theme !== 'light') return base;
   return {
-    ...base, cursorAccent: color('canvas', '#0d1117'),
-    selectionBackground: color('surface-selected', '#292f37'),
-    black: color('text-primary', '#24292f'), red: color('syntax-red', '#ff7b72'),
+    ...base, cursorAccent: color('canvas', '#ffffff'),
+    selectionBackground: color('surface-selected', '#e8e8e8'),
+    black: color('text-primary', '#0d0d0d'), red: color('syntax-red', '#ff7b72'),
     green: color('success', '#3fb950'), yellow: color('warning', '#d29922'),
     blue: color('accent', '#58a6ff'), magenta: color('purple', '#bc8cff'),
-    cyan: color('cyan', '#39c5cf'), white: color('text-secondary', '#6e7781'),
-    brightBlack: color('text-subtle', '#57606a'), brightRed: color('syntax-red', '#ff7b72'),
+    cyan: color('cyan', '#39c5cf'), white: color('text-secondary', '#6b6b6b'),
+    brightBlack: color('text-subtle', '#5d5d5d'), brightRed: color('syntax-red', '#ff7b72'),
     brightGreen: color('success', '#3fb950'), brightYellow: color('warning', '#d29922'),
     brightBlue: color('accent', '#58a6ff'), brightMagenta: color('purple', '#bc8cff'),
-    brightCyan: color('cyan', '#39c5cf'), brightWhite: color('border-strong', '#8c959f'),
+    brightCyan: color('cyan', '#39c5cf'), brightWhite: color('border-strong', '#a3a3a3'),
   };
 }
 const edgeBack = registerEdgeBackLayer({ navigateBack: () => closeProjectTerminal({ keepAlive: true }),

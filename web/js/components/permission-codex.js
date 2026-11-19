@@ -58,7 +58,7 @@ export function createCodexPermissionController(options) {
     } else if (request.approvalType === 'codex-mcp-elicitation') {
       renderMcpPrompt(input.codexMcpElicitation || {});
     } else {
-      var summary = buildToolSummary(msg.toolName, input);
+      var summary = buildToolSummary(msg.toolName, input, 'Codex');
       var promptOptions = buildDecisionOptions(approval, request.approvalType, input);
       renderPrompt({
         title: summary.title,
