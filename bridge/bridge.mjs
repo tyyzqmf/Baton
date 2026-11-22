@@ -26,6 +26,14 @@ import {
   installStagedBridge,
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
+import { cliInfoOutput } from './cli.mjs';
+
+const cliInfo = cliInfoOutput(process.argv.slice(2), BRIDGE_VERSION);
+if (cliInfo !== null) {
+  // Wait for the write: stdout pipes are asynchronous on Windows.
+  await new Promise(resolve => process.stdout.write(cliInfo, resolve));
+  process.exit(0);
+}
 
 const releaseInstanceLock = await acquireInstanceLock(BRIDGE_HOME);
 if (!releaseInstanceLock) {
