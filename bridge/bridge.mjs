@@ -6,6 +6,8 @@
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
  */
 
+// Must stay the first import: --version/--help exit before any other module is evaluated.
+import './cli-guard.mjs';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
